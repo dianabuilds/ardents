@@ -50,6 +50,15 @@ Envelope — CBOR map:
 
 `msg_id` **ДОЛЖЕН** быть UUIDv7 в строковой форме.
 
+Реализация **МОЖЕТ** использовать внешнюю библиотеку UUIDv7 при условии соответствия формату.
+
+---
+
+## 2.1 Размеры сообщений (v1, фиксировано)
+
+* `max_msg_bytes` по умолчанию = **256 KiB**.
+* `max_payload_bytes` по умолчанию = **128 KiB**.
+
 ---
 
 ## 3) TTL и дедупликация (фиксировано)
@@ -96,5 +105,6 @@ ACK — это Envelope с `type = ack.v1`, payload:
 * `ERR_SIG_INVALID`
 * `ERR_POW_REQUIRED`
 * `ERR_POW_INVALID`
+* `ERR_ID_REVOKED`
 * `ERR_PAYLOAD_DECODE`
 * `ERR_UNSUPPORTED_TYPE`

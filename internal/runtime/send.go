@@ -64,39 +64,52 @@ func (r *Runtime) SendChat(ctx context.Context, addr string, peerID string, text
 	if err != nil {
 		return nil, err
 	}
+	r.capture("out", peerID, data)
 	r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusSent})
 	r.log.Event("info", "msg", "delivery.sent", peerID, env.MsgID, "")
-	ackBytes, err := r.dial.SendEnvelope(ctx, stripSchemeLocal(addr), peerID, data, r.cfg.Limits.MaxMsgBytes)
-	if err != nil {
-		r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusFailed, ErrorCode: "ERR_DELIVERY_FAILED"})
-		r.log.Event("warn", "msg", "delivery.failed", peerID, env.MsgID, "ERR_DELIVERY_FAILED")
-		return nil, err
+	ackTimeout := 1500 * time.Millisecond
+	maxRetries := 3
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		ackCtx, cancel := context.WithTimeout(ctx, ackTimeout)
+		ackBytes, err := r.dial.SendEnvelope(ackCtx, stripSchemeLocal(addr), peerID, data, r.cfg.Limits.MaxMsgBytes)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		r.capture("in", peerID, ackBytes)
+		ackEnv, err := envelope.DecodeEnvelope(ackBytes)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		p, err := ack.Decode(ackEnv.Payload)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		r.metrics.ObserveAckLatency(uint64(timeutil.NowUnixMs() - env.TSMs))
+		switch p.Status {
+		case "OK", "DUPLICATE":
+			r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusAcked})
+			r.log.Event("info", "msg", "delivery.acked", peerID, env.MsgID, "")
+			return ackBytes, nil
+		case "REJECTED":
+			r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusRejected, ErrorCode: p.ErrorCode})
+			r.log.Event("warn", "msg", "delivery.rejected", peerID, env.MsgID, p.ErrorCode)
+			return ackBytes, nil
+		default:
+			lastErr = errors.New("ERR_ACK_INVALID")
+			continue
+		}
 	}
-	ackEnv, err := envelope.DecodeEnvelope(ackBytes)
-	if err != nil {
-		r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusFailed, ErrorCode: "ERR_ACK_DECODE"})
-		r.log.Event("warn", "msg", "delivery.failed", peerID, env.MsgID, "ERR_ACK_DECODE")
-		return ackBytes, err
+	r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusFailed, ErrorCode: "ERR_DELIVERY_FAILED"})
+	r.log.Event("warn", "msg", "delivery.failed", peerID, env.MsgID, "ERR_DELIVERY_FAILED")
+	if lastErr == nil {
+		lastErr = errors.New("ERR_DELIVERY_FAILED")
 	}
-	p, err := ack.Decode(ackEnv.Payload)
-	if err != nil {
-		r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusFailed, ErrorCode: "ERR_ACK_DECODE"})
-		r.log.Event("warn", "msg", "delivery.failed", peerID, env.MsgID, "ERR_ACK_DECODE")
-		return ackBytes, err
-	}
-	r.metrics.ObserveAckLatency(uint64(timeutil.NowUnixMs() - env.TSMs))
-	switch p.Status {
-	case "OK", "DUPLICATE":
-		r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusAcked})
-		r.log.Event("info", "msg", "delivery.acked", peerID, env.MsgID, "")
-	case "REJECTED":
-		r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusRejected, ErrorCode: p.ErrorCode})
-		r.log.Event("warn", "msg", "delivery.rejected", peerID, env.MsgID, p.ErrorCode)
-	default:
-		r.tracker.Set(delivery.Record{MsgID: env.MsgID, Status: delivery.StatusFailed, ErrorCode: "ERR_ACK_INVALID"})
-		r.log.Event("warn", "msg", "delivery.failed", peerID, env.MsgID, "ERR_ACK_INVALID")
-	}
-	return ackBytes, nil
+	return nil, lastErr
 }
 
 func stripSchemeLocal(addr string) string {

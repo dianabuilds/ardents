@@ -46,6 +46,7 @@ type Pow struct {
 type Observability struct {
 	HealthAddr  string `json:"health_addr"`
 	MetricsAddr string `json:"metrics_addr"`
+	PcapEnabled bool   `json:"pcap_enabled"`
 }
 
 func Default() Config {
@@ -70,6 +71,7 @@ func Default() Config {
 		Observability: Observability{
 			HealthAddr:  "127.0.0.1:8081",
 			MetricsAddr: "127.0.0.1:9090",
+			PcapEnabled: false,
 		},
 	}
 }

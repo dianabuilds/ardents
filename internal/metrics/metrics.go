@@ -52,6 +52,20 @@ func (r *Registry) IncPowInvalid() {
 	r.powInvalid++
 }
 
+func (r *Registry) IncNetInbound() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.netInboundConns++
+}
+
+func (r *Registry) DecNetInbound() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.netInboundConns > 0 {
+		r.netInboundConns--
+	}
+}
+
 func (r *Registry) ObserveAckLatency(ms uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

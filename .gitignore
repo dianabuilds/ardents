@@ -5,3 +5,4 @@
 /bin/peer.exe
 /internal/runtime/data/identity/identity.key
 /internal/addressbook/data/identity/identity.key
+/internal/contentnode/data/identity/identity.key

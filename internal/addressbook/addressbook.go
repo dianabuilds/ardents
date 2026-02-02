@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/dianabuilds/ardents/internal/contentnode"
@@ -17,12 +18,16 @@ var (
 	ErrBundleInvalid   = errors.New("ERR_ADDRESSBOOK_BUNDLE_INVALID")
 	ErrImportUntrusted = errors.New("ERR_IMPORT_UNTRUSTED_SOURCE")
 	ErrEntryInvalid    = errors.New("ERR_ADDRESSBOOK_ENTRY_INVALID")
+	ErrAliasInvalid    = errors.New("ERR_ALIAS_INVALID")
+	ErrAliasConflict   = errors.New("ERR_ALIAS_CONFLICT")
 )
 
 type Book struct {
-	V           uint64  `json:"v"`
-	UpdatedAtMs int64   `json:"updated_at_ms"`
-	Entries     []Entry `json:"entries"`
+	V             uint64   `json:"v"`
+	UpdatedAtMs   int64    `json:"updated_at_ms"`
+	Entries       []Entry  `json:"entries"`
+	RevokedIDs    []string `json:"revoked_identity_ids,omitempty"`
+	DeprecatedIDs []string `json:"deprecated_identity_ids,omitempty"`
 }
 
 type Entry struct {
@@ -96,9 +101,43 @@ func (b Book) IsTrustedIdentity(identityID string, nowMs int64) bool {
 	return false
 }
 
+func (b Book) IsRevokedIdentity(identityID string) bool {
+	for _, id := range b.RevokedIDs {
+		if id == identityID {
+			return true
+		}
+	}
+	return false
+}
+
+func (b Book) IsDeprecatedIdentity(identityID string) bool {
+	for _, id := range b.DeprecatedIDs {
+		if id == identityID {
+			return true
+		}
+	}
+	return false
+}
+
+func (b Book) TrustedPeers(nowMs int64) map[string]bool {
+	out := make(map[string]bool)
+	for _, e := range b.Entries {
+		if e.TargetType != "peer" || e.Trust != "trusted" {
+			continue
+		}
+		if e.ExpiresAtMs != 0 && nowMs > e.ExpiresAtMs {
+			continue
+		}
+		out[e.TargetID] = true
+	}
+	return out
+}
+
 func (b Book) ExportBundle(author identity.Identity) (contentnode.Node, error) {
 	body := map[string]any{
-		"entries": b.Entries,
+		"entries":                 b.Entries,
+		"revoked_identity_ids":    b.RevokedIDs,
+		"deprecated_identity_ids": b.DeprecatedIDs,
 	}
 	n := contentnode.Node{
 		V:           1,
@@ -129,6 +168,32 @@ func (b Book) ImportBundle(node contentnode.Node, nowMs int64) (Book, error) {
 		return b, ErrImportUntrusted
 	}
 	body := normalizeMap(node.Body)
+	if rawRevoked, ok := body["revoked_identity_ids"].([]any); ok {
+		for _, v := range rawRevoked {
+			id := asString(v)
+			if id == "" {
+				continue
+			}
+			b.RevokedIDs = appendUnique(b.RevokedIDs, id)
+		}
+	} else if list, ok := body["revoked_identity_ids"].([]string); ok {
+		for _, id := range list {
+			b.RevokedIDs = appendUnique(b.RevokedIDs, id)
+		}
+	}
+	if rawDep, ok := body["deprecated_identity_ids"].([]any); ok {
+		for _, v := range rawDep {
+			id := asString(v)
+			if id == "" {
+				continue
+			}
+			b.DeprecatedIDs = appendUnique(b.DeprecatedIDs, id)
+		}
+	} else if list, ok := body["deprecated_identity_ids"].([]string); ok {
+		for _, id := range list {
+			b.DeprecatedIDs = appendUnique(b.DeprecatedIDs, id)
+		}
+	}
 	if list, ok := body["entries"].([]Entry); ok {
 		for _, e := range list {
 			e.Source = "imported"
@@ -169,9 +234,21 @@ func (b Book) ImportBundle(node contentnode.Node, nowMs int64) (Book, error) {
 	return b, nil
 }
 
+func appendUnique(list []string, id string) []string {
+	for _, v := range list {
+		if v == id {
+			return list
+		}
+	}
+	return append(list, id)
+}
+
 func validateEntry(e Entry) error {
 	if e.Alias == "" || e.TargetID == "" {
 		return ErrEntryInvalid
+	}
+	if err := validateAlias(e.Alias); err != nil {
+		return err
 	}
 	return nil
 }
@@ -208,7 +285,20 @@ func normalizeMap(v any) map[string]any {
 		return map[string]any{}
 	}
 }
-func (b Book) ResolveAlias(alias string, nowMs int64) (Entry, bool) {
+
+var aliasPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}[a-z0-9]$`)
+
+func validateAlias(alias string) error {
+	if !aliasPattern.MatchString(alias) {
+		return ErrAliasInvalid
+	}
+	return nil
+}
+
+func (b Book) ResolveAlias(alias string, nowMs int64) (Entry, bool, error) {
+	if err := validateAlias(alias); err != nil {
+		return Entry{}, false, err
+	}
 	candidates := make([]Entry, 0)
 	for _, e := range b.Entries {
 		if e.Alias != alias {
@@ -220,13 +310,34 @@ func (b Book) ResolveAlias(alias string, nowMs int64) (Entry, bool) {
 		candidates = append(candidates, e)
 	}
 	if len(candidates) == 0 {
-		return Entry{}, false
+		return Entry{}, false, nil
 	}
 	best := candidates[0]
 	for i := 1; i < len(candidates); i++ {
 		best = pickBetter(best, candidates[i])
 	}
-	return best, true
+	for _, cand := range candidates {
+		if cand.TargetID != best.TargetID {
+			continue
+		}
+		if sameRank(best, cand) && cand.TargetType != best.TargetType {
+			return Entry{}, false, ErrAliasConflict
+		}
+	}
+	return best, true, nil
+}
+
+func sameRank(a, b Entry) bool {
+	if a.Trust != b.Trust {
+		return false
+	}
+	if a.Source != b.Source {
+		return false
+	}
+	if a.CreatedAtMs != b.CreatedAtMs {
+		return false
+	}
+	return true
 }
 
 func pickBetter(a, b Entry) Entry {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,6 +22,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
+	"github.com/dianabuilds/ardents/internal/shared/perm"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
@@ -58,6 +61,7 @@ func usage() {
 func startCmd(args []string) {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	cfgPath := fs.String("config", config.DefaultConfigPath, "path to config file")
+	pcap := fs.Bool("pcap", false, "enable packet capture (run/pcap.jsonl)")
 	if err := fs.Parse(args); err != nil {
 		fatal(err)
 	}
@@ -66,7 +70,13 @@ func startCmd(args []string) {
 	if err != nil {
 		fatal(err)
 	}
+	if *pcap {
+		cfg.Observability.PcapEnabled = true
+	}
 
+	if err := rotateGatewayToken("run/peer.token"); err != nil {
+		fatal(err)
+	}
 	rt := runtime.New(cfg)
 	if err := rt.Start(context.Background()); err != nil {
 		fatal(err)
@@ -135,8 +145,12 @@ func sendCmd(args []string) {
 		fatal(err)
 	}
 	rt := runtime.New(cfg)
-	printIndicators(rt, *to)
-	ackBytes, err := rt.SendChat(context.Background(), *addr, *to, *text)
+	peerID, err := resolveTargetPeerID(*to)
+	if err != nil {
+		fatal(err)
+	}
+	printIndicators(rt, peerID)
+	ackBytes, err := rt.SendChat(context.Background(), *addr, peerID, *text)
 	if err != nil {
 		fatal(err)
 	}
@@ -152,6 +166,33 @@ func sendCmd(args []string) {
 	if ackPayload.Status == "REJECTED" {
 		fmt.Println("error:", ackPayload.ErrorCode)
 	}
+}
+
+func resolveTargetPeerID(to string) (string, error) {
+	if to == "" {
+		return "", errors.New("missing --to")
+	}
+	if err := ids.ValidatePeerID(to); err == nil {
+		return to, nil
+	}
+	book, err := addressbook.LoadOrInit("")
+	if err != nil {
+		return "", err
+	}
+	entry, ok, err := book.ResolveAlias(to, timeutil.NowUnixMs())
+	if err != nil {
+		if errors.Is(err, addressbook.ErrAliasConflict) {
+			return "", addressbook.ErrAliasConflict
+		}
+		return "", err
+	}
+	if !ok {
+		return "", errors.New("ERR_ALIAS_NOT_FOUND")
+	}
+	if entry.TargetType != "peer" {
+		return "", errors.New("ERR_ALIAS_TARGET_NOT_PEER")
+	}
+	return entry.TargetID, nil
 }
 
 func addressBookCmd(args []string) {
@@ -345,9 +386,7 @@ func readStatus() (Status, error) {
 }
 
 func fatal(err error) {
-	if _, writeErr := fmt.Fprintln(os.Stderr, "error:", err); writeErr != nil {
-		// ignore write errors; exiting anyway
-	}
+	_, _ = fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
 }
 
@@ -355,4 +394,29 @@ func waitForSignal() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt)
 	<-ch
+}
+
+func rotateGatewayToken(path string) error {
+	f, err := perm.OpenOwnerOnly(path)
+	if err != nil {
+		return errors.New("ERR_GATEWAY_UNAUTHORIZED")
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	token := base64.StdEncoding.EncodeToString(raw)
+	if _, err := f.WriteString(token); err != nil {
+		return err
+	}
+	return nil
 }

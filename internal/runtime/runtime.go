@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"crypto/ed25519"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dianabuilds/ardents/internal/addressbook"
@@ -12,6 +15,9 @@ import (
 	netpkg "github.com/dianabuilds/ardents/internal/net"
 	"github.com/dianabuilds/ardents/internal/netmgr"
 	"github.com/dianabuilds/ardents/internal/observability"
+	"github.com/dianabuilds/ardents/internal/providers"
+	"github.com/dianabuilds/ardents/internal/services/serviceregistry"
+	"github.com/dianabuilds/ardents/internal/shared/capabilities"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 	"github.com/dianabuilds/ardents/internal/storage"
@@ -19,22 +25,33 @@ import (
 )
 
 type Runtime struct {
-	cfg            config.Config
-	net            *netmgr.Manager
-	dedup          *netpkg.Dedup
-	bans           *netpkg.BanList
-	quic           *quic.Server
-	dial           *quic.Dialer
-	peerID         string
-	store          *storage.NodeStore
-	identity       identity.Identity
-	book           addressbook.Book
-	log            *observability.Logger
-	tracker        *delivery.Tracker
-	health         *health.Server
-	peersConnected uint64
-	metrics        *metrics.Registry
-	metricsServer  *metrics.Server
+	cfg               config.Config
+	net               *netmgr.Manager
+	dedup             *netpkg.Dedup
+	bans              *netpkg.BanList
+	quic              *quic.Server
+	dial              *quic.Dialer
+	peerID            string
+	store             *storage.NodeStore
+	identity          identity.Identity
+	book              addressbook.Book
+	log               *observability.Logger
+	pcap              *observability.PcapWriter
+	tracker           *delivery.Tracker
+	health            *health.Server
+	peersConnected    uint64
+	metrics           *metrics.Registry
+	metricsServer     *metrics.Server
+	providers         *providers.Registry
+	services          *serviceregistry.Registry
+	tasks             *TaskStore
+	clockSkew         *clockSkewTracker
+	powAbuse          *powAbuseTracker
+	localCapabilities []string
+	capsMu            sync.Mutex
+	peerCaps          map[string][]byte
+	transportKeys     quic.KeyMaterial
+	relayForward      func(peerID string, envBytes []byte) error
 }
 
 func New(cfg config.Config) *Runtime {
@@ -64,6 +81,12 @@ func New(cfg config.Config) *Runtime {
 			CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
 		})
 	}
+	keys, err := quic.LoadOrCreateKeyMaterial("")
+	if err != nil {
+		keys = quic.KeyMaterial{}
+	}
+	log := observability.New()
+	pcap := observability.NewPcapWriter(cfg.Observability.PcapEnabled, "run/pcap.jsonl")
 	return &Runtime{
 		cfg:   cfg,
 		net:   netmgr.New(),
@@ -77,12 +100,21 @@ func New(cfg config.Config) *Runtime {
 			}
 			return ""
 		}(),
-		store:    storage.NewNodeStore(1_048_576),
-		identity: id,
-		book:     book,
-		log:      observability.New(),
-		tracker:  delivery.NewTracker(),
-		metrics:  metrics.New(),
+		store:             storage.NewNodeStore(1_048_576),
+		identity:          id,
+		book:              book,
+		log:               log,
+		pcap:              pcap,
+		tracker:           delivery.NewTracker(),
+		metrics:           metrics.New(),
+		providers:         providers.NewRegistry(),
+		services:          serviceregistry.New(),
+		tasks:             NewTaskStore(24 * time.Hour),
+		clockSkew:         newClockSkewTracker(4),
+		powAbuse:          newPowAbuseTracker(5),
+		localCapabilities: []string{"node.fetch.v1"},
+		peerCaps:          make(map[string][]byte),
+		transportKeys:     keys,
 	}
 }
 
@@ -96,7 +128,13 @@ func (r *Runtime) Start(ctx context.Context) error {
 	r.seedPlaceholderNode()
 	observability.EnforceRetention("run/pcap.jsonl", 24*time.Hour, 0)
 	observability.EnforceRetention("run/log.jsonl", 7*24*time.Hour, 1<<30)
+	if r.pcap != nil && r.pcap.Enabled() {
+		r.log.Event("warn", "pcap", "pcap.enabled", "", "", "")
+	}
 	if r.quic != nil {
+		r.quic.SetCapabilitiesDigest(r.capabilitiesDigest())
+		r.quic.SetHelloObserverWithDigest(r.observeHello)
+		r.quic.SetPeerObserver(r.observePeerConnected, r.observePeerDisconnected)
 		r.quic.SetEnvelopeHandler(r.handleEnvelope)
 		if err := r.quic.Start(ctx); err != nil {
 			r.net.AddDegradedReason("transport_errors")
@@ -115,6 +153,10 @@ func (r *Runtime) Start(ctx context.Context) error {
 	}
 	if r.cfg.Observability.MetricsAddr != "" {
 		r.metricsServer = metrics.Start(r.cfg.Observability.MetricsAddr, r.metrics)
+	}
+	if r.dial != nil {
+		r.dial.SetCapabilitiesDigest(r.capabilitiesDigest())
+		r.dial.SetHelloObserverWithDigest(r.observeHello)
 	}
 	r.dialBootstrap(ctx)
 	if err := r.net.Transition(netmgr.StateOnline); err != nil {
@@ -157,11 +199,11 @@ func (r *Runtime) NetReasons() []string {
 }
 
 func (r *Runtime) Status() (state string, peersConnected uint64) {
-	return string(r.net.State()), r.peersConnected
+	return string(r.net.State()), atomic.LoadUint64(&r.peersConnected)
 }
 
 func (r *Runtime) DedupSeen(msgID string) bool {
-	return r.dedup.Seen(msgID)
+	return r.dedup.SeenWithTTL(msgID, 0)
 }
 
 func (r *Runtime) Ban(peerID string, window time.Duration) {
@@ -187,17 +229,16 @@ func (r *Runtime) IdentityID() string {
 	return r.identity.ID
 }
 
+func (r *Runtime) IdentityPrivateKey() ed25519.PrivateKey {
+	return r.identity.PrivateKey
+}
+
 func (r *Runtime) checkClockSkew(nowMs int64) {
 	_ = nowMs
-	// placeholder: real skew tracking should be fed by handshake observations
-	if false {
-		r.net.AddDegradedReason("clock_skew")
-		r.log.Event("warn", "net", "net.degraded", "", "", "clock_skew")
-	}
 }
 
 func (r *Runtime) checkLowPeers() {
-	if r.peersConnected < 1 {
+	if atomic.LoadUint64(&r.peersConnected) < 1 {
 		r.net.AddDegradedReason("low_peers")
 		r.log.Event("warn", "net", "net.degraded", "", "", "low_peers")
 	} else {
@@ -225,4 +266,78 @@ func (r *Runtime) dialBootstrap(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (r *Runtime) observeHello(peerID string, remoteTSMs int64, digest []byte) {
+	if r == nil || r.clockSkew == nil {
+		return
+	}
+	now := timeutil.NowUnixMs()
+	skewed := skewedNow(now, remoteTSMs)
+	if _, reached := r.clockSkew.Observe(peerID, skewed); reached {
+		r.net.AddDegradedReason("clock_skew")
+		r.log.Event("warn", "net", "net.clock_skew", peerID, "", "clock_skew")
+		r.log.Event("warn", "net", "net.degraded", "", "", "clock_skew")
+	}
+	if r.services != nil && r.capabilitiesChanged(peerID, digest) {
+		removed := r.services.PurgeByPeer(peerID)
+		r.log.Event("info", "service", "service.capabilities.changed", peerID, "", "")
+		if removed > 0 {
+			r.log.Event("info", "service", "service.descriptors.purged", peerID, "", "")
+		}
+	}
+}
+
+func (r *Runtime) observePeerConnected(peerID string) {
+	atomic.AddUint64(&r.peersConnected, 1)
+	if r.metrics != nil {
+		r.metrics.IncNetInbound()
+	}
+	r.log.Event("info", "net", "peer.connected", peerID, "", "")
+	r.checkLowPeers()
+}
+
+func (r *Runtime) observePeerDisconnected(peerID string) {
+	if atomic.LoadUint64(&r.peersConnected) > 0 {
+		atomic.AddUint64(&r.peersConnected, ^uint64(0))
+	}
+	if r.metrics != nil {
+		r.metrics.DecNetInbound()
+	}
+	r.log.Event("info", "net", "peer.disconnected", peerID, "", "")
+	r.checkLowPeers()
+}
+
+func (r *Runtime) capabilitiesDigest() []byte {
+	digest, err := capabilities.Digest(r.localCapabilities)
+	if err != nil {
+		return nil
+	}
+	return digest
+}
+
+func (r *Runtime) capabilitiesChanged(peerID string, digest []byte) bool {
+	if peerID == "" {
+		return false
+	}
+	r.capsMu.Lock()
+	defer r.capsMu.Unlock()
+	prev, ok := r.peerCaps[peerID]
+	if ok && bytesEqual(prev, digest) {
+		return false
+	}
+	r.peerCaps[peerID] = append([]byte(nil), digest...)
+	return ok
+}
+
+func bytesEqual(a []byte, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

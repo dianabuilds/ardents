@@ -91,6 +91,23 @@ func create(path string) (Identity, error) {
 	}, nil
 }
 
+func NewEphemeral() (Identity, error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return Identity{}, err
+	}
+	id, err := ids.NewIdentityID(pub)
+	if err != nil {
+		return Identity{}, err
+	}
+	return Identity{
+		ID:          id,
+		PrivateKey:  priv,
+		PublicKey:   pub,
+		CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
+	}, nil
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil

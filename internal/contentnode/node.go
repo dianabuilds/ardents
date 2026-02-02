@@ -4,11 +4,21 @@ import (
 	"crypto/ed25519"
 	"errors"
 
+	"github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
+
 	"github.com/dianabuilds/ardents/internal/shared/codec"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 )
 
 var ErrInvalidNode = errors.New("invalid node")
+var ErrCIDMismatch = errors.New("ERR_NODE_CID_MISMATCH")
+var ErrNodeTooLarge = errors.New("ERR_NODE_TOO_LARGE")
+
+const (
+	MaxNodeBytes    = 1_048_576
+	MaxLinksPerNode = 256
+)
 
 type Node struct {
 	V           uint64         `cbor:"v"`
@@ -28,6 +38,23 @@ type Link struct {
 
 func Encode(n Node) ([]byte, error) {
 	return codec.Marshal(n)
+}
+
+func EncodeWithCID(n Node) (nodeBytes []byte, nodeCID string, err error) {
+	nodeBytes, err = Encode(n)
+	if err != nil {
+		return nil, "", err
+	}
+	c, err := cid.Prefix{
+		Version:  1,
+		Codec:    cid.DagCBOR,
+		MhType:   mh.SHA2_256,
+		MhLength: -1,
+	}.Sum(nodeBytes)
+	if err != nil {
+		return nil, "", err
+	}
+	return nodeBytes, c.String(), nil
 }
 
 func Decode(data []byte, n *Node) error {
@@ -64,6 +91,46 @@ func Verify(n *Node) error {
 	}
 	if !ed25519.Verify(pub, b, n.Sig) {
 		return ErrInvalidNode
+	}
+	return nil
+}
+
+func VerifyBytes(nodeBytes []byte, expectedCID string) error {
+	if len(nodeBytes) > MaxNodeBytes {
+		return ErrNodeTooLarge
+	}
+	var n Node
+	if err := Decode(nodeBytes, &n); err != nil {
+		return err
+	}
+	if n.Type == "enc.node.v1" {
+		if len(n.Links) != 0 {
+			return ErrInvalidNode
+		}
+		if n.Policy == nil {
+			return ErrInvalidNode
+		}
+		if v, ok := n.Policy["visibility"].(string); !ok || v != "encrypted" {
+			return ErrInvalidNode
+		}
+	}
+	if len(n.Links) > MaxLinksPerNode {
+		return ErrInvalidNode
+	}
+	if err := Verify(&n); err != nil {
+		return err
+	}
+	c, err := cid.Prefix{
+		Version:  1,
+		Codec:    cid.DagCBOR,
+		MhType:   mh.SHA2_256,
+		MhLength: -1,
+	}.Sum(nodeBytes)
+	if err != nil {
+		return err
+	}
+	if expectedCID != "" && c.String() != expectedCID {
+		return ErrCIDMismatch
 	}
 	return nil
 }

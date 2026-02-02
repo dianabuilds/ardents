@@ -163,6 +163,20 @@
 * SERVICES: capability registry
 * INTEGRATIONS: bridge gateway (HTTP/gRPC) как первый внешний адаптер
 
+### 5.1 Фиксация границ v1
+
+* **v1 = строго MVP-1** из раздела выше.
+* Всё из MVP-2/MVP-3 **НЕ ВХОДИТ В v1** и может присутствовать только как типы/интерфейсы без реализации.
+
+### 5.2 Проектные ограничения v1 (зафиксировано)
+
+* Репозиторий: open-source, лицензия MIT.
+* Go: **не ниже 1.25** (dev-версия может быть 1.25.6), без жёсткого pin toolchain.
+* `go.mod` module: `github.com/<org>/ardents`.
+* Целевые платформы v1: **Windows + Linux**, архитектура **amd64**.
+* `legacy/` — reference-only, не часть реализации v1 и может быть удалён при исчезновении нужды.
+* Релизы v1: `CHANGELOG` не обязателен; SemVer вводится при появлении внешних пользователей.
+
 ---
 
 ## 6) Карта спецификаций (Spec Map)
@@ -239,3 +253,13 @@
 * описаны ошибки и восстановления
 * описаны метрики/логирование
 * есть 2–3 основных user stories и 1–2 edge cases
+
+Дополнение для MVP-1 acceptance:
+
+* handshake success/fail
+* send → ACK OK
+* dedup работает
+* PoW reject
+* degraded NET state
+* console shows error
+* CI v1 (минимум): build + unit tests

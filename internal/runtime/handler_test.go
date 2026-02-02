@@ -159,6 +159,62 @@ func TestPipeline_PowInvalid(t *testing.T) {
 	}
 }
 
+func TestPipeline_PowAbuseBan(t *testing.T) {
+	rt := newTestRuntime(t)
+	for i := 0; i < 5; i++ {
+		env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.From.IdentityID = ""
+		env.Pow = &pow.Stamp{
+			V:          1,
+			Difficulty: 20,
+			Nonce:      make([]byte, 15),
+			Subject:    make([]byte, 32),
+		}
+		data, err := env.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rt.handleEnvelope("peer_x", data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !rt.IsBanned("peer_x") {
+		t.Fatalf("expected peer_x to be banned after repeated PoW errors")
+	}
+}
+
+func TestPipeline_RevokedIdentity(t *testing.T) {
+	rt := newTestRuntime(t)
+	id, err := identity.LoadOrCreate("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.book.RevokedIDs = []string{id.ID}
+	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.From.IdentityID = id.ID
+	if err := env.Sign(id.PrivateKey); err != nil {
+		t.Fatal(err)
+	}
+	data, err := env.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resps, err := rt.handleEnvelope("peer_x", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := decodeAck(t, resps[0])
+	if p.ErrorCode != "ERR_ID_REVOKED" {
+		t.Fatalf("expected ERR_ID_REVOKED, got %+v", p)
+	}
+}
+
 func TestPipeline_PayloadTooLarge(t *testing.T) {
 	cfg := config.Default()
 	cfg.Limits.MaxPayloadBytes = 4
@@ -184,6 +240,32 @@ func TestPipeline_PayloadTooLarge(t *testing.T) {
 	p := decodeAck(t, resps[0])
 	if p.ErrorCode != "ERR_PAYLOAD_TOO_LARGE" {
 		t.Fatalf("expected ERR_PAYLOAD_TOO_LARGE, got %+v", p)
+	}
+}
+
+func TestPipeline_UnsupportedType(t *testing.T) {
+	rt := newTestRuntime(t)
+	env, err := buildEnv(rt, "unknown.v1", []byte{0x01})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := pow.Subject(env.MsgID, env.TSMs, env.From.PeerID)
+	stamp, err := pow.Generate(sub, rt.cfg.Pow.DefaultDifficulty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.Pow = stamp
+	data, err := env.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resps, err := rt.handleEnvelope("peer_x", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := decodeAck(t, resps[0])
+	if p.Status != "REJECTED" || p.ErrorCode != "ERR_UNSUPPORTED_TYPE" {
+		t.Fatalf("unexpected ack: %+v", p)
 	}
 }
 

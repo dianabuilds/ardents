@@ -29,13 +29,16 @@ func TestResolveAliasConflictRules(t *testing.T) {
 	b := Book{
 		V: 1,
 		Entries: []Entry{
-			{Alias: "a", TargetType: "peer", TargetID: "z1", Trust: "untrusted", Source: "imported", CreatedAtMs: 1},
-			{Alias: "a", TargetType: "peer", TargetID: "z2", Trust: "trusted", Source: "imported", CreatedAtMs: 1},
-			{Alias: "a", TargetType: "peer", TargetID: "z3", Trust: "trusted", Source: "self", CreatedAtMs: 1},
-			{Alias: "a", TargetType: "peer", TargetID: "z0", Trust: "trusted", Source: "self", CreatedAtMs: 2},
+			{Alias: "aa", TargetType: "peer", TargetID: "z1", Trust: "untrusted", Source: "imported", CreatedAtMs: 1},
+			{Alias: "aa", TargetType: "peer", TargetID: "z2", Trust: "trusted", Source: "imported", CreatedAtMs: 1},
+			{Alias: "aa", TargetType: "peer", TargetID: "z3", Trust: "trusted", Source: "self", CreatedAtMs: 1},
+			{Alias: "aa", TargetType: "peer", TargetID: "z0", Trust: "trusted", Source: "self", CreatedAtMs: 2},
 		},
 	}
-	best, ok := b.ResolveAlias("a", 0)
+	best, ok, err := b.ResolveAlias("aa", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok {
 		t.Fatal("expected resolve")
 	}
@@ -49,13 +52,30 @@ func TestResolveAliasExpires(t *testing.T) {
 	b := Book{
 		V: 1,
 		Entries: []Entry{
-			{Alias: "a", TargetType: "peer", TargetID: "z1", Trust: "trusted", Source: "self", CreatedAtMs: 1, ExpiresAtMs: 50},
-			{Alias: "a", TargetType: "peer", TargetID: "z2", Trust: "trusted", Source: "self", CreatedAtMs: 2},
+			{Alias: "aa", TargetType: "peer", TargetID: "z1", Trust: "trusted", Source: "self", CreatedAtMs: 1, ExpiresAtMs: 50},
+			{Alias: "aa", TargetType: "peer", TargetID: "z2", Trust: "trusted", Source: "self", CreatedAtMs: 2},
 		},
 	}
-	best, ok := b.ResolveAlias("a", now)
+	best, ok, err := b.ResolveAlias("aa", now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok || best.TargetID != "z2" {
 		t.Fatal("expected unexpired entry")
+	}
+}
+
+func TestResolveAliasConflict(t *testing.T) {
+	b := Book{
+		V: 1,
+		Entries: []Entry{
+			{Alias: "bb", TargetType: "peer", TargetID: "z1", Trust: "trusted", Source: "self", CreatedAtMs: 1},
+			{Alias: "bb", TargetType: "service", TargetID: "z1", Trust: "trusted", Source: "self", CreatedAtMs: 1},
+		},
+	}
+	_, _, err := b.ResolveAlias("bb", 0)
+	if err != ErrAliasConflict {
+		t.Fatalf("expected ERR_ALIAS_CONFLICT, got %v", err)
 	}
 }
 
@@ -67,7 +87,7 @@ func TestBundleExportImport(t *testing.T) {
 	b := Book{
 		V: 1,
 		Entries: []Entry{
-			{Alias: "a", TargetType: "identity", TargetID: id.ID, Trust: "trusted", Source: "self", CreatedAtMs: 1},
+			{Alias: "aa", TargetType: "identity", TargetID: id.ID, Trust: "trusted", Source: "self", CreatedAtMs: 1},
 		},
 	}
 	node, err := b.ExportBundle(id)
@@ -98,7 +118,7 @@ func TestBundleImportUntrusted(t *testing.T) {
 	b := Book{
 		V: 1,
 		Entries: []Entry{
-			{Alias: "a", TargetType: "identity", TargetID: id.ID, Trust: "trusted", Source: "self", CreatedAtMs: 1},
+			{Alias: "aa", TargetType: "identity", TargetID: id.ID, Trust: "trusted", Source: "self", CreatedAtMs: 1},
 		},
 	}
 	node, err := b.ExportBundle(id)
