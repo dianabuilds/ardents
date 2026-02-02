@@ -3,3 +3,5 @@
 /internal/runtime/data/keys/peer.key
 /internal/runtime/data/keys/peer.crt
 /bin/peer.exe
+/internal/runtime/data/identity/identity.key
+/internal/addressbook/data/identity/identity.key
