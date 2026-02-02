@@ -1,2 +1,5 @@
 /legacy/
 /.idea/
+/internal/runtime/data/keys/peer.key
+/internal/runtime/data/keys/peer.crt
+/bin/peer.exe
