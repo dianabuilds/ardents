@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 )
 
 var ErrKeyMaterialInvalid = errors.New("invalid key material")
@@ -23,7 +25,11 @@ type KeyMaterial struct {
 
 func LoadOrCreateKeyMaterial(dir string) (KeyMaterial, error) {
 	if dir == "" {
-		dir = filepath.Join("data", "keys")
+		if d, err := appdirs.Resolve(""); err == nil {
+			dir = d.KeysDir()
+		} else {
+			dir = filepath.Join("data", "keys")
+		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return KeyMaterial{}, err

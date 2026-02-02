@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 )
 
 const (
@@ -47,6 +49,8 @@ type Observability struct {
 	HealthAddr  string `json:"health_addr"`
 	MetricsAddr string `json:"metrics_addr"`
 	PcapEnabled bool   `json:"pcap_enabled"`
+	LogFormat   string `json:"log_format"`
+	LogFile     string `json:"log_file"`
 }
 
 func Default() Config {
@@ -72,13 +76,19 @@ func Default() Config {
 			HealthAddr:  "127.0.0.1:8081",
 			MetricsAddr: "127.0.0.1:9090",
 			PcapEnabled: false,
+			LogFormat:   "json",
+			LogFile:     "",
 		},
 	}
 }
 
 func Load(path string) (Config, error) {
 	if path == "" {
-		path = DefaultConfigPath
+		if d, err := appdirs.Resolve(""); err == nil {
+			path = d.ConfigPath()
+		} else {
+			path = DefaultConfigPath
+		}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -94,7 +104,11 @@ func Load(path string) (Config, error) {
 
 func Save(path string, c Config) error {
 	if path == "" {
-		path = DefaultConfigPath
+		if d, err := appdirs.Resolve(""); err == nil {
+			path = d.ConfigPath()
+		} else {
+			path = DefaultConfigPath
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -140,5 +154,8 @@ func ApplyDefaults(c *Config) {
 	}
 	if c.Observability.MetricsAddr == "" {
 		c.Observability.MetricsAddr = def.Observability.MetricsAddr
+	}
+	if c.Observability.LogFormat == "" {
+		c.Observability.LogFormat = def.Observability.LogFormat
 	}
 }

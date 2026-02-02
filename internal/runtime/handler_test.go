@@ -83,7 +83,7 @@ func TestPipeline_SigRequired(t *testing.T) {
 
 func TestPipeline_SigInvalid(t *testing.T) {
 	rt := newTestRuntime(t)
-	id, err := identity.LoadOrCreate("")
+	id, err := identity.LoadOrCreate(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestPipeline_PowAbuseBan(t *testing.T) {
 
 func TestPipeline_RevokedIdentity(t *testing.T) {
 	rt := newTestRuntime(t)
-	id, err := identity.LoadOrCreate("")
+	id, err := identity.LoadOrCreate(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

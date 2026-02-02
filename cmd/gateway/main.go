@@ -17,23 +17,36 @@ import (
 	"github.com/dianabuilds/ardents/internal/gateway"
 	"github.com/dianabuilds/ardents/internal/runtime"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
+	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
-const (
-	defaultAddr      = "127.0.0.1:8080"
-	defaultTokenPath = "run/peer.token"
-)
+const defaultAddr = "127.0.0.1:8080"
 
 func main() {
 	fs := flag.NewFlagSet("gateway", flag.ExitOnError)
+	home := fs.String("home", "", "portable mode root (also Env: ARDENTS_HOME)")
 	addr := fs.String("addr", defaultAddr, "listen address (loopback only)")
-	cfgPath := fs.String("config", config.DefaultConfigPath, "path to config file")
-	tokenPath := fs.String("token", defaultTokenPath, "path to peer.token")
+	cfgPath := fs.String("config", "", "path to config file (default: XDG/ARDENTS_HOME)")
+	tokenPath := fs.String("token", "", "path to peer.token (default: XDG/ARDENTS_HOME)")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		fatal(err)
+	}
+
+	if *home != "" {
+		_ = os.Setenv(appdirs.EnvHome, *home)
+	}
+	dirs, err := appdirs.Resolve(*home)
+	if err != nil {
+		fatal(err)
+	}
+	if *cfgPath == "" {
+		*cfgPath = dirs.ConfigPath()
+	}
+	if *tokenPath == "" {
+		*tokenPath = dirs.GatewayTokenPath()
 	}
 
 	if err := ensureLoopback(*addr); err != nil {
@@ -54,7 +67,7 @@ func main() {
 	svc := gateway.Service{
 		Token: token,
 		Send: func(ctx context.Context, addr string, to string, text string) (gateway.AckResult, error) {
-			peerID, err := resolveTargetPeerID(to)
+			peerID, err := resolveTargetPeerID(dirs, to)
 			if err != nil {
 				return gateway.AckResult{}, err
 			}
@@ -73,7 +86,7 @@ func main() {
 			return gateway.AckResult{Status: p.Status, ErrorCode: p.ErrorCode}, nil
 		},
 		Resolve: func(alias string) (gateway.ResolveResult, error) {
-			book, err := addressbook.LoadOrInit("")
+			book, err := addressbook.LoadOrInit(dirs.AddressBookPath())
 			if err != nil {
 				return gateway.ResolveResult{}, err
 			}
@@ -84,7 +97,7 @@ func main() {
 			return gateway.ResolveResult{Found: ok, Entry: entry}, nil
 		},
 		Status: func() any {
-			data, err := os.ReadFile("run/status.json")
+			data, err := os.ReadFile(dirs.StatusPath())
 			if err != nil {
 				return map[string]any{
 					"status": "stopped",
@@ -135,11 +148,11 @@ func readToken(path string) (string, error) {
 	return token, nil
 }
 
-func resolveTargetPeerID(to string) (string, error) {
+func resolveTargetPeerID(dirs appdirs.Dirs, to string) (string, error) {
 	if err := ids.ValidatePeerID(to); err == nil {
 		return to, nil
 	}
-	book, err := addressbook.LoadOrInit("")
+	book, err := addressbook.LoadOrInit(dirs.AddressBookPath())
 	if err != nil {
 		return "", err
 	}

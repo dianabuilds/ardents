@@ -56,7 +56,12 @@ NET **ДОЛЖЕН** иметь набор причин деградации (м
 
 ## 3) Конфигурация v1 (фиксировано)
 
-Файл конфигурации узла: `config/node.json` (UTF-8, JSON).
+Файл конфигурации узла: `node.json` (UTF-8, JSON) в config-директории узла.
+
+Расположение config/data/run в v1:
+
+* по умолчанию: XDG-директории (см. `docs/TECH-050-operations-and-service.md`);
+* portable: при заданном `ARDENTS_HOME` или флаге `--home` используется `<home>/config|data|run`.
 
 Минимальная схема:
 

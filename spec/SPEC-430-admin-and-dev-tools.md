@@ -23,6 +23,10 @@
 * файл `run/pcap.jsonl` **ДОЛЖЕН** создаваться с owner-only правами (на POSIX `0600`, на Windows — ограниченный ACL);
 * при включении capture узел **ДОЛЖЕН** логировать `warn` с `event=pcap.enabled`.
 
+Примечание по путям:
+
+* `run/` — это runtime-директория узла (см. `spec/SPEC-100-network-manager.md` и `docs/TECH-050-operations-and-service.md`).
+
 ---
 
 ## 2) Replay (фиксировано)

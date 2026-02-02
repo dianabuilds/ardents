@@ -25,6 +25,12 @@
 go run ./cmd/node get --id <cid>
 ```
 
+По умолчанию `cmd/node` использует XDG/дефолтные директории узла. Для portable режима:
+
+```
+go run ./cmd/node get --home ./ardents-home --id <cid>
+```
+
 Выводит:
 
 * `type`, `owner`, `created_at_ms`, `policy`

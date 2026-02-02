@@ -11,6 +11,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/config"
 	"github.com/dianabuilds/ardents/internal/contentnode"
 	"github.com/dianabuilds/ardents/internal/runtime"
+	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 )
 
 type NodeView struct {
@@ -50,12 +51,23 @@ func getCmd(args []string) {
 	id := fs.String("id", "", "node cid (required)")
 	decrypt := fs.Bool("decrypt", false, "attempt decrypt if encrypted")
 	historyDepth := fs.Int("history-depth", 0, "follow prev/supersedes links (depth)")
-	cfgPath := fs.String("config", config.DefaultConfigPath, "path to config file")
+	home := fs.String("home", "", "portable mode root (also Env: ARDENTS_HOME)")
+	cfgPath := fs.String("config", "", "path to config file (default: XDG/ARDENTS_HOME)")
 	if err := fs.Parse(args); err != nil {
 		fatal(err)
 	}
 	if *id == "" {
 		fatal(errors.New("missing --id"))
+	}
+	if *home != "" {
+		_ = os.Setenv(appdirs.EnvHome, *home)
+	}
+	dirs, err := appdirs.Resolve(*home)
+	if err != nil {
+		fatal(err)
+	}
+	if *cfgPath == "" {
+		*cfgPath = dirs.ConfigPath()
 	}
 	cfg, err := loadOrInitConfig(*cfgPath)
 	if err != nil {

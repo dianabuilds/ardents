@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"crypto/ed25519"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/observability"
 	"github.com/dianabuilds/ardents/internal/providers"
 	"github.com/dianabuilds/ardents/internal/services/serviceregistry"
+	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 	"github.com/dianabuilds/ardents/internal/shared/capabilities"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
@@ -37,6 +39,7 @@ type Runtime struct {
 	book              addressbook.Book
 	log               *observability.Logger
 	pcap              *observability.PcapWriter
+	pcapPath          string
 	tracker           *delivery.Tracker
 	health            *health.Server
 	peersConnected    uint64
@@ -63,11 +66,21 @@ func New(cfg config.Config) *Runtime {
 	if err != nil {
 		dialer = nil
 	}
-	id, err := identity.LoadOrCreate("")
+	dirs, err := appdirs.Resolve("")
+	if err != nil {
+		dirs = appdirs.Dirs{
+			ConfigDir: "config",
+			DataDir:   "data",
+			RunDir:    "run",
+			StateDir:  "run",
+		}
+	}
+
+	id, err := identity.LoadOrCreate(dirs.IdentityDir())
 	if err != nil {
 		id = identity.Identity{}
 	}
-	book, err := addressbook.LoadOrInit("")
+	book, err := addressbook.LoadOrInit(dirs.AddressBookPath())
 	if err != nil {
 		book = addressbook.Book{}
 	}
@@ -81,12 +94,17 @@ func New(cfg config.Config) *Runtime {
 			CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
 		})
 	}
-	keys, err := quic.LoadOrCreateKeyMaterial("")
+	keys, err := quic.LoadOrCreateKeyMaterial(dirs.KeysDir())
 	if err != nil {
 		keys = quic.KeyMaterial{}
 	}
-	log := observability.New()
-	pcap := observability.NewPcapWriter(cfg.Observability.PcapEnabled, "run/pcap.jsonl")
+	pcapPath := dirs.PcapPath()
+	pcap := observability.NewPcapWriter(cfg.Observability.PcapEnabled, pcapPath)
+	logFile := cfg.Observability.LogFile
+	if logFile != "" && !filepath.IsAbs(logFile) {
+		logFile = filepath.Join(dirs.RunDir, logFile)
+	}
+	log := observability.NewWithOptions(cfg.Observability.LogFormat, logFile)
 	return &Runtime{
 		cfg:   cfg,
 		net:   netmgr.New(),
@@ -105,6 +123,7 @@ func New(cfg config.Config) *Runtime {
 		book:              book,
 		log:               log,
 		pcap:              pcap,
+		pcapPath:          pcapPath,
 		tracker:           delivery.NewTracker(),
 		metrics:           metrics.New(),
 		providers:         providers.NewRegistry(),
@@ -126,8 +145,19 @@ func (r *Runtime) Start(ctx context.Context) error {
 		return err
 	}
 	r.seedPlaceholderNode()
-	observability.EnforceRetention("run/pcap.jsonl", 24*time.Hour, 0)
-	observability.EnforceRetention("run/log.jsonl", 7*24*time.Hour, 1<<30)
+	observability.EnforceRetention(r.pcapPath, 24*time.Hour, 0)
+	if r.cfg.Observability.LogFile != "" {
+		logFile := r.cfg.Observability.LogFile
+		if !filepath.IsAbs(logFile) {
+			dirs, err := appdirs.Resolve("")
+			if err == nil {
+				logFile = filepath.Join(dirs.RunDir, logFile)
+			} else {
+				logFile = filepath.Join("run", logFile)
+			}
+		}
+		observability.EnforceRetention(logFile, 7*24*time.Hour, 1<<30)
+	}
 	if r.pcap != nil && r.pcap.Enabled() {
 		r.log.Event("warn", "pcap", "pcap.enabled", "", "", "")
 	}

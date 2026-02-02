@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dianabuilds/ardents/internal/contentnode"
+	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 )
 
@@ -43,7 +44,11 @@ type Entry struct {
 
 func LoadOrInit(path string) (Book, error) {
 	if path == "" {
-		path = DefaultPath
+		if d, err := appdirs.Resolve(""); err == nil {
+			path = d.AddressBookPath()
+		} else {
+			path = DefaultPath
+		}
 	}
 	if _, err := os.Stat(path); err == nil {
 		return Load(path)
@@ -73,7 +78,11 @@ func Load(path string) (Book, error) {
 
 func Save(path string, b Book) error {
 	if path == "" {
-		path = DefaultPath
+		if d, err := appdirs.Resolve(""); err == nil {
+			path = d.AddressBookPath()
+		} else {
+			path = DefaultPath
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

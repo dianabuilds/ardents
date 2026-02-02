@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dianabuilds/ardents/internal/config"
+	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 	"github.com/dianabuilds/ardents/internal/transport/quic"
 )
 
@@ -25,7 +26,8 @@ type pcapRecord struct {
 
 func main() {
 	fs := flag.NewFlagSet("replay", flag.ExitOnError)
-	pcapPath := fs.String("pcap", "run/pcap.jsonl", "pcap jsonl path")
+	home := fs.String("home", "", "portable mode root (also Env: ARDENTS_HOME)")
+	pcapPath := fs.String("pcap", "", "pcap jsonl path (default: XDG/ARDENTS_HOME)")
 	addr := fs.String("addr", "", "quic://host:port (required)")
 	expectedPeerID := fs.String("peer", "", "expected remote peer_id (optional)")
 	allowNetwork := fs.Bool("allow-network", false, "allow non-loopback replay")
@@ -39,6 +41,16 @@ func main() {
 	}
 	if !*allowNetwork && !isLoopbackAddr(*addr) {
 		fatal(errors.New("replay is sandbox-only by default; use --allow-network to enable"))
+	}
+	if *pcapPath == "" {
+		if *home != "" {
+			_ = os.Setenv(appdirs.EnvHome, *home)
+		}
+		dirs, err := appdirs.Resolve(*home)
+		if err != nil {
+			fatal(err)
+		}
+		*pcapPath = dirs.PcapPath()
 	}
 
 	cfg := config.Default()

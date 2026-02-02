@@ -80,7 +80,7 @@ func TestResolveAliasConflict(t *testing.T) {
 }
 
 func TestBundleExportImport(t *testing.T) {
-	id, err := identity.LoadOrCreate("")
+	id, err := identity.LoadOrCreate(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestBundleExportImport(t *testing.T) {
 }
 
 func TestBundleImportUntrusted(t *testing.T) {
-	id, err := identity.LoadOrCreate("")
+	id, err := identity.LoadOrCreate(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
