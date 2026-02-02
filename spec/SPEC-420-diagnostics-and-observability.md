@@ -1,0 +1,73 @@
+# SPEC-420: Диагностика и наблюдаемость
+
+**Статус:** Approved v1.0 (2026-02-02)  
+**Зависимости:** SPEC-010, SPEC-100, SPEC-140  
+**Назначение:** зафиксировать логирование, метрики, трейсинг и health для всех компонентов.
+
+---
+
+## 1) Логи (фиксировано)
+
+Формат логов **ДОЛЖЕН** быть JSON Lines (один JSON-объект на строку).
+
+Обязательные поля:
+
+* `ts_ms` (int64)
+* `level` (`debug`|`info`|`warn`|`error`)
+* `component` (string, например `net`, `msg`, `routing`)
+* `event` (string)
+* `peer_id` (string, optional)
+* `msg_id` (string, optional)
+* `error_code` (string, optional)
+
+Предупреждение о чувствительных данных (фиксировано):
+
+* Логи **НЕ ДОЛЖНЫ** включать приватные ключи, token’ы, plaintext приватных (encrypted) payload и любые секреты.
+* Packet capture (см. SPEC-430) **ДОЛЖЕН** считаться чувствительным артефактом и храниться с owner-only правами.
+
+---
+
+## 2) Метрики (фиксировано)
+
+Узел **ДОЛЖЕН** предоставлять метрики в формате Prometheus на loopback `127.0.0.1:9090`.
+
+Минимальные метрики:
+
+* `net_inbound_conns`, `net_outbound_conns`
+* `msg_received_total{type}`, `msg_rejected_total{reason}`
+* `ack_latency_ms_bucket`
+* `pow_required_total`, `pow_invalid_total`
+
+---
+
+## 2.1 Retention (фиксировано)
+
+Реализация **ДОЛЖНА** иметь политику retention по умолчанию:
+
+* логи: хранить локально не более 7 дней или 1 GiB (что наступит раньше);
+* pcap/replay артефакты: хранить не более 24 часов по умолчанию.
+
+Изменение retention допускается только локальной конфигурацией.
+
+---
+
+## 3) Tracing (фиксировано)
+
+Используется OpenTelemetry.
+
+Корреляция v1:
+
+* `msg_id` **ДОЛЖЕН** использоваться как корреляционный идентификатор в логах и событиях.
+
+---
+
+## 4) Health (фиксировано)
+
+Узел **ДОЛЖЕН** предоставлять локальный health endpoint:
+
+* HTTP GET `127.0.0.1:8081/healthz`
+
+Ответ JSON:
+
+* `status` (`ok`|`degraded`|`stopped`)
+* `peers_connected` (uint)
