@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"time"
 )
 
@@ -155,35 +154,47 @@ func addJSON(zw *zip.Writer, name string, v any) error {
 	return addBytes(zw, name, b)
 }
 
-func tailFile(path string, maxLines int) ([]byte, error) {
+func readTailWindow(path string, maxBytes int64) (data []byte, partial bool, fileSize int64, err error) {
+	if path == "" || maxBytes <= 0 {
+		return nil, false, 0, ErrBadRequest
+	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, false, 0, err
 	}
 	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, false, 0, err
 	}
-	size := stat.Size()
+	fileSize = stat.Size()
 	var start int64
-	if size > MaxTailBytes {
-		start = size - MaxTailBytes
+	if fileSize > maxBytes {
+		start = fileSize - maxBytes
+		partial = true
 	}
 	if start > 0 {
 		if _, err := f.Seek(start, io.SeekStart); err != nil {
-			return nil, err
+			return nil, false, fileSize, err
 		}
 	}
 	b, err := io.ReadAll(f)
 	if err != nil {
-		return nil, err
+		return nil, partial, fileSize, err
 	}
 	if start > 0 {
 		if i := bytes.IndexByte(b, '\n'); i >= 0 && i+1 < len(b) {
 			b = b[i+1:]
 		}
+	}
+	return b, partial, fileSize, nil
+}
+
+func tailFile(path string, maxLines int) ([]byte, error) {
+	b, _, _, err := readTailWindow(path, MaxTailBytes)
+	if err != nil {
+		return nil, err
 	}
 	lines := bytes.Split(b, []byte{'\n'})
 	if len(lines) > maxLines {
@@ -198,36 +209,9 @@ func tailFile(path string, maxLines int) ([]byte, error) {
 }
 
 func pcapMeta(path string) (any, error) {
-	f, err := os.Open(path)
+	b, partial, size, err := readTailWindow(path, MaxTailBytes)
 	if err != nil {
 		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-
-	stat, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	size := stat.Size()
-	var start int64
-	partial := false
-	if size > MaxTailBytes {
-		start = size - MaxTailBytes
-		partial = true
-	}
-	if start > 0 {
-		if _, err := f.Seek(start, io.SeekStart); err != nil {
-			return nil, err
-		}
-	}
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return nil, err
-	}
-	if start > 0 {
-		if i := bytes.IndexByte(b, '\n'); i >= 0 && i+1 < len(b) {
-			b = b[i+1:]
-		}
 	}
 
 	type rec struct {
@@ -342,14 +326,4 @@ func addressBookMeta(b []byte) any {
 		"revoked_identity_ids_count":    len(revoked),
 		"deprecated_identity_ids_count": len(depr),
 	}
-}
-
-func SanitizeFilename(s string) string {
-	s = strings.TrimSpace(s)
-	s = strings.ReplaceAll(s, string(os.PathSeparator), "_")
-	s = strings.ReplaceAll(s, "..", "_")
-	if s == "" {
-		return "bundle"
-	}
-	return s
 }
