@@ -24,7 +24,42 @@ type pcapRecord struct {
 	EnvelopeCBORB64 string `json:"envelope_cbor_b64"`
 }
 
+type replayOptions struct {
+	home         string
+	pcapPath     string
+	addr         string
+	expectedPeer string
+	allowNetwork bool
+	noDelay      bool
+	onlyDir      string
+}
+
 func main() {
+	opts, err := parseOptions(os.Args[1:])
+	if err != nil {
+		fatal(err)
+	}
+	cfg := config.Default()
+	dialer, err := quic.NewDialer(cfg)
+	if err != nil {
+		fatal(err)
+	}
+	file, err := os.Open(opts.pcapPath)
+	if err != nil {
+		fatal(err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	count, err := replayFile(file, dialer, cfg, opts)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Println("replayed:", count)
+}
+
+func parseOptions(args []string) (replayOptions, error) {
 	fs := flag.NewFlagSet("replay", flag.ExitOnError)
 	home := fs.String("home", "", "portable mode root (also Env: ARDENTS_HOME)")
 	pcapPath := fs.String("pcap", "", "pcap jsonl path (default: XDG/ARDENTS_HOME)")
@@ -33,71 +68,101 @@ func main() {
 	allowNetwork := fs.Bool("allow-network", false, "allow non-loopback replay")
 	noDelay := fs.Bool("no-delay", false, "replay without delays")
 	onlyDir := fs.String("dir", "out", "filter by dir (out|in|any)")
-	if err := fs.Parse(os.Args[1:]); err != nil {
-		fatal(err)
+	if err := fs.Parse(args); err != nil {
+		return replayOptions{}, err
 	}
-	if *addr == "" {
-		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
+	opts := replayOptions{
+		home:         *home,
+		pcapPath:     *pcapPath,
+		addr:         *addr,
+		expectedPeer: *expectedPeerID,
+		allowNetwork: *allowNetwork,
+		noDelay:      *noDelay,
+		onlyDir:      *onlyDir,
 	}
-	if !*allowNetwork && !isLoopbackAddr(*addr) {
-		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
+	if opts.addr == "" {
+		return replayOptions{}, errors.New("ERR_CLI_INVALID_ARGS")
 	}
-	if *pcapPath == "" {
-		if *home != "" {
-			_ = os.Setenv(appdirs.EnvHome, *home)
-		}
-		dirs, err := appdirs.Resolve(*home)
-		if err != nil {
-			fatal(err)
-		}
-		*pcapPath = dirs.PcapPath()
+	if !opts.allowNetwork && !isLoopbackAddr(opts.addr) {
+		return replayOptions{}, errors.New("ERR_CLI_INVALID_ARGS")
 	}
-
-	cfg := config.Default()
-	dialer, err := quic.NewDialer(cfg)
+	resolved, err := resolvePcapPath(opts)
 	if err != nil {
-		fatal(err)
+		return replayOptions{}, err
 	}
-	file, err := os.Open(*pcapPath)
-	if err != nil {
-		fatal(err)
-	}
-	defer func() {
-		_ = file.Close()
-	}()
+	return resolved, nil
+}
 
+func resolvePcapPath(opts replayOptions) (replayOptions, error) {
+	if opts.pcapPath != "" {
+		return opts, nil
+	}
+	if opts.home != "" {
+		_ = os.Setenv(appdirs.EnvHome, opts.home)
+	}
+	dirs, err := appdirs.Resolve(opts.home)
+	if err != nil {
+		return replayOptions{}, err
+	}
+	opts.pcapPath = dirs.PcapPath()
+	return opts, nil
+}
+
+func replayFile(file *os.File, dialer *quic.Dialer, cfg config.Config, opts replayOptions) (int, error) {
 	scanner := bufio.NewScanner(file)
 	var prevTS int64
 	count := 0
 	for scanner.Scan() {
-		line := scanner.Bytes()
-		var rec pcapRecord
-		if err := json.Unmarshal(line, &rec); err != nil {
-			fatal(err)
+		rec, ok, err := decodePcapRecord(scanner.Bytes())
+		if err != nil {
+			return 0, err
 		}
-		if rec.Dir == "" || rec.EnvelopeCBORB64 == "" {
+		if !ok {
 			continue
 		}
-		if *onlyDir != "any" && rec.Dir != *onlyDir {
+		if !shouldReplayDir(rec.Dir, opts.onlyDir) {
 			continue
 		}
-		if !*noDelay && prevTS > 0 && rec.TSMs > prevTS {
+		if !opts.noDelay && prevTS > 0 && rec.TSMs > prevTS {
 			time.Sleep(time.Duration(rec.TSMs-prevTS) * time.Millisecond)
 		}
 		prevTS = rec.TSMs
-		data, err := base64.StdEncoding.DecodeString(rec.EnvelopeCBORB64)
-		if err != nil {
-			fatal(err)
-		}
-		if _, err := dialer.SendEnvelope(context.Background(), stripScheme(*addr), *expectedPeerID, data, cfg.Limits.MaxMsgBytes); err != nil {
-			fatal(err)
+		if err := sendReplayEnvelope(dialer, cfg, opts, rec.EnvelopeCBORB64); err != nil {
+			return 0, err
 		}
 		count++
 	}
 	if err := scanner.Err(); err != nil {
-		fatal(err)
+		return 0, err
 	}
-	fmt.Println("replayed:", count)
+	return count, nil
+}
+
+func decodePcapRecord(line []byte) (pcapRecord, bool, error) {
+	var rec pcapRecord
+	if err := json.Unmarshal(line, &rec); err != nil {
+		return pcapRecord{}, false, err
+	}
+	if rec.Dir == "" || rec.EnvelopeCBORB64 == "" {
+		return pcapRecord{}, false, nil
+	}
+	return rec, true, nil
+}
+
+func sendReplayEnvelope(dialer *quic.Dialer, cfg config.Config, opts replayOptions, envelopeB64 string) error {
+	data, err := base64.StdEncoding.DecodeString(envelopeB64)
+	if err != nil {
+		return err
+	}
+	_, err = dialer.SendEnvelope(context.Background(), stripScheme(opts.addr), opts.expectedPeer, data, cfg.Limits.MaxMsgBytes)
+	return err
+}
+
+func shouldReplayDir(dir string, filter string) bool {
+	if filter == "any" {
+		return true
+	}
+	return dir == filter
 }
 
 func stripScheme(addr string) string {

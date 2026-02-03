@@ -16,20 +16,13 @@ import (
 
 func TestPipeline_TTLExpired(t *testing.T) {
 	rt := newTestRuntime(t)
-	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 	if err != nil {
 		t.Fatal(err)
 	}
 	env.TSMs = 1
 	env.TTLMs = 1
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelope(t, rt, "peer_x", env)
 	p := decodeAck(t, resps[0])
 	if p.Status != "REJECTED" || p.ErrorCode != "ERR_TTL_EXPIRED" {
 		t.Fatalf("unexpected ack: %+v", p)
@@ -38,21 +31,15 @@ func TestPipeline_TTLExpired(t *testing.T) {
 
 func TestPipeline_Dedup(t *testing.T) {
 	rt := newTestRuntime(t)
-	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := encodeEnv(t, env)
 	if _, err := rt.handleEnvelope("peer_x", data); err != nil {
 		t.Fatal(err)
 	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelopeBytes(t, rt, "peer_x", data)
 	p := decodeAck(t, resps[0])
 	if p.Status != "DUPLICATE" {
 		t.Fatalf("expected DUPLICATE, got %+v", p)
@@ -61,20 +48,13 @@ func TestPipeline_Dedup(t *testing.T) {
 
 func TestPipeline_SigRequired(t *testing.T) {
 	rt := newTestRuntime(t)
-	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 	if err != nil {
 		t.Fatal(err)
 	}
 	env.From.IdentityID = "did:key:z6Mku7wq4aVxK8rV8b1eYB2R7v9P7S5i1r6Y3g6x2z6xQx"
 	env.Sig = nil
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelope(t, rt, "peer_x", env)
 	p := decodeAck(t, resps[0])
 	if p.ErrorCode != "ERR_SIG_REQUIRED" {
 		t.Fatalf("expected ERR_SIG_REQUIRED, got %+v", p)
@@ -87,7 +67,7 @@ func TestPipeline_SigInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,14 +76,7 @@ func TestPipeline_SigInvalid(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.Payload = []byte{0x02}
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelope(t, rt, "peer_x", env)
 	p := decodeAck(t, resps[0])
 	if p.ErrorCode != "ERR_SIG_INVALID" {
 		t.Fatalf("expected ERR_SIG_INVALID, got %+v", p)
@@ -112,20 +85,13 @@ func TestPipeline_SigInvalid(t *testing.T) {
 
 func TestPipeline_PowRequired(t *testing.T) {
 	rt := newTestRuntime(t)
-	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 	if err != nil {
 		t.Fatal(err)
 	}
 	env.From.IdentityID = ""
 	env.Pow = nil
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelope(t, rt, "peer_x", env)
 	p := decodeAck(t, resps[0])
 	if p.ErrorCode != pow.ErrPowRequired.Error() {
 		t.Fatalf("expected ERR_POW_REQUIRED, got %+v", p)
@@ -134,7 +100,7 @@ func TestPipeline_PowRequired(t *testing.T) {
 
 func TestPipeline_PowInvalid(t *testing.T) {
 	rt := newTestRuntime(t)
-	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,14 +111,7 @@ func TestPipeline_PowInvalid(t *testing.T) {
 		Nonce:      make([]byte, 15),
 		Subject:    make([]byte, 32),
 	}
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelope(t, rt, "peer_x", env)
 	p := decodeAck(t, resps[0])
 	if p.ErrorCode != pow.ErrPowInvalid.Error() {
 		t.Fatalf("expected ERR_POW_INVALID, got %+v", p)
@@ -162,7 +121,7 @@ func TestPipeline_PowInvalid(t *testing.T) {
 func TestPipeline_PowAbuseBan(t *testing.T) {
 	rt := newTestRuntime(t)
 	for i := 0; i < 5; i++ {
-		env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+		env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -173,10 +132,7 @@ func TestPipeline_PowAbuseBan(t *testing.T) {
 			Nonce:      make([]byte, 15),
 			Subject:    make([]byte, 32),
 		}
-		data, err := env.Encode()
-		if err != nil {
-			t.Fatal(err)
-		}
+		data := encodeEnv(t, env)
 		if _, err := rt.handleEnvelope("peer_x", data); err != nil {
 			t.Fatal(err)
 		}
@@ -193,7 +149,7 @@ func TestPipeline_RevokedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt.book.RevokedIDs = []string{id.ID}
-	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01})
+	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,14 +157,7 @@ func TestPipeline_RevokedIdentity(t *testing.T) {
 	if err := env.Sign(id.PrivateKey); err != nil {
 		t.Fatal(err)
 	}
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelope(t, rt, "peer_x", env)
 	p := decodeAck(t, resps[0])
 	if p.ErrorCode != "ERR_ID_REVOKED" {
 		t.Fatalf("expected ERR_ID_REVOKED, got %+v", p)
@@ -225,18 +174,11 @@ func TestPipeline_PayloadTooLarge(t *testing.T) {
 	t.Cleanup(func() {
 		_ = rt.Stop(context.Background())
 	})
-	env, err := buildEnv(rt, "chat.msg.v1", []byte{0x01, 0x02, 0x03, 0x04, 0x05})
+	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01, 0x02, 0x03, 0x04, 0x05})
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelope(t, rt, "peer_x", env)
 	p := decodeAck(t, resps[0])
 	if p.ErrorCode != "ERR_PAYLOAD_TOO_LARGE" {
 		t.Fatalf("expected ERR_PAYLOAD_TOO_LARGE, got %+v", p)
@@ -255,14 +197,7 @@ func TestPipeline_UnsupportedType(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.Pow = stamp
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resps, err := rt.handleEnvelope("peer_x", data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resps := handleEnvelope(t, rt, "peer_x", env)
 	p := decodeAck(t, resps[0])
 	if p.Status != "REJECTED" || p.ErrorCode != "ERR_UNSUPPORTED_TYPE" {
 		t.Fatalf("unexpected ack: %+v", p)
@@ -303,6 +238,29 @@ func buildEnv(rt *Runtime, typ string, payload []byte) (envelope.Envelope, error
 		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
 		Payload: payload,
 	}, nil
+}
+
+func encodeEnv(t *testing.T, env envelope.Envelope) []byte {
+	t.Helper()
+	data, err := env.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func handleEnvelopeBytes(t *testing.T, rt *Runtime, fromPeerID string, data []byte) [][]byte {
+	t.Helper()
+	resps, err := rt.handleEnvelope(fromPeerID, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resps
+}
+
+func handleEnvelope(t *testing.T, rt *Runtime, fromPeerID string, env envelope.Envelope) [][]byte {
+	t.Helper()
+	return handleEnvelopeBytes(t, rt, fromPeerID, encodeEnv(t, env))
 }
 
 func decodeAck(t *testing.T, data []byte) ack.Payload {

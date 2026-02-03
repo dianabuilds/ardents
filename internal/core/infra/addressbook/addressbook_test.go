@@ -1,6 +1,7 @@
 package addressbook
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/dianabuilds/ardents/internal/shared/identity"
@@ -74,7 +75,7 @@ func TestResolveAliasConflict(t *testing.T) {
 		},
 	}
 	_, _, err := b.ResolveAlias("bb", 0)
-	if err != ErrAliasConflict {
+	if !errors.Is(err, ErrAliasConflict) {
 		t.Fatalf("expected ERR_ALIAS_CONFLICT, got %v", err)
 	}
 }

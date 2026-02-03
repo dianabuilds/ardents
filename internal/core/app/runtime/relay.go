@@ -6,12 +6,10 @@ import (
 	"time"
 
 	"crypto/ed25519"
+
 	"github.com/dianabuilds/ardents/internal/core/domain/relay"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
-	"github.com/dianabuilds/ardents/internal/shared/pow"
-	"github.com/dianabuilds/ardents/internal/shared/timeutil"
-	"github.com/dianabuilds/ardents/internal/shared/uuidv7"
 )
 
 const relayType = "relay.packet.v1"
@@ -87,7 +85,7 @@ func (r *Runtime) SendViaRelay(ctx context.Context, relays []string, finalPeerID
 }
 
 func (r *Runtime) forwardRelayPacket(nextPeerID string, relayPacketBytes []byte) error {
-	envBytes, err := r.buildRelayEnvelope(nextPeerID, relayPacketBytes)
+	envBytes, err := r.buildSignedEnvelopeBytes(relayType, nextPeerID, relayPacketBytes, ttlMinuteMs())
 	if err != nil {
 		return err
 	}
@@ -96,39 +94,7 @@ func (r *Runtime) forwardRelayPacket(nextPeerID string, relayPacketBytes []byte)
 }
 
 func (r *Runtime) buildRelayEnvelope(nextPeerID string, payload []byte) ([]byte, error) {
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: "",
-		Type:  relayType,
-		From: envelope.From{
-			PeerID:     r.peerID,
-			IdentityID: r.identity.ID,
-		},
-		To: envelope.To{
-			PeerID: nextPeerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payload,
-	}
-	id, err := uuidv7.New()
-	if err != nil {
-		return nil, err
-	}
-	env.MsgID = id
-	if r.identity.PrivateKey != nil && r.identity.ID != "" {
-		if err := env.Sign(r.identity.PrivateKey); err != nil {
-			return nil, err
-		}
-	} else {
-		sub := pow.Subject(env.MsgID, env.TSMs, env.From.PeerID)
-		stamp, err := pow.Generate(sub, r.cfg.Pow.DefaultDifficulty)
-		if err != nil {
-			return nil, err
-		}
-		env.Pow = stamp
-	}
-	return env.Encode()
+	return r.buildSignedEnvelopeBytes(relayType, nextPeerID, payload, ttlMinuteMs())
 }
 
 func (r *Runtime) forwardEnvelope(peerID string, envBytes []byte) ([]byte, error) {

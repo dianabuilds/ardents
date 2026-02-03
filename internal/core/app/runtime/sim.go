@@ -22,11 +22,41 @@ import (
 )
 
 func NewSim(cfg config.Config, peerID string, id identity.Identity, book addressbook.Book) *Runtime {
-	if peerID == "" && id.PublicKey != nil {
-		if pid, err := ids.NewPeerID(id.PublicKey); err == nil {
-			peerID = pid
-		}
+	rt := newSimRuntime(cfg, peerID, id, book)
+	rt.transportKeys = quic.KeyMaterial{
+		PrivateKey: id.PrivateKey,
+		PublicKey:  id.PublicKey,
 	}
+	return rt
+}
+
+func NewSimV2(cfg config.Config, peerID string, id identity.Identity, book addressbook.Book, onion onionkey.Keypair, db *netdb.DB, params reseed.Params) *Runtime {
+	peerID = ensurePeerID(peerID, id)
+	if db == nil {
+		db = netdb.New(netdb.DefaultRecordMaxTTLMs, netdb.DefaultK)
+	}
+	if params.ProtocolMajor == 0 {
+		params = defaultReseedParams(cfg)
+	}
+	rt := newSimRuntime(cfg, peerID, id, book)
+	rt.netdb = db
+	rt.clockSkew = newClockSkewTracker(4)
+	rt.powAbuse = newPowAbuseTracker(5)
+	rt.localCapabilities = []string{"node.fetch.v1", "dir.query.v1"}
+	rt.peerCaps = make(map[string][]byte)
+	rt.tunnels = make(map[string]*tunnelSession)
+	rt.localServices = make(map[string]localServiceInfo)
+	rt.transportKeys = quic.KeyMaterial{
+		PrivateKey: id.PrivateKey,
+		PublicKey:  id.PublicKey,
+	}
+	rt.onionKey = onion
+	rt.reseedParams = params
+	return rt
+}
+
+func newSimRuntime(cfg config.Config, peerID string, id identity.Identity, book addressbook.Book) *Runtime {
+	peerID = ensurePeerID(peerID, id)
 	return &Runtime{
 		cfg:       cfg,
 		net:       netmgr.New(),
@@ -42,54 +72,17 @@ func NewSim(cfg config.Config, peerID string, id identity.Identity, book address
 		providers: providers.NewRegistry(),
 		services:  serviceregistry.New(),
 		tasks:     NewTaskStore(24 * time.Hour),
-		transportKeys: quic.KeyMaterial{
-			PrivateKey: id.PrivateKey,
-			PublicKey:  id.PublicKey,
-		},
 	}
 }
 
-func NewSimV2(cfg config.Config, peerID string, id identity.Identity, book addressbook.Book, onion onionkey.Keypair, db *netdb.DB, params reseed.Params) *Runtime {
-	if peerID == "" && id.PublicKey != nil {
-		if pid, err := ids.NewPeerID(id.PublicKey); err == nil {
-			peerID = pid
-		}
+func ensurePeerID(peerID string, id identity.Identity) string {
+	if peerID != "" || id.PublicKey == nil {
+		return peerID
 	}
-	if db == nil {
-		db = netdb.New(netdb.DefaultRecordMaxTTLMs, netdb.DefaultK)
+	if pid, err := ids.NewPeerID(id.PublicKey); err == nil {
+		return pid
 	}
-	if params.ProtocolMajor == 0 {
-		params = defaultReseedParams(cfg)
-	}
-	return &Runtime{
-		cfg:               cfg,
-		net:               netmgr.New(),
-		dedup:             netpkg.NewDedup(10*time.Minute, int(cfg.Limits.MaxInflightMsgs)),
-		bans:              netpkg.NewBanList(),
-		peerID:            peerID,
-		store:             storage.NewNodeStore(1_048_576),
-		identity:          id,
-		book:              book,
-		log:               observability.New(),
-		tracker:           delivery.NewTracker(),
-		metrics:           metrics.New(),
-		providers:         providers.NewRegistry(),
-		services:          serviceregistry.New(),
-		tasks:             NewTaskStore(24 * time.Hour),
-		netdb:             db,
-		clockSkew:         newClockSkewTracker(4),
-		powAbuse:          newPowAbuseTracker(5),
-		localCapabilities: []string{"node.fetch.v1", "dir.query.v1"},
-		peerCaps:          make(map[string][]byte),
-		tunnels:           make(map[string]*tunnelSession),
-		localServices:     make(map[string]localServiceInfo),
-		transportKeys: quic.KeyMaterial{
-			PrivateKey: id.PrivateKey,
-			PublicKey:  id.PublicKey,
-		},
-		onionKey:     onion,
-		reseedParams: params,
-	}
+	return peerID
 }
 
 func defaultReseedParams(cfg config.Config) reseed.Params {

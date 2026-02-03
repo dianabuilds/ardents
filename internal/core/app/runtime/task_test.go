@@ -25,28 +25,7 @@ func TestTaskIdempotencySamePayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: mustUUID(t),
-		Type:  tasks.RequestType,
-		From: envelope.From{
-			PeerID:     rt.peerID,
-			IdentityID: rt.identity.ID,
-		},
-		To: envelope.To{
-			PeerID: rt.peerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payload,
-	}
-	if err := env.Sign(rt.identity.PrivateKey); err != nil {
-		t.Fatal(err)
-	}
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := buildTaskEnv(t, rt, payload)
 	resps1, err := rt.handleEnvelope("peer_x", data)
 	if err != nil {
 		t.Fatal(err)
@@ -101,17 +80,7 @@ func TestTaskRejectOnDifferentPayload(t *testing.T) {
 	if len(resps2) < 2 {
 		t.Fatalf("expected fail response")
 	}
-	failEnv, err := envelope.DecodeEnvelope(resps2[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	failPayload, err := tasks.DecodeFail(failEnv.Payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if failPayload.ErrorCode != tasks.ErrTaskRejected.Error() {
-		t.Fatalf("expected ERR_TASK_REJECTED")
-	}
+	assertTaskFail(t, resps2[1], tasks.ErrTaskRejected.Error())
 }
 
 func buildTaskEnv(t *testing.T, rt *Runtime, payload []byte) []byte {
@@ -165,17 +134,7 @@ func TestTaskRejectOnDuplicateTaskID(t *testing.T) {
 	if err != nil || len(resps) < 2 {
 		t.Fatal("expected responses")
 	}
-	failEnv, err := envelope.DecodeEnvelope(resps[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	failPayload, err := tasks.DecodeFail(failEnv.Payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if failPayload.ErrorCode != tasks.ErrTaskRejected.Error() {
-		t.Fatalf("expected ERR_TASK_REJECTED")
-	}
+	assertTaskFail(t, resps[1], tasks.ErrTaskRejected.Error())
 }
 
 func mustUUID(t *testing.T) string {
@@ -185,4 +144,19 @@ func mustUUID(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return id
+}
+
+func assertTaskFail(t *testing.T, envBytes []byte, expectedCode string) {
+	t.Helper()
+	failEnv, err := envelope.DecodeEnvelope(envBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failPayload, err := tasks.DecodeFail(failEnv.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failPayload.ErrorCode != expectedCode {
+		t.Fatalf("expected %s", expectedCode)
+	}
 }

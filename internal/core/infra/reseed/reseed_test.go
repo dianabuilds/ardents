@@ -3,12 +3,15 @@ package reseed
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/shared/codec"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
+	"github.com/dianabuilds/ardents/internal/shared/testutil"
+	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
 func TestValidateBundle_QuorumAndRouterSig(t *testing.T) {
@@ -25,14 +28,14 @@ func TestValidateBundle_QuorumAndRouterSig(t *testing.T) {
 	}
 
 	bundle.Signatures = bundle.Signatures[:2]
-	if err := ValidateBundle(bundle, cfg); err != ErrReseedQuorumNotReached {
+	if err := ValidateBundle(bundle, cfg); !errors.Is(err, ErrReseedQuorumNotReached) {
 		t.Fatalf("expected quorum error, got %v", err)
 	}
 
 	bundle = makeBundle(t, keys)
 	bundle.Routers[0].Sig = []byte("bad")
 	bundle.Signatures = signBundle(t, bundle, keys[:3])
-	if err := ValidateBundle(bundle, cfg); err != ErrReseedSignatureInvalid {
+	if err := ValidateBundle(bundle, cfg); !errors.Is(err, ErrReseedSignatureInvalid) {
 		t.Fatalf("expected router sig error, got %v", err)
 	}
 }
@@ -58,8 +61,8 @@ func makeAuthorities(t *testing.T, n int) ([]string, []ed25519.PrivateKey) {
 
 func makeBundle(t *testing.T, keys []ed25519.PrivateKey) Bundle {
 	t.Helper()
-	now := time.Now().UTC().UnixNano() / int64(time.Millisecond)
-	router := makeRouterInfo(t)
+	now := timeutil.NowUnixMs()
+	router := makeRouterInfo(t, now)
 	b := Bundle{
 		V:           1,
 		NetworkID:   "ardents.mainnet",
@@ -93,22 +96,10 @@ func makeBundle(t *testing.T, keys []ed25519.PrivateKey) Bundle {
 	return b
 }
 
-func makeRouterInfo(t *testing.T) RouterInfo {
+func makeRouterInfo(t *testing.T, now int64) RouterInfo {
 	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pub := priv.Public().(ed25519.PublicKey)
-	peerID, err := ids.NewPeerID(pub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	onionPub := make([]byte, 32)
-	if _, err := rand.Read(onionPub); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC().UnixNano() / int64(time.Millisecond)
+	priv, pub, peerID := testutil.NewPeerKeyAndID(t)
+	onionPub := testutil.NewOnionPub(t)
 	ri := RouterInfo{
 		V:             1,
 		PeerID:        peerID,

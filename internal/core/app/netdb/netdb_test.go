@@ -2,21 +2,20 @@ package netdb
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
 	"testing"
-	"time"
 
-	"github.com/dianabuilds/ardents/internal/shared/ids"
+	"github.com/dianabuilds/ardents/internal/shared/testutil"
+	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
 func TestStoreRouterInfoAndFindValue(t *testing.T) {
 	db := New(DefaultRecordMaxTTLMs, DefaultK)
-	ri := makeRouterInfo(t)
+	now := timeutil.NowUnixMs()
+	ri := makeRouterInfo(t, now)
 	b, err := EncodeRouterInfo(ri)
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC().UnixNano() / int64(time.Millisecond)
 	status, code := db.Store(b, now)
 	if status != "OK" || code != "" {
 		t.Fatalf("expected OK, got %s %s", status, code)
@@ -28,22 +27,10 @@ func TestStoreRouterInfoAndFindValue(t *testing.T) {
 	}
 }
 
-func makeRouterInfo(t *testing.T) RouterInfo {
+func makeRouterInfo(t *testing.T, now int64) RouterInfo {
 	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pub := priv.Public().(ed25519.PublicKey)
-	peerID, err := ids.NewPeerID(pub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	onionPub := make([]byte, 32)
-	if _, err := rand.Read(onionPub); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC().UnixNano() / int64(time.Millisecond)
+	priv, pub, peerID := testutil.NewPeerKeyAndID(t)
+	onionPub := testutil.NewOnionPub(t)
 	ri := RouterInfo{
 		V:             1,
 		PeerID:        peerID,

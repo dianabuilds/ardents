@@ -11,10 +11,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/app/netdb"
 	"github.com/dianabuilds/ardents/internal/core/domain/tunnel"
 	"github.com/dianabuilds/ardents/internal/core/infra/reseed"
-	"github.com/dianabuilds/ardents/internal/shared/envelope"
-	"github.com/dianabuilds/ardents/internal/shared/pow"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
-	"github.com/dianabuilds/ardents/internal/shared/uuidv7"
 )
 
 type tunnelHop struct {
@@ -238,6 +235,15 @@ func (r *Runtime) buildTunnelPath(direction string, hops []netdb.RouterInfo) (*t
 	params := r.tunnelParams()
 	nowMs := timeutil.NowUnixMs()
 	expiresAtMs := nowMs + params.LeaseTTLMs
+	path := newTunnelPath(direction, hops, nowMs, expiresAtMs)
+	if err := r.buildTunnelRecords(path, hops, direction, expiresAtMs); err != nil {
+		return nil, err
+	}
+	r.log.Event("info", "tunnel", "tunnel.build.path", direction, "", "")
+	return path, nil
+}
+
+func newTunnelPath(direction string, hops []netdb.RouterInfo, nowMs int64, expiresAtMs int64) *tunnelPath {
 	path := &tunnelPath{
 		direction:   direction,
 		createdAtMs: nowMs,
@@ -251,13 +257,12 @@ func (r *Runtime) buildTunnelPath(direction string, hops []netdb.RouterInfo) (*t
 			tunnelID: newTunnelID(),
 		}
 	}
+	return path
+}
+
+func (r *Runtime) buildTunnelRecords(path *tunnelPath, hops []netdb.RouterInfo, direction string, expiresAtMs int64) error {
 	for i, hop := range hops {
-		nextPeerID := ""
-		var nextTunnelID []byte
-		if i < len(hops)-1 {
-			nextPeerID = hops[i+1].PeerID
-			nextTunnelID = path.hops[i+1].tunnelID
-		}
+		nextPeerID, nextTunnelID := nextHopInfo(hops, path, i)
 		rec := tunnel.Record{
 			V:            1,
 			NextPeerID:   nextPeerID,
@@ -266,41 +271,61 @@ func (r *Runtime) buildTunnelPath(direction string, hops []netdb.RouterInfo) (*t
 			Flags:        tunnel.RecordFlags{IsGateway: false},
 		}
 		if hop.PeerID == r.peerID {
-			ephemeralPriv := make([]byte, 32)
-			if _, err := rand.Read(ephemeralPriv); err != nil {
-				return nil, err
+			if err := r.storeSelfTunnelHop(path, hop, i, nextPeerID, nextTunnelID, expiresAtMs); err != nil {
+				return err
 			}
-			key, err := tunnel.DeriveHopKey(ephemeralPriv, hop.OnionPub, hop.PeerID, path.hops[i].tunnelID)
-			if err != nil {
-				return nil, err
-			}
-			path.hops[i].key = key
-			r.storeTunnel(path.hops[i].tunnelID, &tunnelSession{
-				key:          key,
-				nextPeerID:   nextPeerID,
-				nextTunnelID: append([]byte(nil), nextTunnelID...),
-				expiresAtMs:  expiresAtMs,
-			})
 			continue
 		}
-		req := tunnel.BuildRequest{
-			V:         1,
-			Direction: direction,
-			TunnelID:  path.hops[i].tunnelID,
-			HopIndex:  uint64(i),
+		if err := r.sendTunnelHopBuild(path, hop, i, rec, direction); err != nil {
+			return err
 		}
-		req, ct, key, err := tunnel.EncryptRecord(req, rec, hop.OnionPub, hop.PeerID)
-		if err != nil {
-			return nil, err
-		}
-		req.Record = ct
-		if err := r.sendTunnelBuild(hop.PeerID, req); err != nil {
-			return nil, err
-		}
-		path.hops[i].key = key
 	}
-	r.log.Event("info", "tunnel", "tunnel.build.path", direction, "", "")
-	return path, nil
+	return nil
+}
+
+func nextHopInfo(hops []netdb.RouterInfo, path *tunnelPath, idx int) (string, []byte) {
+	if idx >= len(hops)-1 {
+		return "", nil
+	}
+	return hops[idx+1].PeerID, path.hops[idx+1].tunnelID
+}
+
+func (r *Runtime) storeSelfTunnelHop(path *tunnelPath, hop netdb.RouterInfo, idx int, nextPeerID string, nextTunnelID []byte, expiresAtMs int64) error {
+	ephemeralPriv := make([]byte, 32)
+	if _, err := rand.Read(ephemeralPriv); err != nil {
+		return err
+	}
+	key, err := tunnel.DeriveHopKey(ephemeralPriv, hop.OnionPub, hop.PeerID, path.hops[idx].tunnelID)
+	if err != nil {
+		return err
+	}
+	path.hops[idx].key = key
+	r.storeTunnel(path.hops[idx].tunnelID, &tunnelSession{
+		key:          key,
+		nextPeerID:   nextPeerID,
+		nextTunnelID: append([]byte(nil), nextTunnelID...),
+		expiresAtMs:  expiresAtMs,
+	})
+	return nil
+}
+
+func (r *Runtime) sendTunnelHopBuild(path *tunnelPath, hop netdb.RouterInfo, idx int, rec tunnel.Record, direction string) error {
+	req := tunnel.BuildRequest{
+		V:         1,
+		Direction: direction,
+		TunnelID:  path.hops[idx].tunnelID,
+		HopIndex:  uint64(idx),
+	}
+	req, ct, key, err := tunnel.EncryptRecord(req, rec, hop.OnionPub, hop.PeerID)
+	if err != nil {
+		return err
+	}
+	req.Record = ct
+	if err := r.sendTunnelBuild(hop.PeerID, req); err != nil {
+		return err
+	}
+	path.hops[idx].key = key
+	return nil
 }
 
 func (r *Runtime) sendTunnelBuild(toPeerID string, req tunnel.BuildRequest) error {
@@ -308,38 +333,7 @@ func (r *Runtime) sendTunnelBuild(toPeerID string, req tunnel.BuildRequest) erro
 	if err != nil {
 		return err
 	}
-	msgID, err := uuidv7.New()
-	if err != nil {
-		return err
-	}
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: msgID,
-		Type:  tunnel.BuildType,
-		From: envelope.From{
-			PeerID:     r.peerID,
-			IdentityID: r.identity.ID,
-		},
-		To: envelope.To{
-			PeerID: toPeerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payload,
-	}
-	if r.identity.PrivateKey != nil && r.identity.ID != "" {
-		if err := env.Sign(r.identity.PrivateKey); err != nil {
-			return err
-		}
-	} else {
-		sub := pow.Subject(env.MsgID, env.TSMs, env.From.PeerID)
-		stamp, err := pow.Generate(sub, r.cfg.Pow.DefaultDifficulty)
-		if err != nil {
-			return err
-		}
-		env.Pow = stamp
-	}
-	encoded, err := env.Encode()
+	encoded, err := r.buildSignedEnvelopeBytes(tunnel.BuildType, toPeerID, payload, ttlMinuteMs())
 	if err != nil {
 		return err
 	}

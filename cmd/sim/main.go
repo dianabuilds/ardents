@@ -17,7 +17,6 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/infra/addressbook"
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
-	"github.com/dianabuilds/ardents/internal/shared/codec"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
@@ -47,7 +46,41 @@ type stats struct {
 	ByType        map[string]int
 }
 
+type simOptions struct {
+	nPeers         int
+	duration       time.Duration
+	rate           int
+	seed           int64
+	dropRate       float64
+	powInvalidRate float64
+	powDifficulty  uint64
+	profile        string
+}
+
 func main() {
+	opts, err := parseSimOptions(os.Args[1:])
+	if err != nil {
+		fatal(err)
+	}
+	rng := rand.New(rand.NewSource(opts.seed))
+	if opts.profile == "v2" {
+		if err := runV2(opts.nPeers, rng); err != nil {
+			fatal(err)
+		}
+		return
+	}
+	cfg := config.Default()
+	cfg.Pow.DefaultDifficulty = opts.powDifficulty
+	peers, err := initSimPeers(opts.nPeers, cfg)
+	if err != nil {
+		fatal(err)
+	}
+	st := newStats()
+	runSim(peers, opts, rng, &st)
+	printStats(st)
+}
+
+func parseSimOptions(args []string) (simOptions, error) {
 	fs := flag.NewFlagSet("sim", flag.ExitOnError)
 	nPeers := fs.Int("n", 5, "number of peers")
 	duration := fs.Duration("duration", 10*time.Second, "simulation duration")
@@ -57,116 +90,115 @@ func main() {
 	powInvalidRate := fs.Float64("pow-invalid-rate", 0, "rate of invalid/missing PoW 0..1")
 	powDifficulty := fs.Uint64("pow-difficulty", 16, "PoW difficulty")
 	profile := fs.String("profile", "v1", "simulation profile: v1 or v2")
-	if err := fs.Parse(os.Args[1:]); err != nil {
-		fatal(err)
+	if err := fs.Parse(args); err != nil {
+		return simOptions{}, err
 	}
-	if *nPeers < 2 {
-		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
+	opts := simOptions{
+		nPeers:         *nPeers,
+		duration:       *duration,
+		rate:           *rate,
+		seed:           *seed,
+		dropRate:       *dropRate,
+		powInvalidRate: *powInvalidRate,
+		powDifficulty:  *powDifficulty,
+		profile:        *profile,
 	}
-	if *rate <= 0 {
-		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
+	if opts.nPeers < 2 || opts.rate <= 0 {
+		return simOptions{}, errors.New("ERR_CLI_INVALID_ARGS")
 	}
-	if *dropRate < 0 || *dropRate > 1 || *powInvalidRate < 0 || *powInvalidRate > 1 {
-		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
+	if opts.dropRate < 0 || opts.dropRate > 1 || opts.powInvalidRate < 0 || opts.powInvalidRate > 1 {
+		return simOptions{}, errors.New("ERR_CLI_INVALID_ARGS")
 	}
+	return opts, nil
+}
 
-	rng := rand.New(rand.NewSource(*seed))
-	if *profile == "v2" {
-		if err := runV2(*nPeers, rng); err != nil {
-			fatal(err)
-		}
-		return
-	}
-	cfg := config.Default()
-	cfg.Pow.DefaultDifficulty = *powDifficulty
-
-	peers := make([]simPeer, 0, *nPeers)
-	for i := 0; i < *nPeers; i++ {
+func initSimPeers(n int, cfg config.Config) ([]simPeer, error) {
+	peers := make([]simPeer, 0, n)
+	for i := 0; i < n; i++ {
 		id, err := identity.NewEphemeral()
 		if err != nil {
-			fatal(err)
+			return nil, err
 		}
 		peerID, err := ids.NewPeerID(id.PublicKey)
 		if err != nil {
-			fatal(err)
+			return nil, err
 		}
-		book := addressbook.Book{
-			V:           1,
-			Entries:     []addressbook.Entry{},
-			UpdatedAtMs: timeutil.NowUnixMs(),
-		}
-		book.Entries = append(book.Entries, addressbook.Entry{
-			Alias:       "self",
-			TargetType:  "identity",
-			TargetID:    id.ID,
-			Source:      "self",
-			Trust:       "trusted",
-			CreatedAtMs: timeutil.NowUnixMs(),
-		})
+		book := buildSelfBook(id)
 		rt := runtime.NewSim(cfg, peerID, id, book)
 		nodeBytes, nodeID, err := buildSampleNode(id)
 		if err != nil {
-			fatal(err)
+			return nil, err
 		}
 		if err := rt.Store().Put(nodeID, nodeBytes); err != nil {
-			fatal(err)
+			return nil, err
 		}
 		peers = append(peers, simPeer{rt: rt, peerID: peerID, identity: id, nodeID: nodeID, nodeBytes: nodeBytes})
 	}
+	return peers, nil
+}
 
-	st := stats{ByType: map[string]int{}, AckByError: map[string]int{}}
-	interval := time.Second / time.Duration(*rate)
+func buildSelfBook(id identity.Identity) addressbook.Book {
+	book := addressbook.Book{
+		V:           1,
+		Entries:     []addressbook.Entry{},
+		UpdatedAtMs: timeutil.NowUnixMs(),
+	}
+	book.Entries = append(book.Entries, addressbook.Entry{
+		Alias:       "self",
+		TargetType:  "identity",
+		TargetID:    id.ID,
+		Source:      "self",
+		Trust:       "trusted",
+		CreatedAtMs: timeutil.NowUnixMs(),
+	})
+	return book
+}
+
+func newStats() stats {
+	return stats{ByType: map[string]int{}, AckByError: map[string]int{}}
+}
+
+func runSim(peers []simPeer, opts simOptions, rng *rand.Rand, st *stats) {
+	interval := time.Second / time.Duration(opts.rate)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	end := time.Now().Add(*duration)
+	end := time.Now().Add(opts.duration)
 	for time.Now().Before(end) {
 		<-ticker.C
-		senderIdx := rng.Intn(len(peers))
-		recvIdx := rng.Intn(len(peers))
-		for recvIdx == senderIdx {
-			recvIdx = rng.Intn(len(peers))
-		}
-		sender := peers[senderIdx]
-		receiver := peers[recvIdx]
-		msgType := pickType(rng)
-		switch msgType {
-		case "chat.msg.v1":
-			st.ByType[msgType]++
-			sendChat(rng, sender, receiver, &st, *dropRate, *powInvalidRate, *powDifficulty)
-		case "task.request.v1":
-			st.ByType[msgType]++
-			sendTask(rng, sender, receiver, &st, *dropRate, *powInvalidRate, *powDifficulty)
-		case "node.fetch.v1":
-			st.ByType[msgType]++
-			sendFetch(rng, sender, receiver, &st, *dropRate, *powInvalidRate, *powDifficulty)
-		}
+		runTick(peers, opts, rng, st)
 	}
+}
 
-	printStats(st)
+func runTick(peers []simPeer, opts simOptions, rng *rand.Rand, st *stats) {
+	sender, receiver := pickPair(peers, rng)
+	msgType := pickType(rng)
+	switch msgType {
+	case "task.request.v1":
+		st.ByType[msgType]++
+		sendTask(rng, sender, receiver, st, opts.dropRate, opts.powInvalidRate, opts.powDifficulty)
+	case "node.fetch.v1":
+		st.ByType[msgType]++
+		sendFetch(rng, sender, receiver, st, opts.dropRate, opts.powInvalidRate, opts.powDifficulty)
+	}
+}
+
+func pickPair(peers []simPeer, rng *rand.Rand) (simPeer, simPeer) {
+	senderIdx := rng.Intn(len(peers))
+	recvIdx := rng.Intn(len(peers))
+	for recvIdx == senderIdx {
+		recvIdx = rng.Intn(len(peers))
+	}
+	return peers[senderIdx], peers[recvIdx]
 }
 
 func pickType(rng *rand.Rand) string {
 	n := rng.Intn(100)
 	switch {
-	case n < 50:
-		return "chat.msg.v1"
-	case n < 80:
+	case n < 84:
 		return "task.request.v1"
 	default:
 		return "node.fetch.v1"
 	}
-}
-
-func sendChat(rng *rand.Rand, sender simPeer, receiver simPeer, st *stats, dropRate, powInvalidRate float64, powDifficulty uint64) {
-	payload, err := codec.Marshal(runtime.ChatMessage{V: 1, Text: "hello"})
-	if err != nil {
-		return
-	}
-	envBytes, err := buildEnvelope(sender, receiver, "chat.msg.v1", payload, powInvalidRate, powDifficulty, rng)
-	if err != nil {
-		return
-	}
-	deliverEnvelope(sender, receiver, envBytes, st, dropRate, rng)
 }
 
 func sendTask(rng *rand.Rand, sender simPeer, receiver simPeer, st *stats, dropRate, powInvalidRate float64, powDifficulty uint64) {

@@ -71,68 +71,28 @@ type Runtime struct {
 	relayForward      func(peerID string, envBytes []byte) error
 	bootstrapPeers    []config.BootstrapPeer
 	reseedParams      reseed.Params
+	ipc               *ipcServer
 }
 
 func New(cfg config.Config) *Runtime {
-	qs, err := quic.NewServer(cfg)
-	if err != nil {
-		qs = nil
+	qs := newQUICServer(cfg)
+	dialer := newDialer(cfg)
+	dirs := resolveDirs()
+	id, book := loadIdentityAndBook(dirs)
+	keys, onion := loadLocalKeys(dirs)
+	log, pcap, pcapPath := initObservability(cfg, dirs)
+	peerID := ""
+	if qs != nil {
+		peerID = qs.PeerID()
 	}
-	dialer, err := quic.NewDialer(cfg)
-	if err != nil {
-		dialer = nil
-	}
-	dirs, err := appdirs.Resolve("")
-	if err != nil {
-		dirs = fallbackDirs()
-	}
-
-	id, err := identity.LoadOrCreate(dirs.IdentityDir())
-	if err != nil {
-		id = identity.Identity{}
-	}
-	book, err := addressbook.LoadOrInit(dirs.AddressBookPath())
-	if err != nil {
-		book = addressbook.Book{}
-	}
-	if id.ID != "" {
-		book.Entries = append(book.Entries, addressbook.Entry{
-			Alias:       "self",
-			TargetType:  "identity",
-			TargetID:    id.ID,
-			Source:      "self",
-			Trust:       "trusted",
-			CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
-		})
-	}
-	keys, err := quic.LoadOrCreateKeyMaterial(dirs.KeysDir())
-	if err != nil {
-		keys = quic.KeyMaterial{}
-	}
-	onion, err := onionkey.LoadOrCreate(dirs.KeysDir())
-	if err != nil {
-		onion = onionkey.Keypair{}
-	}
-	pcapPath := dirs.PcapPath()
-	pcap := observability.NewPcapWriter(cfg.Observability.PcapEnabled, pcapPath)
-	logFile := cfg.Observability.LogFile
-	if logFile != "" && !filepath.IsAbs(logFile) {
-		logFile = filepath.Join(dirs.RunDir, logFile)
-	}
-	log := observability.NewWithOptions(cfg.Observability.LogFormat, logFile)
 	return &Runtime{
-		cfg:   cfg,
-		net:   netmgr.New(),
-		dedup: netpkg.NewDedup(10*time.Minute, int(cfg.Limits.MaxInflightMsgs)),
-		bans:  netpkg.NewBanList(),
-		quic:  qs,
-		dial:  dialer,
-		peerID: func() string {
-			if qs != nil {
-				return qs.PeerID()
-			}
-			return ""
-		}(),
+		cfg:               cfg,
+		net:               netmgr.New(),
+		dedup:             netpkg.NewDedup(10*time.Minute, int(cfg.Limits.MaxInflightMsgs)),
+		bans:              netpkg.NewBanList(),
+		quic:              qs,
+		dial:              dialer,
+		peerID:            peerID,
 		store:             storage.NewNodeStore(1_048_576),
 		identity:          id,
 		book:              book,
@@ -165,6 +125,75 @@ func fallbackDirs() appdirs.Dirs {
 		StateDir:  filepath.Join(base, "run"),
 		RunDir:    filepath.Join(base, "run"),
 	}
+}
+
+func newQUICServer(cfg config.Config) *quic.Server {
+	qs, err := quic.NewServer(cfg)
+	if err != nil {
+		return nil
+	}
+	return qs
+}
+
+func newDialer(cfg config.Config) *quic.Dialer {
+	dialer, err := quic.NewDialer(cfg)
+	if err != nil {
+		return nil
+	}
+	return dialer
+}
+
+func resolveDirs() appdirs.Dirs {
+	dirs, err := appdirs.Resolve("")
+	if err != nil {
+		return fallbackDirs()
+	}
+	return dirs
+}
+
+func loadIdentityAndBook(dirs appdirs.Dirs) (identity.Identity, addressbook.Book) {
+	id, err := identity.LoadOrCreate(dirs.IdentityDir())
+	if err != nil {
+		id = identity.Identity{}
+	}
+	book, err := addressbook.LoadOrInit(dirs.AddressBookPath())
+	if err != nil {
+		book = addressbook.Book{}
+	}
+	if id.ID != "" {
+		book.Entries = append(book.Entries, addressbook.Entry{
+			Alias:       "self",
+			TargetType:  "identity",
+			TargetID:    id.ID,
+			Source:      "self",
+			Trust:       "trusted",
+			CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
+		})
+	}
+	return id, book
+}
+
+func loadLocalKeys(dirs appdirs.Dirs) (quic.KeyMaterial, onionkey.Keypair) {
+	keys, err := quic.LoadOrCreateKeyMaterial(dirs.KeysDir())
+	if err != nil {
+		keys = quic.KeyMaterial{}
+	}
+	onion, err := onionkey.LoadOrCreate(dirs.KeysDir())
+	if err != nil {
+		onion = onionkey.Keypair{}
+	}
+	return keys, onion
+}
+
+func initObservability(cfg config.Config, dirs appdirs.Dirs) (*observability.Logger, *observability.PcapWriter, string) {
+	pcapPath := dirs.PcapPath()
+	pcap := observability.NewPcapWriter(cfg.Observability.PcapEnabled, pcapPath)
+	logFile := cfg.Observability.LogFile
+	if logFile != "" && !filepath.IsAbs(logFile) {
+		logFile = filepath.Join(dirs.RunDir, logFile)
+	}
+	log := observability.NewWithOptions(cfg.Observability.LogFormat, logFile)
+	return log, pcap, pcapPath
 }
 
 func (r *Runtime) DedupSeen(msgID string) bool {

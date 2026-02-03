@@ -10,7 +10,7 @@ import (
 
 var uuidV7Re = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-var ErrInvalidUUIDv7 = errors.New("invalid uuidv7")
+var ErrInvalidUUIDv7 = errors.New("ERR_UUIDV7_INVALID")
 
 func New() (string, error) {
 	var b [16]byte

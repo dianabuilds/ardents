@@ -15,7 +15,7 @@ const (
 	StateStopping State = "stopping"
 )
 
-var ErrInvalidTransition = errors.New("invalid net state transition")
+var ErrInvalidTransition = errors.New("ERR_NET_STATE_INVALID")
 
 type Manager struct {
 	mu      sync.Mutex

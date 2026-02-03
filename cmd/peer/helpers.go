@@ -1,16 +1,12 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
-	"github.com/dianabuilds/ardents/internal/shared/perm"
 )
 
 func writeStatus(dirs appdirs.Dirs, st Status) error {
@@ -45,31 +41,6 @@ func waitForSignal() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt)
 	<-ch
-}
-
-func rotateGatewayToken(path string) error {
-	f, err := perm.OpenOwnerOnly(path)
-	if err != nil {
-		return errors.New("ERR_GATEWAY_UNAUTHORIZED")
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return err
-	}
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return err
-	}
-	token := base64.StdEncoding.EncodeToString(raw)
-	if _, err := f.WriteString(token); err != nil {
-		return err
-	}
-	return nil
 }
 
 func mustDirs(home string) appdirs.Dirs {

@@ -17,12 +17,12 @@ import (
 func TestDirQueryV2ReturnsResultNode(t *testing.T) {
 	rt := newTestRuntime(t)
 
-	serviceName := "chat.msg.v1"
+	serviceName := "demo.msg.v1"
 	node, nodeID, err := servicedesc.BuildDescriptorNodeV2(
 		rt.identity.ID,
 		rt.identity.PrivateKey,
 		serviceName,
-		[]servicedesc.Capability{{V: 1, JobType: "chat.msg.v1"}},
+		[]servicedesc.Capability{{V: 1, JobType: "demo.msg.v1"}},
 		map[string]uint64{"max_concurrency": 1, "max_payload_bytes": 1024},
 		map[string]uint64{"cpu_cores": 4, "ram_mb": 4096},
 	)
@@ -75,8 +75,8 @@ func TestDirQueryV2ReturnsResultNode(t *testing.T) {
 		Input: map[string]any{
 			"v": uint64(1),
 			"query": map[string]any{
-				"service_name_prefix": "chat.",
-				"requires":            []string{"chat.msg.v1"},
+				"service_name_prefix": "demo.",
+				"requires":            []string{"demo.msg.v1"},
 			},
 			"limit": uint64(10),
 		},

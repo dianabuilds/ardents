@@ -1,25 +1,14 @@
 package runtime
 
 import (
-	"context"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
-
-	"github.com/dianabuilds/ardents/internal/core/infra/config"
 )
 
 func TestDegradedLowPeers(t *testing.T) {
-	cfg := config.Default()
-	cfg.Observability.HealthAddr = freeAddr(t)
-	cfg.Observability.MetricsAddr = freeAddr(t)
-	rt := New(cfg)
-	if err := rt.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = rt.Stop(context.Background())
-	})
+	rt := newTestRuntime(t)
 	if rt.net.State() != "online" && rt.net.State() != "degraded" {
 		t.Fatalf("unexpected state %s", rt.net.State())
 	}
@@ -30,18 +19,11 @@ func TestDegradedLowPeers(t *testing.T) {
 }
 
 func TestHealthEndpoint(t *testing.T) {
-	cfg := config.Default()
-	cfg.Observability.HealthAddr = freeAddr(t)
-	cfg.Observability.MetricsAddr = freeAddr(t)
-	rt := New(cfg)
-	if err := rt.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = rt.Stop(context.Background())
-	})
+	rt := newTestRuntime(t)
 	time.Sleep(50 * time.Millisecond)
-	resp, err := http.Get("http://" + rt.cfg.Observability.HealthAddr + "/healthz")
+	healthURL := buildHealthURL(rt.cfg.Observability.HealthAddr)
+	// #nosec G107 -- health endpoint is loopback-only HTTP by design (test).
+	resp, err := http.Get(healthURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,4 +35,8 @@ func TestHealthEndpoint(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
+}
+
+func buildHealthURL(addr string) string {
+	return (&url.URL{Scheme: "http", Host: addr, Path: "/healthz"}).String()
 }

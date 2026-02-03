@@ -40,24 +40,21 @@ func serviceKeyCmd(args []string) {
 }
 
 func serviceKeyEnsure(args []string) {
-	fs := flag.NewFlagSet("service key ensure", flag.ExitOnError)
-	home := fs.String("home", "", "portable mode root (also Env: ARDENTS_HOME)")
-	serviceID := fs.String("service-id", "", "service_id (required)")
-	if err := fs.Parse(args); err != nil {
-		fatal(err)
-	}
-	if *serviceID == "" {
-		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
-	}
-	dirs := mustDirs(*home)
-	if _, err := lockeys.LoadOrCreate(dirs.LKeysDir(), *serviceID); err != nil {
-		fatal(err)
-	}
-	fmt.Println("service key ensured:", *serviceID)
+	serviceKeyAction("ensure", args, func(dir, serviceID string) error {
+		_, err := lockeys.LoadOrCreate(dir, serviceID)
+		return err
+	})
 }
 
 func serviceKeyRotate(args []string) {
-	fs := flag.NewFlagSet("service key rotate", flag.ExitOnError)
+	serviceKeyAction("rotate", args, func(dir, serviceID string) error {
+		_, err := lockeys.Rotate(dir, serviceID)
+		return err
+	})
+}
+
+func serviceKeyAction(action string, args []string, fn func(dir, serviceID string) error) {
+	fs := flag.NewFlagSet("service key "+action, flag.ExitOnError)
 	home := fs.String("home", "", "portable mode root (also Env: ARDENTS_HOME)")
 	serviceID := fs.String("service-id", "", "service_id (required)")
 	if err := fs.Parse(args); err != nil {
@@ -67,8 +64,8 @@ func serviceKeyRotate(args []string) {
 		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
 	}
 	dirs := mustDirs(*home)
-	if _, err := lockeys.Rotate(dirs.LKeysDir(), *serviceID); err != nil {
+	if err := fn(dirs.LKeysDir(), *serviceID); err != nil {
 		fatal(err)
 	}
-	fmt.Println("service key rotated:", *serviceID)
+	fmt.Println("service key "+action+":", *serviceID)
 }

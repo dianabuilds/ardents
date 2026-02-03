@@ -18,7 +18,7 @@ func TestEnvelopeV2SignVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serviceID, err := ids.NewServiceID(identityID, "chat.msg.v1")
+	serviceID, err := ids.NewServiceID(identityID, "demo.msg.v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestEnvelopeV2SignVerify(t *testing.T) {
 	env := Envelope{
 		V:     Version,
 		MsgID: msgID,
-		Type:  "chat.msg.v1",
+		Type:  "demo.msg.v1",
 		From:  From{IdentityID: identityID, ServiceID: serviceID},
 		To:    To{ServiceID: serviceID},
 		TSMs:  time.Now().UTC().UnixNano() / int64(time.Millisecond),
@@ -46,12 +46,12 @@ func TestEnvelopeV2ValidateBasic(t *testing.T) {
 		t.Fatal(err)
 	}
 	identityID, _ := ids.NewIdentityID(pub)
-	serviceID, _ := ids.NewServiceID(identityID, "chat.msg.v1")
+	serviceID, _ := ids.NewServiceID(identityID, "demo.msg.v1")
 	msgID, _ := uuidv7.New()
 	env := Envelope{
 		V:     Version,
 		MsgID: msgID,
-		Type:  "chat.msg.v1",
+		Type:  "demo.msg.v1",
 		From:  From{IdentityID: identityID},
 		To:    To{ServiceID: serviceID},
 		TSMs:  time.Now().UTC().UnixNano() / int64(time.Millisecond),
@@ -73,7 +73,7 @@ func TestEnvelopeV2RejectServiceWithoutIdentity(t *testing.T) {
 	env := Envelope{
 		V:     Version,
 		MsgID: msgID,
-		Type:  "chat.msg.v1",
+		Type:  "demo.msg.v1",
 		From:  From{ServiceID: "svc_zzz"},
 		To:    To{ServiceID: "svc_zzz"},
 		TSMs:  time.Now().UTC().UnixNano() / int64(time.Millisecond),

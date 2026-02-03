@@ -14,7 +14,7 @@ func TestNewServiceID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serviceID, err := NewServiceID(identityID, "chat.v1")
+	serviceID, err := NewServiceID(identityID, "demo.v1")
 	if err != nil {
 		t.Fatal(err)
 	}

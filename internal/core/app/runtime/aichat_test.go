@@ -35,28 +35,7 @@ func TestAIChatTaskFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: mustUUID(t),
-		Type:  tasks.RequestType,
-		From: envelope.From{
-			PeerID:     rt.peerID,
-			IdentityID: rt.identity.ID,
-		},
-		To: envelope.To{
-			PeerID: rt.peerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payload,
-	}
-	if err := env.Sign(rt.identity.PrivateKey); err != nil {
-		t.Fatal(err)
-	}
-	data, err := env.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := encodeSignedEnvelope(t, rt, tasks.RequestType, payload)
 	resps, err := rt.handleEnvelope("peer_x", data)
 	if err != nil {
 		t.Fatal(err)
@@ -102,4 +81,31 @@ func TestAIChatTaskFlow(t *testing.T) {
 			t.Fatalf("unexpected policy")
 		}
 	}
+}
+
+func encodeSignedEnvelope(t *testing.T, rt *Runtime, envType string, payload []byte) []byte {
+	t.Helper()
+	env := envelope.Envelope{
+		V:     envelope.Version,
+		MsgID: mustUUID(t),
+		Type:  envType,
+		From: envelope.From{
+			PeerID:     rt.peerID,
+			IdentityID: rt.identity.ID,
+		},
+		To: envelope.To{
+			PeerID: rt.peerID,
+		},
+		TSMs:    timeutil.NowUnixMs(),
+		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
+		Payload: payload,
+	}
+	if err := env.Sign(rt.identity.PrivateKey); err != nil {
+		t.Fatal(err)
+	}
+	data, err := env.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

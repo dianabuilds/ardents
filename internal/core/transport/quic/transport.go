@@ -173,27 +173,16 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 	defer func() {
 		_ = conn.CloseWithError(0, "")
 	}()
+	peerID, peerPub, err := s.peerIDFromConn(conn)
+	if err != nil {
+		return
+	}
 	connected := false
-	peerID := ""
 	defer func() {
 		if connected && s.onPeerDisconnected != nil {
 			s.onPeerDisconnected(peerID)
 		}
 	}()
-
-	cs := conn.ConnectionState().TLS
-	if len(cs.PeerCertificates) == 0 {
-		return
-	}
-	peerIDFromCert, err := PeerIDFromCert(cs.PeerCertificates[0])
-	if err != nil || peerIDFromCert == "" {
-		return
-	}
-	var peerPub ed25519.PublicKey
-	if pk, ok := cs.PeerCertificates[0].PublicKey.(ed25519.PublicKey); ok {
-		peerPub = pk
-	}
-
 	stream, err := conn.AcceptStream(context.Background())
 	if err != nil {
 		return
@@ -201,7 +190,37 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 	defer func() {
 		_ = stream.Close()
 	}()
+	remoteHello, err := s.exchangeHello(stream)
+	if err != nil {
+		return
+	}
+	if remoteHello.PeerID != peerID {
+		return
+	}
+	if s.onPeerConnected != nil {
+		s.onPeerConnected(peerID)
+		connected = true
+	}
+	s.storePeer(peerID, peerPub, conn.RemoteAddr().String())
+	s.handleEnvelopeLoop(stream, remoteHello.PeerID)
+}
 
+func (s *Server) peerIDFromConn(conn quicgo.Connection) (string, ed25519.PublicKey, error) {
+	cs := conn.ConnectionState().TLS
+	if len(cs.PeerCertificates) == 0 {
+		return "", nil, ErrPeerCertInvalid
+	}
+	peerID, err := PeerIDFromCert(cs.PeerCertificates[0])
+	if err != nil || peerID == "" {
+		return "", nil, err
+	}
+	if pk, ok := cs.PeerCertificates[0].PublicKey.(ed25519.PublicKey); ok {
+		return peerID, pk, nil
+	}
+	return peerID, nil, nil
+}
+
+func (s *Server) exchangeHello(stream quicgo.Stream) (Hello, error) {
 	localHello := Hello{
 		V:                  HelloVersion,
 		PeerID:             s.peerID,
@@ -213,56 +232,56 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 	}
 	localBytes, err := EncodeHello(localHello)
 	if err != nil {
-		return
+		return Hello{}, err
 	}
 	if err := writeFrame(stream, localBytes); err != nil {
-		return
+		return Hello{}, err
 	}
 	remoteBytes, err := readFrame(stream, s.cfg.Limits.MaxMsgBytes)
 	if err != nil {
-		return
+		return Hello{}, err
 	}
 	remoteHello, err := DecodeHello(remoteBytes)
 	if err != nil {
-		return
+		return Hello{}, err
 	}
 	if s.onHello != nil {
 		s.onHello(remoteHello.PeerID, remoteHello.TSMs, remoteHello.CapabilitiesDigest)
 	}
 	if err := ValidateHello(timeutil.NowUnixMs(), remoteHello); err != nil {
-		return
+		return Hello{}, err
 	}
-	if remoteHello.PeerID != peerIDFromCert {
-		return
-	}
-	peerID = remoteHello.PeerID
-	if s.onPeerConnected != nil {
-		s.onPeerConnected(peerID)
-		connected = true
-	}
+	return remoteHello, nil
+}
+
+func (s *Server) storePeer(peerID string, peerPub ed25519.PublicKey, addr string) {
 	s.mu.Lock()
-	s.peerAddrs[remoteHello.PeerID] = conn.RemoteAddr().String()
+	s.peerAddrs[peerID] = addr
 	if len(peerPub) > 0 {
-		s.peerPubs[remoteHello.PeerID] = peerPub
+		s.peerPubs[peerID] = peerPub
 	}
 	s.mu.Unlock()
+}
 
+func (s *Server) handleEnvelopeLoop(stream quicgo.Stream, peerID string) {
 	for {
 		data, err := readFrame(stream, s.cfg.Limits.MaxMsgBytes)
 		if err != nil {
 			return
 		}
-		if s.onEnvelope != nil {
-			resps, err := s.onEnvelope(remoteHello.PeerID, data)
-			if err == nil && len(resps) > 0 {
-				for _, resp := range resps {
-					if len(resp) == 0 {
-						continue
-					}
-					if err := writeFrame(stream, resp); err != nil {
-						return
-					}
-				}
+		if s.onEnvelope == nil {
+			continue
+		}
+		resps, err := s.onEnvelope(peerID, data)
+		if err != nil || len(resps) == 0 {
+			continue
+		}
+		for _, resp := range resps {
+			if len(resp) == 0 {
+				continue
+			}
+			if err := writeFrame(stream, resp); err != nil {
+				return
 			}
 		}
 	}

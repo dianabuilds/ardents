@@ -3,22 +3,18 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 
 	runtimepkg "github.com/dianabuilds/ardents/internal/core/app/runtime"
 	"github.com/dianabuilds/ardents/internal/core/infra/addressbook"
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/core/transport/quic"
-	"github.com/dianabuilds/ardents/internal/shared/ack"
-	"github.com/dianabuilds/ardents/internal/shared/appdirs"
-	"github.com/dianabuilds/ardents/internal/shared/envelope"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
-	"github.com/dianabuilds/ardents/internal/shared/ids"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
@@ -42,8 +38,6 @@ func main() {
 		startCmd(os.Args[2:])
 	case "status":
 		statusCmd(os.Args[2:])
-	case "send":
-		sendCmd(os.Args[2:])
 	case "service":
 		serviceCmd(os.Args[2:])
 	case "addressbook":
@@ -61,7 +55,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: peer <init|start|status|send> [flags]")
+	fmt.Println("usage: peer <init|start|status> [flags]")
 	fmt.Println("       peer service key <ensure|rotate> [flags]")
 	fmt.Println("       peer addressbook <list|add> [flags]")
 	fmt.Println("       peer systemd <unit> [flags]")
@@ -79,7 +73,6 @@ func startCmd(args []string) {
 	pcap := fs.Bool("pcap", false, "enable packet capture")
 	logFormat := fs.String("log.format", "", "log format: json|text (default from config)")
 	logFile := fs.String("log.file", "", "write logs to file (relative to run/ if not absolute)")
-	enableGatewayToken := fs.Bool("enable-gateway", false, "rotate gateway token for cmd/gateway (does not start gateway)")
 	if err := fs.Parse(args); err != nil {
 		fatal(err)
 	}
@@ -101,12 +94,6 @@ func startCmd(args []string) {
 	if *logFile != "" {
 		cfg.Observability.LogFile = *logFile
 	}
-
-	if *enableGatewayToken {
-		if err := rotateGatewayToken(dirs.GatewayTokenPath()); err != nil {
-			fatal(err)
-		}
-	}
 	rt := runtimepkg.New(cfg)
 	if err := rt.Start(context.Background()); err != nil {
 		fatal(err)
@@ -125,10 +112,6 @@ func startCmd(args []string) {
 	}
 	if addr := rt.QUICAddr(); addr != "" {
 		fmt.Println("quic:", addr)
-	}
-	if *enableGatewayToken {
-		fmt.Println("gateway token:", dirs.GatewayTokenPath())
-		fmt.Println("gateway (loopback only): go run ./cmd/gateway", homeFlagHint(*home))
 	}
 	waitForSignal()
 }
@@ -160,7 +143,6 @@ func statusCmd(args []string) {
 	fmt.Println("  data:  ", dirs.DataDir)
 	fmt.Println("  run:   ", dirs.RunDir)
 	fmt.Println("  addressbook:", dirs.AddressBookPath())
-	fmt.Println("  gateway token:", dirs.GatewayTokenPath())
 	fmt.Println("  pcap:", dirs.PcapPath())
 
 	cfg, err := config.LoadOrInit(*cfgPath)
@@ -168,8 +150,9 @@ func statusCmd(args []string) {
 		fatal(err)
 	}
 	if cfg.Observability.HealthAddr != "" {
-		url := "http://" + cfg.Observability.HealthAddr + "/healthz"
-		if h, err := http.Get(url); err == nil {
+		// #nosec G101 -- health endpoint is loopback-only HTTP by design.
+		healthURL := buildHealthURL(cfg.Observability.HealthAddr)
+		if h, err := http.Get(healthURL); err == nil {
 			defer func() {
 				_ = h.Body.Close()
 			}()
@@ -182,85 +165,11 @@ func statusCmd(args []string) {
 	}
 }
 
-func sendCmd(args []string) {
-	fs := flag.NewFlagSet("send", flag.ExitOnError)
-	home := fs.String("home", "", "portable mode root (also Env: ARDENTS_HOME)")
-	to := fs.String("to", "", "alias|peer_id|service_id")
-	text := fs.String("text", "", "message text")
-	addr := fs.String("addr", "", "quic://host:port (required for now)")
-	if err := fs.Parse(args); err != nil {
-		fatal(err)
+func buildHealthURL(addr string) string {
+	if addr == "" {
+		return ""
 	}
-
-	if *to == "" || *text == "" || *addr == "" {
-		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
-	}
-
-	dirs := mustDirs(*home)
-	cfg, err := config.LoadOrInit(dirs.ConfigPath())
-	if err != nil {
-		fatal(err)
-	}
-	rt := runtimepkg.New(cfg)
-	peerID, err := resolveTargetPeerID(dirs, *to)
-	if err != nil {
-		fatal(err)
-	}
-	printIndicators(rt, peerID)
-	ackBytes, err := rt.SendChat(context.Background(), *addr, peerID, *text)
-	if err != nil {
-		fatal(err)
-	}
-	ackEnv, err := envelope.DecodeEnvelope(ackBytes)
-	if err != nil {
-		fatal(err)
-	}
-	ackPayload, err := ack.Decode(ackEnv.Payload)
-	if err != nil {
-		fatal(err)
-	}
-	fmt.Printf("ack: status=%s error=%s\n", ackPayload.Status, ackPayload.ErrorCode)
-	if ackPayload.Status == "REJECTED" {
-		fmt.Println("error:", ackPayload.ErrorCode)
-	}
-}
-
-func resolveTargetPeerID(dirs appdirs.Dirs, to string) (string, error) {
-	if to == "" {
-		return "", errors.New("ERR_CLI_INVALID_ARGS")
-	}
-	if err := ids.ValidatePeerID(to); err == nil {
-		return to, nil
-	}
-	book, err := addressbook.LoadOrInit(dirs.AddressBookPath())
-	if err != nil {
-		return "", err
-	}
-	entry, ok, err := book.ResolveAlias(to, timeutil.NowUnixMs())
-	if err != nil {
-		if errors.Is(err, addressbook.ErrAliasConflict) {
-			return "", addressbook.ErrAliasConflict
-		}
-		return "", err
-	}
-	if !ok {
-		return "", errors.New("ERR_ALIAS_NOT_FOUND")
-	}
-	if entry.TargetType != "peer" {
-		return "", errors.New("ERR_ALIAS_TARGET_NOT_PEER")
-	}
-	return entry.TargetID, nil
-}
-
-func printIndicators(rt *runtimepkg.Runtime, toID string) {
-	trusted := rt.IdentityID() != "" && rt.IdentityID() == toID
-	if trusted {
-		fmt.Println("trust: trusted")
-	} else {
-		fmt.Println("trust: untrusted")
-	}
-	fmt.Println("pow: required for untrusted")
-	fmt.Println("net:", rt.NetState())
+	return (&url.URL{Scheme: "http", Host: addr, Path: "/healthz"}).String()
 }
 
 func initCmd(args []string) {

@@ -24,7 +24,7 @@ CBOR map:
 
 * `v` = 2
 * `msg_id` (string, UUIDv7)
-* `type` (string) — например `chat.msg.v1`, `task.request.v1`
+* `type` (string) — например `demo.msg.v1`, `task.request.v1`
 * `from` (map):
   * `identity_id` (string, optional) — did:key
   * `service_id` (string, optional) — если отправитель хочет быть адресуемым как сервис (mailbox)

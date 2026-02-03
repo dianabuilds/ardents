@@ -56,6 +56,13 @@ func WriteBundle(opts BundleOptions) (string, error) {
 	zw := zip.NewWriter(f)
 	defer func() { _ = zw.Close() }()
 
+	writeBundleMeta(zw, opts, outPath)
+	writeBundleFiles(zw, opts)
+
+	return outPath, nil
+}
+
+func writeBundleMeta(zw *zip.Writer, opts BundleOptions, outPath string) {
 	now := time.Now().UTC()
 	_ = addJSON(zw, "meta/created.json", map[string]any{
 		"ts":         now.Format(time.RFC3339Nano),
@@ -73,39 +80,53 @@ func WriteBundle(opts BundleOptions) (string, error) {
 		"pcap_path":        opts.PcapPath,
 		"bundle_path":      outPath,
 	})
+}
 
+func writeBundleFiles(zw *zip.Writer, opts BundleOptions) {
 	if opts.ConfigPath != "" {
 		_ = addFileRedacted(zw, "config/node.json", opts.ConfigPath)
 	}
 	if opts.StatusPath != "" {
 		_ = addFile(zw, "run/status.json", opts.StatusPath)
 	}
+	addLogTail(zw, opts.LogFilePath, opts.TailLines)
+	addAddressBook(zw, opts.AddressBookPath, opts.IncludeAddressBook)
+	addPcapMeta(zw, opts.PcapPath)
+}
 
-	if opts.LogFilePath != "" {
-		if tail, err := tailFile(opts.LogFilePath, opts.TailLines); err == nil && len(tail) > 0 {
-			_ = addBytes(zw, "logs/tail.log", tail)
-		}
+func addLogTail(zw *zip.Writer, path string, lines int) {
+	if path == "" {
+		return
 	}
+	if tail, err := tailFile(path, lines); err == nil && len(tail) > 0 {
+		_ = addBytes(zw, "logs/tail.log", tail)
+	}
+}
 
-	if opts.IncludeAddressBook && opts.AddressBookPath != "" {
-		if b, err := os.ReadFile(opts.AddressBookPath); err == nil {
+func addAddressBook(zw *zip.Writer, path string, include bool) {
+	if path == "" {
+		return
+	}
+	if include {
+		if b, err := os.ReadFile(path); err == nil {
 			red, _ := redactAddressBookJSON(b)
 			_ = addBytes(zw, "data/addressbook.json", red)
 		}
-	} else if opts.AddressBookPath != "" {
-		if b, err := os.ReadFile(opts.AddressBookPath); err == nil {
-			meta := addressBookMeta(b)
-			_ = addJSON(zw, "data/addressbook.meta.json", meta)
-		}
+		return
 	}
-
-	if opts.PcapPath != "" {
-		if meta, err := pcapMeta(opts.PcapPath); err == nil && meta != nil {
-			_ = addJSON(zw, "run/pcap.meta.json", meta)
-		}
+	if b, err := os.ReadFile(path); err == nil {
+		meta := addressBookMeta(b)
+		_ = addJSON(zw, "data/addressbook.meta.json", meta)
 	}
+}
 
-	return outPath, nil
+func addPcapMeta(zw *zip.Writer, path string) {
+	if path == "" {
+		return
+	}
+	if meta, err := pcapMeta(path); err == nil && meta != nil {
+		_ = addJSON(zw, "run/pcap.meta.json", meta)
+	}
 }
 
 func buildInfo() any {
@@ -213,7 +234,37 @@ func pcapMeta(path string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	stats := scanPcapLines(b)
+	return map[string]any{
+		"path":                        path,
+		"file_size_bytes":             size,
+		"partial":                     partial,
+		"scanned_bytes":               len(b),
+		"records_scanned":             stats.total,
+		"records_in":                  stats.inCount,
+		"records_out":                 stats.outCount,
+		"records_unknown":             stats.unknownCount,
+		"parse_errors":                stats.parseErrors,
+		"ts_ms_min":                   stats.minTs,
+		"ts_ms_max":                   stats.maxTs,
+		"unique_peers_count":          len(stats.peerSet),
+		"envelope_bytes_approx_total": stats.approxBytes,
+	}, nil
+}
 
+type pcapScanStats struct {
+	total        int
+	parseErrors  int
+	inCount      int
+	outCount     int
+	unknownCount int
+	minTs        int64
+	maxTs        int64
+	approxBytes  int64
+	peerSet      map[string]bool
+}
+
+func scanPcapLines(b []byte) pcapScanStats {
 	type rec struct {
 		Dir             string `json:"dir"`
 		TSMs            int64  `json:"ts_ms"`
@@ -221,66 +272,44 @@ func pcapMeta(path string) (any, error) {
 		EnvelopeCBORB64 string `json:"envelope_cbor_b64"`
 	}
 
+	stats := pcapScanStats{
+		peerSet: map[string]bool{},
+	}
 	lines := bytes.Split(bytes.TrimSpace(b), []byte{'\n'})
-	total := 0
-	parseErrors := 0
-	inCount := 0
-	outCount := 0
-	unknownCount := 0
-	var minTs int64
-	var maxTs int64
-	peerSet := map[string]bool{}
-	var approxBytes int64
-
 	for _, line := range lines {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		total++
+		stats.total++
 		var r rec
 		if err := json.Unmarshal(line, &r); err != nil {
-			parseErrors++
+			stats.parseErrors++
 			continue
 		}
 		switch r.Dir {
 		case "in":
-			inCount++
+			stats.inCount++
 		case "out":
-			outCount++
+			stats.outCount++
 		default:
-			unknownCount++
+			stats.unknownCount++
 		}
 		if r.TSMs != 0 {
-			if minTs == 0 || r.TSMs < minTs {
-				minTs = r.TSMs
+			if stats.minTs == 0 || r.TSMs < stats.minTs {
+				stats.minTs = r.TSMs
 			}
-			if maxTs == 0 || r.TSMs > maxTs {
-				maxTs = r.TSMs
+			if stats.maxTs == 0 || r.TSMs > stats.maxTs {
+				stats.maxTs = r.TSMs
 			}
 		}
 		if r.PeerIDRemote != "" {
-			peerSet[r.PeerIDRemote] = true
+			stats.peerSet[r.PeerIDRemote] = true
 		}
 		if r.EnvelopeCBORB64 != "" {
-			approxBytes += int64(base64.StdEncoding.DecodedLen(len(r.EnvelopeCBORB64)))
+			stats.approxBytes += int64(base64.StdEncoding.DecodedLen(len(r.EnvelopeCBORB64)))
 		}
 	}
-
-	return map[string]any{
-		"path":                        path,
-		"file_size_bytes":             size,
-		"partial":                     partial,
-		"scanned_bytes":               len(b),
-		"records_scanned":             total,
-		"records_in":                  inCount,
-		"records_out":                 outCount,
-		"records_unknown":             unknownCount,
-		"parse_errors":                parseErrors,
-		"ts_ms_min":                   minTs,
-		"ts_ms_max":                   maxTs,
-		"unique_peers_count":          len(peerSet),
-		"envelope_bytes_approx_total": approxBytes,
-	}, nil
+	return stats
 }
 
 func redactConfigJSON(b []byte) ([]byte, error) {

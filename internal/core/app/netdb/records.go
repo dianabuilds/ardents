@@ -42,7 +42,7 @@ func (db *DB) validateRouterInfo(r RouterInfo, nowMs int64) error {
 	if err != nil {
 		return ErrBadRecord
 	}
-	if !ed25519.Verify(ed25519.PublicKey(r.TransportPub), unsigned, r.Sig) {
+	if !ed25519.Verify(r.TransportPub, unsigned, r.Sig) {
 		return ErrSigInvalid
 	}
 	return nil
@@ -52,15 +52,8 @@ func (db *DB) validateLeaseSet(s LeaseSet, nowMs int64) error {
 	if s.V != 1 {
 		return ErrBadRecord
 	}
-	if err := ids.ValidateServiceName(s.ServiceName); err != nil {
-		return ErrBadRecord
-	}
-	if err := ids.ValidateServiceID(s.ServiceID); err != nil {
-		return ErrBadRecord
-	}
-	svcID, err := ids.NewServiceID(s.OwnerIdentityID, s.ServiceName)
-	if err != nil || svcID != s.ServiceID {
-		return ErrBadRecord
+	if err := validateServiceIdentity(s.OwnerIdentityID, s.ServiceName, s.ServiceID); err != nil {
+		return err
 	}
 	if len(s.EncPub) != 32 {
 		return ErrBadRecord
@@ -110,15 +103,8 @@ func (db *DB) validateServiceHead(h ServiceHead, nowMs int64) error {
 	if h.V != 1 {
 		return ErrBadRecord
 	}
-	if err := ids.ValidateServiceName(h.ServiceName); err != nil {
-		return ErrBadRecord
-	}
-	if err := ids.ValidateServiceID(h.ServiceID); err != nil {
-		return ErrBadRecord
-	}
-	svcID, err := ids.NewServiceID(h.OwnerIdentityID, h.ServiceName)
-	if err != nil || svcID != h.ServiceID {
-		return ErrBadRecord
+	if err := validateServiceIdentity(h.OwnerIdentityID, h.ServiceName, h.ServiceID); err != nil {
+		return err
 	}
 	if h.ExpiresAtMs <= h.PublishedAtMs {
 		return ErrBadRecord
@@ -142,6 +128,20 @@ func (db *DB) validateServiceHead(h ServiceHead, nowMs int64) error {
 	}
 	if !ed25519.Verify(pub, unsigned, h.Sig) {
 		return ErrSigInvalid
+	}
+	return nil
+}
+
+func validateServiceIdentity(ownerID, serviceName, serviceID string) error {
+	if err := ids.ValidateServiceName(serviceName); err != nil {
+		return ErrBadRecord
+	}
+	if err := ids.ValidateServiceID(serviceID); err != nil {
+		return ErrBadRecord
+	}
+	svcID, err := ids.NewServiceID(ownerID, serviceName)
+	if err != nil || svcID != serviceID {
+		return ErrBadRecord
 	}
 	return nil
 }

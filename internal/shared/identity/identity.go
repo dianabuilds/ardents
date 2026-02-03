@@ -3,15 +3,14 @@ package identity
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
+	"github.com/dianabuilds/ardents/internal/shared/ed25519util"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
+	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
 var ErrIdentityInvalid = errors.New("ERR_ID_INVALID")
@@ -46,29 +45,14 @@ func load(path string) (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
-	block, _ := pem.Decode(keyPEM)
-	if block == nil || block.Type != "PRIVATE KEY" {
-		return Identity{}, ErrIdentityInvalid
-	}
-	priv, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	edPriv, err := ed25519util.ParsePrivateKeyPEM(keyPEM)
 	if err != nil {
+		if errors.Is(err, ed25519util.ErrPrivateKeyInvalid) {
+			return Identity{}, ErrIdentityInvalid
+		}
 		return Identity{}, err
 	}
-	edPriv, ok := priv.(ed25519.PrivateKey)
-	if !ok {
-		return Identity{}, ErrIdentityInvalid
-	}
-	pub := edPriv.Public().(ed25519.PublicKey)
-	id, err := ids.NewIdentityID(pub)
-	if err != nil {
-		return Identity{}, err
-	}
-	return Identity{
-		ID:          id,
-		PrivateKey:  edPriv,
-		PublicKey:   pub,
-		CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
-	}, nil
+	return newIdentity(ed25519util.PublicKey(edPriv), edPriv)
 }
 
 func create(path string) (Identity, error) {
@@ -76,24 +60,14 @@ func create(path string) (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
-	keyBytes, err := x509.MarshalPKCS8PrivateKey(priv)
+	keyPEM, err := ed25519util.EncodePrivateKeyPEM(priv)
 	if err != nil {
 		return Identity{}, err
 	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes})
 	if err := os.WriteFile(path, keyPEM, 0o600); err != nil {
 		return Identity{}, err
 	}
-	id, err := ids.NewIdentityID(pub)
-	if err != nil {
-		return Identity{}, err
-	}
-	return Identity{
-		ID:          id,
-		PrivateKey:  priv,
-		PublicKey:   pub,
-		CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
-	}, nil
+	return newIdentity(pub, priv)
 }
 
 func NewEphemeral() (Identity, error) {
@@ -101,6 +75,15 @@ func NewEphemeral() (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
+	return newIdentity(pub, priv)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func newIdentity(pub ed25519.PublicKey, priv ed25519.PrivateKey) (Identity, error) {
 	id, err := ids.NewIdentityID(pub)
 	if err != nil {
 		return Identity{}, err
@@ -109,11 +92,6 @@ func NewEphemeral() (Identity, error) {
 		ID:          id,
 		PrivateKey:  priv,
 		PublicKey:   pub,
-		CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
+		CreatedAtMs: timeutil.NowUnixMs(),
 	}, nil
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

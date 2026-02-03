@@ -45,7 +45,7 @@ go run ./cmd/node get --home ./ardents-home --id <cid>
 go run ./cmd/node get --id <cid> --history-depth 5
 ```
 
-История выводится в поле `history` (BFS по `prev`/`supersedes`, глубина ограничена).
+�?стория выводится в поле `history` (BFS по `prev`/`supersedes`, глубина ограничена).
 
 ---
 
@@ -78,7 +78,22 @@ go run ./cmd/node get --id <cid> --decrypt
 
 ---
 
-## 5) Замечания по ограничениям
+
+## 5) Web response nodes (web.response.v1)
+
+Если результат задачи `web.request.v1` сохранён как node `web.response.v1`, его можно просмотреть:
+
+```
+go run ./cmd/webclient request --addr <quic-host:port> --service-id <service_id> --path / --fetch-result
+```
+
+Либо напрямую через `cmd/node`:
+
+```
+go run ./cmd/node get --id <cid>
+```
+
+## 6) Замечания по ограничениям
 
 * `cmd/node` не изменяет граф и не публикует ноды — только чтение/проверка.
 * Если сеть недоступна, `fetch` может завершиться ошибкой (см. вывод `error:`).

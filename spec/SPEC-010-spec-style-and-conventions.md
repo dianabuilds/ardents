@@ -25,7 +25,7 @@
 * Текстовые идентификаторы **ДОЛЖНЫ** быть lowercase (если формат допускает регистр).
 * Для идентификаторов v1 используются multiformats:
   * `identity_id`: `did:key` (multibase base58btc)
-  * `peer_id` / `service_id` / `channel_id`: `multihash(sha2-256, …)` + `multibase(base32lower, …)`
+  * `peer_id` / `service_id` / `channel_id`: `multihash(sha2-256, bytes)` + `multibase(base32lower, multihash)`
   * `node_id`: CIDv1 (base32 lower)
 
 ---

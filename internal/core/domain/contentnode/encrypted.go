@@ -53,28 +53,62 @@ func EncryptNode(ownerID string, ownerPriv ed25519.PrivateKey, nodeType string, 
 	if err != nil {
 		return Node{}, err
 	}
-	key := make([]byte, chacha20poly1305.KeySize)
-	if _, err := rand.Read(key); err != nil {
-		return Node{}, err
-	}
-	nonce := make([]byte, chacha20poly1305.NonceSizeX)
-	if _, err := rand.Read(nonce); err != nil {
-		return Node{}, err
-	}
-	aead, err := chacha20poly1305.NewX(key)
+	key, nonce, err := newSecretKeyAndNonce()
 	if err != nil {
 		return Node{}, err
 	}
-	ciphertext := aead.Seal(nil, nonce, plain, nil)
+	ciphertext, err := encryptPayload(key, nonce, plain)
+	if err != nil {
+		return Node{}, err
+	}
+	rcpts, err := sealRecipients(recipients, key)
+	if err != nil {
+		return Node{}, err
+	}
+	encBody := EncryptedBody{
+		V:          1,
+		Alg:        "xchacha20poly1305",
+		Recipients: rcpts,
+		Ciphertext: ciphertext,
+		Nonce:      nonce,
+	}
+	n := buildEncryptedNode(ownerID, encBody)
+	if err := Sign(&n, ownerPriv); err != nil {
+		return Node{}, err
+	}
+	return n, nil
+}
+
+func newSecretKeyAndNonce() ([]byte, []byte, error) {
+	key := make([]byte, chacha20poly1305.KeySize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, nil, err
+	}
+	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, nil, err
+	}
+	return key, nonce, nil
+}
+
+func encryptPayload(key []byte, nonce []byte, plain []byte) ([]byte, error) {
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, err
+	}
+	return aead.Seal(nil, nonce, plain, nil), nil
+}
+
+func sealRecipients(recipients []string, key []byte) ([]Recipient, error) {
 	rcpts := make([]Recipient, 0, len(recipients))
 	for _, id := range recipients {
 		pub, err := ids.IdentityPublicKey(id)
 		if err != nil {
-			return Node{}, err
+			return nil, err
 		}
 		sealed, err := cryptobox.SealAnonymous(rand.Reader, pub, key)
 		if err != nil {
-			return Node{}, err
+			return nil, err
 		}
 		rcpts = append(rcpts, Recipient{
 			IdentityID: id,
@@ -84,14 +118,11 @@ func EncryptNode(ownerID string, ownerPriv ed25519.PrivateKey, nodeType string, 
 	sort.Slice(rcpts, func(i, j int) bool {
 		return rcpts[i].IdentityID < rcpts[j].IdentityID
 	})
-	encBody := EncryptedBody{
-		V:          1,
-		Alg:        "xchacha20poly1305",
-		Recipients: rcpts,
-		Ciphertext: ciphertext,
-		Nonce:      nonce,
-	}
-	n := Node{
+	return rcpts, nil
+}
+
+func buildEncryptedNode(ownerID string, encBody EncryptedBody) Node {
+	return Node{
 		V:           1,
 		Type:        "enc.node.v1",
 		CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
@@ -103,10 +134,6 @@ func EncryptNode(ownerID string, ownerPriv ed25519.PrivateKey, nodeType string, 
 			"visibility": "encrypted",
 		},
 	}
-	if err := Sign(&n, ownerPriv); err != nil {
-		return Node{}, err
-	}
-	return n, nil
 }
 
 func DecryptNode(n Node, recipientID string, recipientPriv ed25519.PrivateKey) (PrivateNodePayload, error) {

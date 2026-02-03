@@ -4,7 +4,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/dianabuilds/ardents/internal/core/app/services/servicedesc"
 	"github.com/dianabuilds/ardents/internal/core/app/services/tasks"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
@@ -15,18 +14,6 @@ import (
 const (
 	ackType = "ack.v1"
 )
-
-func hasLocalEndpoint(endpoints []servicedesc.Endpoint, peerID string) bool {
-	if peerID == "" {
-		return false
-	}
-	for _, ep := range endpoints {
-		if ep.PeerID == peerID {
-			return true
-		}
-	}
-	return false
-}
 
 func (r *Runtime) buildTaskFail(taskID string, code string, message string, toPeerID string) [][]byte {
 	payload := tasks.Fail{
@@ -40,29 +27,7 @@ func (r *Runtime) buildTaskFail(taskID string, code string, message string, toPe
 	if err != nil {
 		return nil
 	}
-	msgID, err := uuidv7.New()
-	if err != nil {
-		return nil
-	}
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: msgID,
-		Type:  tasks.FailType,
-		From: envelope.From{
-			PeerID: r.peerID,
-		},
-		To: envelope.To{
-			PeerID: toPeerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payloadBytes,
-	}
-	encoded, err := env.Encode()
-	if err != nil {
-		return nil
-	}
-	return [][]byte{encoded}
+	return r.buildTaskEnvelope(tasks.FailType, payloadBytes, toPeerID)
 }
 
 func (r *Runtime) buildTaskAccept(taskID string, toPeerID string) [][]byte {
@@ -75,29 +40,7 @@ func (r *Runtime) buildTaskAccept(taskID string, toPeerID string) [][]byte {
 	if err != nil {
 		return nil
 	}
-	msgID, err := uuidv7.New()
-	if err != nil {
-		return nil
-	}
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: msgID,
-		Type:  tasks.AcceptType,
-		From: envelope.From{
-			PeerID: r.peerID,
-		},
-		To: envelope.To{
-			PeerID: toPeerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payloadBytes,
-	}
-	encoded, err := env.Encode()
-	if err != nil {
-		return nil
-	}
-	return [][]byte{encoded}
+	return r.buildTaskEnvelope(tasks.AcceptType, payloadBytes, toPeerID)
 }
 
 func (r *Runtime) buildTaskResult(taskID string, nodeID string, toPeerID string) [][]byte {
@@ -111,6 +54,10 @@ func (r *Runtime) buildTaskResult(taskID string, nodeID string, toPeerID string)
 	if err != nil {
 		return nil
 	}
+	return r.buildTaskEnvelope(tasks.ResultType, payloadBytes, toPeerID)
+}
+
+func (r *Runtime) buildTaskEnvelope(taskType string, payloadBytes []byte, toPeerID string) [][]byte {
 	msgID, err := uuidv7.New()
 	if err != nil {
 		return nil
@@ -118,7 +65,7 @@ func (r *Runtime) buildTaskResult(taskID string, nodeID string, toPeerID string)
 	env := envelope.Envelope{
 		V:     envelope.Version,
 		MsgID: msgID,
-		Type:  tasks.ResultType,
+		Type:  taskType,
 		From: envelope.From{
 			PeerID: r.peerID,
 		},

@@ -3,5 +3,6 @@
 /bin/peer.exe
 /ardents-home/
 /tmp/
+/.tmp/
 /internal/core/**/data/
 /internal/core/**/data/**/*

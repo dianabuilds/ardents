@@ -197,14 +197,7 @@ func (db *DB) Router(peerID string, nowMs int64) (RouterInfo, bool) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	rec, ok := db.routers[peerID]
-	if !ok || rec.ExpiresAtMs <= nowMs {
-		return RouterInfo{}, false
-	}
-	var r RouterInfo
-	if err := codec.Unmarshal(rec.Bytes, &r); err != nil {
-		return RouterInfo{}, false
-	}
-	return r, true
+	return decodeRecord[RouterInfo](rec, ok, nowMs)
 }
 
 func (db *DB) LeaseSet(serviceID string, nowMs int64) (LeaseSet, bool) {
@@ -214,14 +207,7 @@ func (db *DB) LeaseSet(serviceID string, nowMs int64) (LeaseSet, bool) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	rec, ok := db.leases[serviceID]
-	if !ok || rec.ExpiresAtMs <= nowMs {
-		return LeaseSet{}, false
-	}
-	var s LeaseSet
-	if err := codec.Unmarshal(rec.Bytes, &s); err != nil {
-		return LeaseSet{}, false
-	}
-	return s, true
+	return decodeRecord[LeaseSet](rec, ok, nowMs)
 }
 
 func (db *DB) ServiceHead(serviceID string, nowMs int64) (ServiceHead, bool) {
@@ -231,14 +217,7 @@ func (db *DB) ServiceHead(serviceID string, nowMs int64) (ServiceHead, bool) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	rec, ok := db.heads[serviceID]
-	if !ok || rec.ExpiresAtMs <= nowMs {
-		return ServiceHead{}, false
-	}
-	var h ServiceHead
-	if err := codec.Unmarshal(rec.Bytes, &h); err != nil {
-		return ServiceHead{}, false
-	}
-	return h, true
+	return decodeRecord[ServiceHead](rec, ok, nowMs)
 }
 
 func (db *DB) ServiceHeadsSnapshot(nowMs int64) []ServiceHead {
@@ -246,16 +225,23 @@ func (db *DB) ServiceHeadsSnapshot(nowMs int64) []ServiceHead {
 	defer db.mu.Unlock()
 	out := make([]ServiceHead, 0, len(db.heads))
 	for _, rec := range db.heads {
-		if rec.ExpiresAtMs <= nowMs {
-			continue
+		h, ok := decodeRecord[ServiceHead](rec, true, nowMs)
+		if ok {
+			out = append(out, h)
 		}
-		var h ServiceHead
-		if err := codec.Unmarshal(rec.Bytes, &h); err != nil {
-			continue
-		}
-		out = append(out, h)
 	}
 	return out
+}
+
+func decodeRecord[T any](rec Record, ok bool, nowMs int64) (T, bool) {
+	var out T
+	if !ok || rec.ExpiresAtMs <= nowMs {
+		return out, false
+	}
+	if err := codec.Unmarshal(rec.Bytes, &out); err != nil {
+		return out, false
+	}
+	return out, true
 }
 
 func dhtKey(typ, address string) [32]byte {

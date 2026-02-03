@@ -13,6 +13,9 @@ const (
 	StatusRejected Status = "rejected"
 )
 
+//nolint:unused // kept for v1 direct-mode delivery lifecycle
+var _ = []Status{StatusSent, StatusAcked, StatusFailed, StatusRejected}
+
 type Record struct {
 	MsgID     string
 	Status    Status

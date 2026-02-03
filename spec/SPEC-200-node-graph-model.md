@@ -73,9 +73,9 @@ Node — CBOR map (в `dag-cbor`), обязательные поля:
 
 Получатель Node **ДОЛЖЕН**:
 
-0. проверить лимиты: `len(node_bytes) <= MAX_NODE_BYTES` и `len(links) <= MAX_LINKS_PER_NODE`;
-1. проверить, что bytes Node дают именно `node_id` (CID);
-2. проверить подпись `sig` по `owner`;
-3. проверить `policy` (см. SPEC-220).
+1. проверить лимиты: `len(node_bytes) <= MAX_NODE_BYTES` и `len(links) <= MAX_LINKS_PER_NODE`;
+2. проверить, что bytes Node дают именно `node_id` (CID);
+3. проверить подпись `sig` по `owner`;
+4. проверить `policy` (см. SPEC-220).
 
 Если любой шаг не проходит — Node **ДОЛЖЕН** быть отклонён.

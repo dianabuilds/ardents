@@ -20,7 +20,7 @@ func TestServicePublishDescriptorUpdatesAfterRestart(t *testing.T) {
 
 	rt1 := New(cfg)
 	setInboundLease(t, rt1)
-	serviceName := "chat.msg.v1"
+	serviceName := "demo.msg.v1"
 	serviceID, err := ids.NewServiceID(rt1.identity.ID, serviceName)
 	if err != nil {
 		t.Fatal(err)

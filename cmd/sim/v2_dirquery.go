@@ -32,6 +32,42 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 	dir := net.peers[0]
 	client := net.peers[1]
 	ctx := context.Background()
+	if err := ensureDirQueryTunnels(dir, client, ctx); err != nil {
+		return err
+	}
+	keys, err := loadDirQueryKeys(dir, client)
+	if err != nil {
+		return err
+	}
+	if err := registerDirQueryService(dir); err != nil {
+		return err
+	}
+	inSnap := client.SimV2InboundSnapshot()
+	if err := publishMailboxLease(net, client, inSnap, keys.mailboxID, keys.mailboxKeys); err != nil {
+		return err
+	}
+	captured, outSnap, err := captureDirQueryReply(net, dir)
+	if err != nil {
+		return err
+	}
+	if err := sendDirQueryRequest(dir, client, keys, captured); err != nil {
+		return err
+	}
+	if err := validateDirQueryReply(dir, client, keys, outSnap, *captured); err != nil {
+		return err
+	}
+	_ = rng
+	return nil
+}
+
+type dirQueryKeys struct {
+	dirServiceID string
+	dirKeys      lockeys.Keypair
+	mailboxID    string
+	mailboxKeys  lockeys.Keypair
+}
+
+func ensureDirQueryTunnels(dir *runtime.Runtime, client *runtime.Runtime, ctx context.Context) error {
 	if err := dir.SimV2RotateTunnels(ctx); err != nil {
 		return err
 	}
@@ -42,29 +78,40 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 	if inSnap == nil || len(inSnap.HopPeerIDs) == 0 {
 		return errors.New("ERR_SIM_INBOUND_TUNNEL_MISSING")
 	}
+	return nil
+}
 
+func loadDirQueryKeys(dir *runtime.Runtime, client *runtime.Runtime) (dirQueryKeys, error) {
 	dirs, err := appdirs.Resolve("")
 	if err != nil {
-		return err
+		return dirQueryKeys{}, err
 	}
 	dirServiceID, err := ids.NewServiceID(dir.IdentityID(), dirquery.JobType)
 	if err != nil {
-		return err
+		return dirQueryKeys{}, err
 	}
 	dirKeys, err := lockeys.LoadOrCreate(dirs.LKeysDir(), dirServiceID)
 	if err != nil {
-		return err
+		return dirQueryKeys{}, err
 	}
 	mailboxName := "mailbox.msg.v1"
 	mailboxID, err := ids.NewServiceID(client.IdentityID(), mailboxName)
 	if err != nil {
-		return err
+		return dirQueryKeys{}, err
 	}
 	mailboxKeys, err := lockeys.LoadOrCreate(dirs.LKeysDir(), mailboxID)
 	if err != nil {
-		return err
+		return dirQueryKeys{}, err
 	}
+	return dirQueryKeys{
+		dirServiceID: dirServiceID,
+		dirKeys:      dirKeys,
+		mailboxID:    mailboxID,
+		mailboxKeys:  mailboxKeys,
+	}, nil
+}
 
+func registerDirQueryService(dir *runtime.Runtime) error {
 	caps := []servicedesc.Capability{
 		{V: 1, JobType: dirquery.JobType, Modes: []string{"v2"}},
 	}
@@ -82,16 +129,19 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 	if err := dir.SimV2RegisterLocalService(dirquery.JobType, descCID); err != nil {
 		return err
 	}
-	if err := dir.SimV2PublishLocalServices(); err != nil {
-		return err
-	}
+	return dir.SimV2PublishLocalServices()
+}
 
+func publishMailboxLease(net *simNetwork, client *runtime.Runtime, inSnap *runtime.TunnelPathSnapshot, mailboxID string, mailboxKeys lockeys.Keypair) error {
+	if inSnap == nil || len(inSnap.HopPeerIDs) == 0 {
+		return errors.New("ERR_SIM_INBOUND_TUNNEL_MISSING")
+	}
 	nowMs := timeutil.NowUnixMs()
 	leaseSet := netdb.LeaseSet{
 		V:               1,
 		ServiceID:       mailboxID,
 		OwnerIdentityID: client.IdentityID(),
-		ServiceName:     mailboxName,
+		ServiceName:     "mailbox.msg.v1",
 		EncPub:          mailboxKeys.Public,
 		Leases: []netdb.Lease{
 			{
@@ -103,7 +153,7 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 		PublishedAtMs: nowMs,
 		ExpiresAtMs:   nowMs + 120_000,
 	}
-	leaseSet, err = netdb.SignLeaseSet(client.IdentityPrivateKey(), leaseSet)
+	leaseSet, err := netdb.SignLeaseSet(client.IdentityPrivateKey(), leaseSet)
 	if err != nil {
 		return err
 	}
@@ -114,11 +164,14 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 	if status, code := net.db.Store(leaseBytes, nowMs); status != "OK" {
 		return fmt.Errorf("lease set store failed: %s", code)
 	}
+	return nil
+}
 
+func captureDirQueryReply(net *simNetwork, dir *runtime.Runtime) (*[]byte, *runtime.TunnelPathSnapshot, error) {
 	var captured []byte
 	outSnap := dir.SimV2OutboundSnapshot()
 	if outSnap == nil || len(outSnap.HopPeerIDs) == 0 {
-		return errors.New("ERR_SIM_OUTBOUND_TUNNEL_MISSING")
+		return nil, nil, errors.New("ERR_SIM_OUTBOUND_TUNNEL_MISSING")
 	}
 	gatewayID := outSnap.HopPeerIDs[0]
 	dir.SetRelayForwarder(func(peerID string, envBytes []byte) error {
@@ -132,7 +185,40 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 		_, _ = target.HandleEnvelope(dir.PeerID(), envBytes)
 		return nil
 	})
+	return &captured, outSnap, nil
+}
 
+func sendDirQueryRequest(dir *runtime.Runtime, client *runtime.Runtime, keys dirQueryKeys, captured *[]byte) error {
+	reqBytes, err := buildDirQueryRequest(client, keys.dirServiceID, keys.mailboxID)
+	if err != nil {
+		return err
+	}
+	inner := garlic.Inner{
+		V:           garlic.Version,
+		ExpiresAtMs: timeutil.NowUnixMs() + 60_000,
+		Cloves: []garlic.Clove{
+			{Kind: "envelope", Envelope: reqBytes},
+		},
+	}
+	msg, err := garlic.Encrypt(keys.dirServiceID, keys.dirKeys.Public, inner)
+	if err != nil {
+		return err
+	}
+	msgBytes, err := garlic.Encode(msg)
+	if err != nil {
+		return err
+	}
+	if err := dir.SimV2HandleGarlic(msgBytes); err != nil {
+		return err
+	}
+	if len(*captured) == 0 {
+		return errors.New("ERR_SIM_OUTBOUND_REPLY_MISSING")
+	}
+	return nil
+}
+
+func buildDirQueryRequest(client *runtime.Runtime, dirServiceID string, mailboxID string) ([]byte, error) {
+	nowMs := timeutil.NowUnixMs()
 	taskID, _ := uuidv7.New()
 	reqID, _ := uuidv7.New()
 	req := tasks.Request{
@@ -148,7 +234,7 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 	}
 	reqBytes, err := tasks.EncodeRequest(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	env := envelopev2.Envelope{
 		V:     envelopev2.Version,
@@ -164,33 +250,12 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 		Payload: reqBytes,
 	}
 	if err := env.Sign(client.IdentityPrivateKey()); err != nil {
-		return err
+		return nil, err
 	}
-	envBytes, err := env.Encode()
-	if err != nil {
-		return err
-	}
-	inner := garlic.Inner{
-		V:           garlic.Version,
-		ExpiresAtMs: nowMs + 60_000,
-		Cloves: []garlic.Clove{
-			{Kind: "envelope", Envelope: envBytes},
-		},
-	}
-	msg, err := garlic.Encrypt(dirServiceID, dirKeys.Public, inner)
-	if err != nil {
-		return err
-	}
-	msgBytes, err := garlic.Encode(msg)
-	if err != nil {
-		return err
-	}
-	if err := dir.SimV2HandleGarlic(msgBytes); err != nil {
-		return err
-	}
-	if len(captured) == 0 {
-		return errors.New("ERR_SIM_OUTBOUND_REPLY_MISSING")
-	}
+	return env.Encode()
+}
+
+func validateDirQueryReply(dir *runtime.Runtime, client *runtime.Runtime, keys dirQueryKeys, outSnap *runtime.TunnelPathSnapshot, captured []byte) error {
 	replyEnv, err := envelope.DecodeEnvelope(captured)
 	if err != nil || replyEnv.Type != tunnel.DataType {
 		return errors.New("ERR_SIM_EXPECTED_TUNNEL_DATA_REPLY")
@@ -203,7 +268,7 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 	if err != nil {
 		return err
 	}
-	replyInner, err := garlic.Decrypt(replyGarlic, mailboxKeys.Private)
+	replyInner, err := garlic.Decrypt(replyGarlic, keys.mailboxKeys.Private)
 	if err != nil {
 		return err
 	}
@@ -225,23 +290,27 @@ func checkDirQueryE2E(rng *mrand.Rand) error {
 		return errors.New("ERR_SIM_TASK_RESPONSE_NOT_STORED")
 	}
 	if replyV2.Type == tasks.ResultType {
-		res, err := tasks.DecodeResult(replyV2.Payload)
-		if err != nil || res.ResultNodeID == "" {
-			return errors.New("ERR_SIM_TASK_RESULT_INVALID")
-		}
-		nodeBytes, err := dir.Store().Get(res.ResultNodeID)
-		if err != nil {
-			return errors.New("ERR_SIM_RESULT_NODE_MISSING")
-		}
-		var node contentnode.Node
-		if err := contentnode.Decode(nodeBytes, &node); err != nil {
-			return err
-		}
-		if node.Type != dirquery.NodeType {
-			return errors.New("ERR_SIM_RESULT_NODE_TYPE_UNEXPECTED")
-		}
+		return validateDirQueryResultNode(dir, replyV2.Payload)
 	}
-	_ = rng
+	return nil
+}
+
+func validateDirQueryResultNode(dir *runtime.Runtime, payload []byte) error {
+	res, err := tasks.DecodeResult(payload)
+	if err != nil || res.ResultNodeID == "" {
+		return errors.New("ERR_SIM_TASK_RESULT_INVALID")
+	}
+	nodeBytes, err := dir.Store().Get(res.ResultNodeID)
+	if err != nil {
+		return errors.New("ERR_SIM_RESULT_NODE_MISSING")
+	}
+	var node contentnode.Node
+	if err := contentnode.Decode(nodeBytes, &node); err != nil {
+		return err
+	}
+	if node.Type != dirquery.NodeType {
+		return errors.New("ERR_SIM_RESULT_NODE_TYPE_UNEXPECTED")
+	}
 	return nil
 }
 

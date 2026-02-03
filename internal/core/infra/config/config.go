@@ -17,6 +17,7 @@ type Config struct {
 	Pow            Pow             `json:"pow"`
 	Observability  Observability   `json:"observability"`
 	Reseed         Reseed          `json:"reseed"`
+	Integration    Integration     `json:"integration"`
 }
 
 type Listen struct {
@@ -57,6 +58,10 @@ type Reseed struct {
 	Authorities []string `json:"authorities"`
 }
 
+type Integration struct {
+	Enabled bool `json:"enabled"`
+}
+
 func Default() Config {
 	return Config{
 		NodeName: "peer",
@@ -88,6 +93,9 @@ func Default() Config {
 			NetworkID:   "ardents.mainnet",
 			URLs:        []string{},
 			Authorities: []string{},
+		},
+		Integration: Integration{
+			Enabled: false,
 		},
 	}
 }

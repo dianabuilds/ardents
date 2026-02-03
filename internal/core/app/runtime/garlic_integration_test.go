@@ -29,7 +29,7 @@ func TestGarlicEnvelopeV2TaskFlow(t *testing.T) {
 	cfg := config.Default()
 	rt := New(cfg)
 
-	localServiceID := mustServiceID(t, rt.identity.ID, "chat.msg.v1")
+	localServiceID := mustServiceID(t, rt.identity.ID, "demo.msg.v1")
 	dirs, err := appdirs.Resolve(home)
 	if err != nil {
 		t.Fatal(err)

@@ -5,17 +5,22 @@ import (
 	"errors"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
 	"github.com/dianabuilds/ardents/internal/shared/codec"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
+	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
 var (
 	ErrDescriptorInvalid = errors.New("ERR_SERVICE_DESCRIPTOR_INVALID")
 	ErrServiceIDMismatch = errors.New("ERR_SERVICE_ID_MISMATCH")
 )
+
+var _ = []any{
+	BuildDescriptorNode,
+	Validate,
+}
 
 type DescriptorBody struct {
 	V            uint64            `cbor:"v"`
@@ -48,11 +53,9 @@ type Capability struct {
 	Modes   []string `cbor:"modes"`
 }
 
+//nolint:unused // v1 direct-mode descriptor builder retained for compatibility
 func BuildDescriptorNode(ownerID string, ownerPrivKey ed25519.PrivateKey, serviceName string, endpoints []Endpoint, caps []Capability, limits map[string]uint64) (contentnode.Node, string, error) {
-	if err := ids.ValidateServiceName(serviceName); err != nil {
-		return contentnode.Node{}, "", err
-	}
-	serviceID, err := ids.NewServiceID(ownerID, serviceName)
+	serviceID, err := buildServiceID(ownerID, serviceName, false)
 	if err != nil {
 		return contentnode.Node{}, "", err
 	}
@@ -64,39 +67,12 @@ func BuildDescriptorNode(ownerID string, ownerPrivKey ed25519.PrivateKey, servic
 		Capabilities: caps,
 		Limits:       limits,
 	}
-	n := contentnode.Node{
-		V:           1,
-		Type:        "service.descriptor.v1",
-		CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
-		Owner:       ownerID,
-		Links:       []contentnode.Link{},
-		Body:        body,
-		Policy: map[string]any{
-			"v":          uint64(1),
-			"visibility": "public",
-		},
-	}
-	if err := contentnode.Sign(&n, ownerPrivKey); err != nil {
-		return contentnode.Node{}, "", err
-	}
-	nodeBytes, nodeID, err := contentnode.EncodeWithCID(n)
-	if err != nil {
-		return contentnode.Node{}, "", err
-	}
-	if err := contentnode.VerifyBytes(nodeBytes, nodeID); err != nil {
-		return contentnode.Node{}, "", err
-	}
-	return n, nodeID, nil
+	n := buildDescriptorNode("service.descriptor.v1", ownerID, body, timeutil.NowUnixMs())
+	return encodeDescriptorNode(n, ownerPrivKey)
 }
 
 func BuildDescriptorNodeV2(ownerID string, ownerPrivKey ed25519.PrivateKey, serviceName string, caps []Capability, limits map[string]uint64, resources map[string]uint64) (contentnode.Node, string, error) {
-	if err := ids.ValidateIdentityID(ownerID); err != nil {
-		return contentnode.Node{}, "", err
-	}
-	if err := ids.ValidateServiceName(serviceName); err != nil {
-		return contentnode.Node{}, "", err
-	}
-	serviceID, err := ids.NewServiceID(ownerID, serviceName)
+	serviceID, err := buildServiceID(ownerID, serviceName, true)
 	if err != nil {
 		return contentnode.Node{}, "", err
 	}
@@ -121,29 +97,8 @@ func BuildDescriptorNodeV2(ownerID string, ownerPrivKey ed25519.PrivateKey, serv
 		Limits:          limits,
 		Resources:       resources,
 	}
-	n := contentnode.Node{
-		V:           1,
-		Type:        "service.descriptor.v2",
-		CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
-		Owner:       ownerID,
-		Links:       []contentnode.Link{},
-		Body:        body,
-		Policy: map[string]any{
-			"v":          uint64(1),
-			"visibility": "public",
-		},
-	}
-	if err := contentnode.Sign(&n, ownerPrivKey); err != nil {
-		return contentnode.Node{}, "", err
-	}
-	nodeBytes, nodeID, err := contentnode.EncodeWithCID(n)
-	if err != nil {
-		return contentnode.Node{}, "", err
-	}
-	if err := contentnode.VerifyBytes(nodeBytes, nodeID); err != nil {
-		return contentnode.Node{}, "", err
-	}
-	return n, nodeID, nil
+	n := buildDescriptorNode("service.descriptor.v2", ownerID, body, timeutil.NowUnixMs())
+	return encodeDescriptorNode(n, ownerPrivKey)
 }
 
 func DecodeBody(node contentnode.Node) (DescriptorBody, error) {
@@ -176,6 +131,7 @@ func DecodeBodyV2(node contentnode.Node) (DescriptorBodyV2, error) {
 	return body, nil
 }
 
+//nolint:unused // v1 direct-mode descriptor validator retained for compatibility
 func Validate(node contentnode.Node) (DescriptorBody, error) {
 	body, err := DecodeBody(node)
 	if err != nil {
@@ -184,18 +140,8 @@ func Validate(node contentnode.Node) (DescriptorBody, error) {
 	if body.V != 1 {
 		return DescriptorBody{}, ErrDescriptorInvalid
 	}
-	if err := ids.ValidateServiceName(body.ServiceName); err != nil {
-		return DescriptorBody{}, ErrDescriptorInvalid
-	}
-	if err := ids.ValidateServiceID(body.ServiceID); err != nil {
-		return DescriptorBody{}, ErrDescriptorInvalid
-	}
-	expectedID, err := ids.NewServiceID(node.Owner, body.ServiceName)
-	if err != nil {
-		return DescriptorBody{}, ErrDescriptorInvalid
-	}
-	if expectedID != body.ServiceID {
-		return DescriptorBody{}, ErrServiceIDMismatch
+	if err := validateServiceIDs(node.Owner, body.ServiceName, body.ServiceID, false); err != nil {
+		return DescriptorBody{}, err
 	}
 	if err := validateEndpoints(body.Endpoints); err != nil {
 		return DescriptorBody{}, ErrDescriptorInvalid
@@ -214,18 +160,8 @@ func ValidateV2(node contentnode.Node) (DescriptorBodyV2, error) {
 	if body.OwnerIdentityID == "" || body.OwnerIdentityID != node.Owner {
 		return DescriptorBodyV2{}, ErrDescriptorInvalid
 	}
-	if err := ids.ValidateServiceName(body.ServiceName); err != nil {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
-	}
-	if err := ids.ValidateServiceID(body.ServiceID); err != nil {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
-	}
-	expectedID, err := ids.NewServiceID(body.OwnerIdentityID, body.ServiceName)
-	if err != nil {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
-	}
-	if expectedID != body.ServiceID {
-		return DescriptorBodyV2{}, ErrServiceIDMismatch
+	if err := validateServiceIDs(body.OwnerIdentityID, body.ServiceName, body.ServiceID, false); err != nil {
+		return DescriptorBodyV2{}, err
 	}
 	if body.Resources == nil {
 		return DescriptorBodyV2{}, ErrDescriptorInvalid
@@ -264,4 +200,67 @@ func validateAddr(addr string) error {
 		return ErrDescriptorInvalid
 	}
 	return nil
+}
+
+func buildServiceID(ownerID string, serviceName string, validateOwner bool) (string, error) {
+	if validateOwner {
+		if err := ids.ValidateIdentityID(ownerID); err != nil {
+			return "", err
+		}
+	}
+	if err := ids.ValidateServiceName(serviceName); err != nil {
+		return "", err
+	}
+	return ids.NewServiceID(ownerID, serviceName)
+}
+
+func validateServiceIDs(ownerID string, serviceName string, serviceID string, validateOwner bool) error {
+	if validateOwner {
+		if err := ids.ValidateIdentityID(ownerID); err != nil {
+			return ErrDescriptorInvalid
+		}
+	}
+	if err := ids.ValidateServiceName(serviceName); err != nil {
+		return ErrDescriptorInvalid
+	}
+	if err := ids.ValidateServiceID(serviceID); err != nil {
+		return ErrDescriptorInvalid
+	}
+	expectedID, err := ids.NewServiceID(ownerID, serviceName)
+	if err != nil {
+		return ErrDescriptorInvalid
+	}
+	if expectedID != serviceID {
+		return ErrServiceIDMismatch
+	}
+	return nil
+}
+
+func buildDescriptorNode(nodeType string, ownerID string, body any, nowMs int64) contentnode.Node {
+	return contentnode.Node{
+		V:           1,
+		Type:        nodeType,
+		CreatedAtMs: nowMs,
+		Owner:       ownerID,
+		Links:       []contentnode.Link{},
+		Body:        body,
+		Policy: map[string]any{
+			"v":          uint64(1),
+			"visibility": "public",
+		},
+	}
+}
+
+func encodeDescriptorNode(n contentnode.Node, ownerPrivKey ed25519.PrivateKey) (contentnode.Node, string, error) {
+	if err := contentnode.Sign(&n, ownerPrivKey); err != nil {
+		return contentnode.Node{}, "", err
+	}
+	nodeBytes, nodeID, err := contentnode.EncodeWithCID(n)
+	if err != nil {
+		return contentnode.Node{}, "", err
+	}
+	if err := contentnode.VerifyBytes(nodeBytes, nodeID); err != nil {
+		return contentnode.Node{}, "", err
+	}
+	return n, nodeID, nil
 }

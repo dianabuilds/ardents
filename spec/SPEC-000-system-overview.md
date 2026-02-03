@@ -9,7 +9,7 @@
 ### 1.1 Цели продукта
 
 1. **Внутренняя сеть сервисов и контента** поверх обычного интернета: узлы, адреса, каналы, маршруты, оффлайн-режим.
-2. **Простая прикладная ценность**: обмен контентом/состоянием + выполнение задач (в т.ч. ИИ) через единый транспорт.
+2. **Простая прикладная ценность**: обмен контентом/состоянием + выполнение задач (в т.ч. AI) через единый транспорт.
 3. **Приватность и анонимность по умолчанию (v2):** туннели, directory/reseed, NetDB, минимизация метаданных.
 4. **Наблюдаемость без утечек:** диагностика обязательна, но не должна deanonymize пользователей и сервисы.
 
@@ -20,9 +20,10 @@
 1. **Profile v1: direct mode (совместимость/разработка)**  
    * discovery: только config/address book (SPEC-110, раздел 1)
    * доставка: `envelope.v1` напрямую/через простые relays (SPEC-130 v1)
+   * direct-mode app features (`chat.msg.v1`, `service.announce.v1`) удалены из текущей реализации
    * приватность: ограниченная (SPEC-002)
 2. **Profile v2: privacy-first (основной)**  
-   * bootstrap: directory authorities + reseed (SPEC-500)
+   * bootstrap: directory authorities +reseed (SPEC-500)
    * NetDB (DHT) и записи сети (SPEC-510)
    * туннели и garlic delivery (SPEC-520)
    * прикладная доставка: `envelope.v2` внутри garlic (SPEC-550)
@@ -82,7 +83,7 @@
    * контент-узлы (node graph), репликация, политика доступа
 6. **Service Plane**
 
-   * задачи, воркеры, интеграции (ИИ, индексация, тест-раннеры)
+   * задачи, воркеры, интеграции (AI, индексация, тест-раннеры)
 7. **Clients**
 
    * чат-консоль, task UI, браузер графа, админ/диагностика
@@ -97,7 +98,7 @@
 * **NODEGRAPH**: контент-узлы, версии, ссылки, policies
 * **TASKS**: job lifecycle, очереди задач, результаты, receipts
 * **SERVICES**: capability registry, service adapters
-* **INTEGRATIONS**: bridge gateways, внешние протоколы
+* **INTEGRATIONS**: IPC-адаптеры, внешние протоколы
 * **CLIENTS**: UX представления + диагностика
 * **OBS**: логирование, трассировка, события, health
 
@@ -133,11 +134,11 @@
 
 ### 4.3 Основные потоки (end-to-end)
 
-#### A) “Консоль/чат” как базовый UX сети
+#### A) “Консоль/чат” как базовый UX сети (deprecated)
 
 1. user выбирает alias или peer
 2. клиент резолвит через address book
-3. отправляет `type=chat` в нужный destination
+3. direct-mode chat удалён из текущей реализации
 4. доставка через routing (прямо или через hops)
 5. отображение и диагностика (latency, hops, trust)
 
@@ -149,7 +150,7 @@
 4. verify signature/policy
 5. render links → переходы по графу
 
-#### C) Задачи (в том числе ИИ) как сервисы
+#### C) Задачи (в том числе AI) как сервисы
 
 1. discover service по capability `job_type=ai.chat`
 2. `task.request` → сервису
@@ -179,7 +180,7 @@
 
 * TASKS: lifecycle
 * SERVICES: capability registry
-* INTEGRATIONS: bridge gateway (HTTP/gRPC) как первый внешний адаптер
+* INTEGRATIONS: IPC-адаптер (local) как первый внешний адаптер
 
 ### 5.1 Фиксация границ v1
 
@@ -209,9 +210,9 @@
 ### Уровень 1: сеть и сообщения
 
 * SPEC-100 Network Manager (NET)
-* SPEC-110 Peer Discovery и Handshake
-* SPEC-120 Address Book и Naming
-* SPEC-130 Routing и Relays (v1 direct mode)
+* SPEC-110 Peer Discovery Рё Handshake
+* SPEC-120 Address Book Рё Naming
+* SPEC-130 Routing Рё Relays (v1 direct mode)
 * SPEC-140 Сообщения (Envelope v1) и доставка (direct)
 
 ### Уровень 1b: privacy-first транспорт (v2)
@@ -235,44 +236,46 @@
 * SPEC-310 Жизненный цикл задач и receipts
 * SPEC-320 Интеграционные шлюзы (Integration Gateways)
 * SPEC-330 Профиль AI сервиса (ai.chat.v1)
+* SPEC-340 Web service profile (web.request.v1)
 
 ### Уровень 4: клиенты и наблюдаемость
 
-* SPEC-400 Клиент Console/Chat
+* SPEC-400 Клиент Console/Chat (deprecated)
 * SPEC-410 Клиент Node Browser
 * SPEC-420 Диагностика и наблюдаемость
 * SPEC-430 Инструменты администрирования и разработки
 
 ### Соответствие SPEC → файл
 
-| SPEC | Файл |
-| --- | --- |
-| SPEC-000 | `spec/SPEC-000-system-overview.md` |
-| SPEC-001 | `spec/SPEC-001-identity-and-identifiers.md` |
-| SPEC-002 | `spec/SPEC-002-threat-and-trust-model.md` |
-| SPEC-010 | `spec/SPEC-010-spec-style-and-conventions.md` |
-| SPEC-100 | `spec/SPEC-100-network-manager.md` |
-| SPEC-110 | `spec/SPEC-110-peer-discovery-and-handshake.md` |
-| SPEC-120 | `spec/SPEC-120-address-book-and-naming.md` |
-| SPEC-130 | `spec/SPEC-130-routing-and-relays.md` |
-| SPEC-140 | `spec/SPEC-140-message-envelope-and-delivery.md` |
-| SPEC-200 | `spec/SPEC-200-node-graph-model.md` |
+| SPEC     | Файл                                                 |
+|----------|------------------------------------------------------|
+| SPEC-000 | `spec/SPEC-000-system-overview.md`                   |
+| SPEC-001 | `spec/SPEC-001-identity-and-identifiers.md`          |
+| SPEC-002 | `spec/SPEC-002-threat-and-trust-model.md`            |
+| SPEC-010 | `spec/SPEC-010-spec-style-and-conventions.md`        |
+| SPEC-100 | `spec/SPEC-100-network-manager.md`                   |
+| SPEC-110 | `spec/SPEC-110-peer-discovery-and-handshake.md`      |
+| SPEC-120 | `spec/SPEC-120-address-book-and-naming.md`           |
+| SPEC-130 | `spec/SPEC-130-routing-and-relays.md`                |
+| SPEC-140 | `spec/SPEC-140-message-envelope-and-delivery.md`     |
+| SPEC-200 | `spec/SPEC-200-node-graph-model.md`                  |
 | SPEC-210 | `spec/SPEC-210-content-replication-and-providers.md` |
-| SPEC-220 | `spec/SPEC-220-access-policy-and-encryption.md` |
-| SPEC-300 | `spec/SPEC-300-service-model-and-capabilities.md` |
-| SPEC-310 | `spec/SPEC-310-tasks-lifecycle-and-receipts.md` |
-| SPEC-320 | `spec/SPEC-320-integration-gateways.md` |
-| SPEC-330 | `spec/SPEC-330-ai-service-profile.md` |
-| SPEC-400 | `spec/SPEC-400-client-console-chat.md` |
-| SPEC-410 | `spec/SPEC-410-client-node-browser.md` |
-| SPEC-420 | `spec/SPEC-420-diagnostics-and-observability.md` |
-| SPEC-430 | `spec/SPEC-430-admin-and-dev-tools.md` |
-| SPEC-500 | `spec/SPEC-500-directory-authorities-and-reseed.md` |
-| SPEC-510 | `spec/SPEC-510-netdb-and-records.md` |
-| SPEC-520 | `spec/SPEC-520-tunnels-and-garlic-routing.md` |
-| SPEC-530 | `spec/SPEC-530-anonymous-services-and-directory.md` |
-| SPEC-540 | `spec/SPEC-540-privacy-threat-model.md` |
-| SPEC-550 | `spec/SPEC-550-anonymous-envelope.md` |
+| SPEC-220 | `spec/SPEC-220-access-policy-and-encryption.md`      |
+| SPEC-300 | `spec/SPEC-300-service-model-and-capabilities.md`    |
+| SPEC-310 | `spec/SPEC-310-tasks-lifecycle-and-receipts.md`      |
+| SPEC-320 | `spec/SPEC-320-integration-gateways.md`              |
+| SPEC-330 | `spec/SPEC-330-ai-service-profile.md`                |
+| SPEC-340 | `spec/SPEC-340-web-service-profile.md`               |
+| SPEC-400 | `spec/SPEC-400-client-console-chat.md` (deprecated)  |
+| SPEC-410 | `spec/SPEC-410-client-node-browser.md`               |
+| SPEC-420 | `spec/SPEC-420-diagnostics-and-observability.md`     |
+| SPEC-430 | `spec/SPEC-430-admin-and-dev-tools.md`               |
+| SPEC-500 | `spec/SPEC-500-directory-authorities-and-reseed.md`  |
+| SPEC-510 | `spec/SPEC-510-netdb-and-records.md`                 |
+| SPEC-520 | `spec/SPEC-520-tunnels-and-garlic-routing.md`        |
+| SPEC-530 | `spec/SPEC-530-anonymous-services-and-directory.md`  |
+| SPEC-540 | `spec/SPEC-540-privacy-threat-model.md`              |
+| SPEC-550 | `spec/SPEC-550-anonymous-envelope.md`                |
 
 ---
 

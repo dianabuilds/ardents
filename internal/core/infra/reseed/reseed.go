@@ -281,7 +281,7 @@ func validateRouterInfo(r RouterInfo, maxTTL int64) error {
 	if err != nil {
 		return ErrReseedBundleInvalid
 	}
-	if !ed25519.Verify(ed25519.PublicKey(r.TransportPub), unsigned, r.Sig) {
+	if !ed25519.Verify(r.TransportPub, unsigned, r.Sig) {
 		return ErrReseedSignatureInvalid
 	}
 	return nil

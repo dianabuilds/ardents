@@ -61,137 +61,24 @@ func (r *Runtime) handleEnvelopeV2(env *envelopev2.Envelope) ([][]byte, error) {
 }
 
 func (r *Runtime) handleTaskV2(env *envelopev2.Envelope) ([][]byte, error) {
-	req, err := tasks.DecodeRequest(env.Payload)
+	req, err := r.decodeTaskRequestV2(env)
 	if err != nil {
 		return nil, err
 	}
-	if req.V != tasks.Version || req.TaskID == "" || req.ClientRequestID == "" || req.JobType == "" || req.TSMs <= 0 {
-		return nil, errors.New("ERR_PAYLOAD_DECODE")
+	if dup, ok := r.handleTaskDedupV2(req, env); ok {
+		return dup, nil
 	}
-	if err := uuidv7.Validate(req.TaskID); err != nil {
-		return nil, errors.New("ERR_PAYLOAD_DECODE")
-	}
-	if err := uuidv7.Validate(req.ClientRequestID); err != nil {
-		return nil, errors.New("ERR_PAYLOAD_DECODE")
-	}
-
-	if r.tasks != nil {
-		if dup, errCode := r.tasks.Check(req.TaskID, req.ClientRequestID, env.Payload); errCode != "" {
-			fail := r.buildTaskFailV2(req.TaskID, errCode, "", env)
-			if r.tasks != nil {
-				r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, fail)
-			}
-			return fail, nil
-		} else if len(dup) > 0 {
-			return dup, nil
-		}
-	}
-
-	switch req.JobType {
-	case "ai.chat.v1":
-		input, err := aichat.DecodeInput(req.Input, r.cfg.Limits.MaxPayloadBytes)
-		if err != nil {
-			code := err.Error()
-			if code == aichat.ErrInputInvalid.Error() {
-				code = "ERR_PAYLOAD_DECODE"
-			}
-			fail := r.buildTaskFailV2(req.TaskID, code, "", env)
-			if r.tasks != nil {
-				r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, fail)
-			}
-			return fail, nil
-		}
-		nodeID, err := r.buildAITranscript(req.TaskID, input)
-		if err != nil {
-			fail := r.buildTaskFailV2(req.TaskID, err.Error(), "", env)
-			if r.tasks != nil {
-				r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, fail)
-			}
-			return fail, nil
-		}
-		accept := r.buildTaskAcceptV2(req.TaskID, env)
-		result := r.buildTaskResultV2(req.TaskID, nodeID, env)
-		out := append(accept, result...)
-		if r.tasks != nil {
-			r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, out)
-		}
-		return out, nil
-	case dirquery.JobType:
-		out, err := r.handleDirQueryV2(req, env)
-		if err != nil {
-			fail := r.buildTaskFailV2(req.TaskID, err.Error(), "", env)
-			if r.tasks != nil {
-				r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, fail)
-			}
-			return fail, nil
-		}
-		if r.tasks != nil {
-			r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, out)
-		}
-		return out, nil
-	default:
-		fail := r.buildTaskFailV2(req.TaskID, tasks.ErrTaskUnsupported.Error(), "", env)
-		if r.tasks != nil {
-			r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, fail)
-		}
-		return fail, nil
-	}
+	return r.dispatchTaskV2(req, env)
 }
 
 func (r *Runtime) handleTaskResponseV2(env *envelopev2.Envelope, kind string) error {
-	switch env.Type {
-	case tasks.AcceptType:
-		acc, err := tasks.DecodeAccept(env.Payload)
-		if err != nil || acc.V != tasks.Version || acc.TaskID == "" || acc.TSMs <= 0 {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-		if err := uuidv7.Validate(acc.TaskID); err != nil {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-	case tasks.ProgressType:
-		p, err := tasks.DecodeProgress(env.Payload)
-		if err != nil || p.V != tasks.Version || p.TaskID == "" || p.TSMs <= 0 {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-		if err := uuidv7.Validate(p.TaskID); err != nil {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-	case tasks.ResultType:
-		res, err := tasks.DecodeResult(env.Payload)
-		if err != nil || res.V != tasks.Version || res.TaskID == "" || res.TSMs <= 0 {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-		if err := uuidv7.Validate(res.TaskID); err != nil {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-		if res.ResultNodeID == "" {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-	case tasks.FailType:
-		f, err := tasks.DecodeFail(env.Payload)
-		if err != nil || f.V != tasks.Version || f.TaskID == "" || f.TSMs <= 0 {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-		if err := uuidv7.Validate(f.TaskID); err != nil {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-		if f.ErrorCode == "" {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-	case tasks.ReceiptType:
-		rc, err := tasks.DecodeReceipt(env.Payload)
-		if err != nil || rc.V != tasks.Version || rc.TaskID == "" || rc.TSMs <= 0 {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-		if err := uuidv7.Validate(rc.TaskID); err != nil {
-			return errors.New("ERR_PAYLOAD_DECODE")
-		}
-	default:
-		return nil
+	taskID, err := validateTaskResponseV2(env)
+	if err != nil {
+		return err
 	}
-	if r.tasks != nil {
+	if r.tasks != nil && taskID != "" {
 		if b, err := env.Encode(); err == nil {
-			r.tasks.StoreResponse(getTaskIDFromResponse(env), b)
+			r.tasks.StoreResponse(taskID, b)
 		}
 	}
 	if r.log != nil {
@@ -200,72 +87,205 @@ func (r *Runtime) handleTaskResponseV2(env *envelopev2.Envelope, kind string) er
 	return nil
 }
 
-func getTaskIDFromResponse(env *envelopev2.Envelope) string {
+func (r *Runtime) decodeTaskRequestV2(env *envelopev2.Envelope) (tasks.Request, error) {
+	req, err := tasks.DecodeRequest(env.Payload)
+	if err != nil {
+		return tasks.Request{}, err
+	}
+	if req.V != tasks.Version || req.TaskID == "" || req.ClientRequestID == "" || req.JobType == "" || req.TSMs <= 0 {
+		return tasks.Request{}, errors.New("ERR_PAYLOAD_DECODE")
+	}
+	if err := uuidv7.Validate(req.TaskID); err != nil {
+		return tasks.Request{}, errors.New("ERR_PAYLOAD_DECODE")
+	}
+	if err := uuidv7.Validate(req.ClientRequestID); err != nil {
+		return tasks.Request{}, errors.New("ERR_PAYLOAD_DECODE")
+	}
+	return req, nil
+}
+
+func (r *Runtime) handleTaskDedupV2(req tasks.Request, env *envelopev2.Envelope) ([][]byte, bool) {
+	if r.tasks == nil {
+		return nil, false
+	}
+	if dup, errCode := r.tasks.Check(req.TaskID, req.ClientRequestID, env.Payload); errCode != "" {
+		fail := r.buildTaskFailV2(req.TaskID, errCode, "", env)
+		r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, fail)
+		return fail, true
+	} else if len(dup) > 0 {
+		return dup, true
+	}
+	return nil, false
+}
+
+func (r *Runtime) dispatchTaskV2(req tasks.Request, env *envelopev2.Envelope) ([][]byte, error) {
+	switch req.JobType {
+	case "ai.chat.v1":
+		return r.handleAIChatTaskV2(req, env), nil
+	case dirquery.JobType:
+		out, err := r.handleDirQueryV2(req, env)
+		if err != nil {
+			return r.failTaskV2(req, env, err.Error()), nil
+		}
+		r.storeTaskV2(req, env, out)
+		return out, nil
+	default:
+		return r.failTaskV2(req, env, tasks.ErrTaskUnsupported.Error()), nil
+	}
+}
+
+func (r *Runtime) handleAIChatTaskV2(req tasks.Request, env *envelopev2.Envelope) [][]byte {
+	input, err := aichat.DecodeInput(req.Input, r.cfg.Limits.MaxPayloadBytes)
+	if err != nil {
+		code := err.Error()
+		if code == aichat.ErrInputInvalid.Error() {
+			code = "ERR_PAYLOAD_DECODE"
+		}
+		return r.failTaskV2(req, env, code)
+	}
+	nodeID, err := r.buildAITranscript(req.TaskID, input)
+	if err != nil {
+		return r.failTaskV2(req, env, err.Error())
+	}
+	accept := r.buildTaskAcceptV2(req.TaskID, env)
+	result := r.buildTaskResultV2(req.TaskID, nodeID, env)
+	out := append(accept, result...)
+	r.storeTaskV2(req, env, out)
+	return out
+}
+
+func (r *Runtime) failTaskV2(req tasks.Request, env *envelopev2.Envelope, code string) [][]byte {
+	fail := r.buildTaskFailV2(req.TaskID, code, "", env)
+	r.storeTaskV2(req, env, fail)
+	return fail
+}
+
+func (r *Runtime) storeTaskV2(req tasks.Request, env *envelopev2.Envelope, resps [][]byte) {
+	if r.tasks == nil {
+		return
+	}
+	r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, resps)
+}
+
+func validateTaskResponseV2(env *envelopev2.Envelope) (string, error) {
+	if env == nil {
+		return "", nil
+	}
 	switch env.Type {
 	case tasks.AcceptType:
-		if a, err := tasks.DecodeAccept(env.Payload); err == nil {
-			return a.TaskID
-		}
+		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
+			acc, err := tasks.DecodeAccept(payload)
+			if err != nil {
+				return 0, "", 0, err
+			}
+			return acc.V, acc.TaskID, acc.TSMs, nil
+		})
 	case tasks.ProgressType:
-		if p, err := tasks.DecodeProgress(env.Payload); err == nil {
-			return p.TaskID
-		}
+		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
+			p, err := tasks.DecodeProgress(payload)
+			if err != nil {
+				return 0, "", 0, err
+			}
+			return p.V, p.TaskID, p.TSMs, nil
+		})
 	case tasks.ResultType:
-		if r, err := tasks.DecodeResult(env.Payload); err == nil {
-			return r.TaskID
-		}
+		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
+			res, err := tasks.DecodeResult(payload)
+			if err != nil {
+				return 0, "", 0, err
+			}
+			if res.ResultNodeID == "" {
+				return 0, "", 0, errors.New("ERR_PAYLOAD_DECODE")
+			}
+			return res.V, res.TaskID, res.TSMs, nil
+		})
 	case tasks.FailType:
-		if f, err := tasks.DecodeFail(env.Payload); err == nil {
-			return f.TaskID
-		}
+		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
+			f, err := tasks.DecodeFail(payload)
+			if err != nil {
+				return 0, "", 0, err
+			}
+			if f.ErrorCode == "" {
+				return 0, "", 0, errors.New("ERR_PAYLOAD_DECODE")
+			}
+			return f.V, f.TaskID, f.TSMs, nil
+		})
 	case tasks.ReceiptType:
-		if r, err := tasks.DecodeReceipt(env.Payload); err == nil {
-			return r.TaskID
-		}
+		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
+			rc, err := tasks.DecodeReceipt(payload)
+			if err != nil {
+				return 0, "", 0, err
+			}
+			return rc.V, rc.TaskID, rc.TSMs, nil
+		})
+	default:
+		return "", nil
 	}
-	return ""
+}
+
+func decodeTaskResponse(payload []byte, decode func([]byte) (uint64, string, int64, error)) (string, error) {
+	version, taskID, tsMs, err := decode(payload)
+	if err != nil {
+		return "", errors.New("ERR_PAYLOAD_DECODE")
+	}
+	if err := validateTaskResponseMeta(version, taskID, tsMs); err != nil {
+		return "", errors.New("ERR_PAYLOAD_DECODE")
+	}
+	return taskID, nil
+}
+
+func validateTaskResponseMeta(version uint64, taskID string, tsMs int64) error {
+	if version != tasks.Version || taskID == "" || tsMs <= 0 {
+		return errors.New("ERR_PAYLOAD_DECODE")
+	}
+	if err := uuidv7.Validate(taskID); err != nil {
+		return errors.New("ERR_PAYLOAD_DECODE")
+	}
+	return nil
 }
 
 func (r *Runtime) buildTaskAcceptV2(taskID string, env *envelopev2.Envelope) [][]byte {
-	payload := tasks.Accept{
-		V:      tasks.Version,
-		TaskID: taskID,
-		TSMs:   timeutil.NowUnixMs(),
-	}
-	payloadBytes, err := tasks.EncodeAccept(payload)
-	if err != nil {
-		return nil
-	}
-	return r.wrapEnvelopeV2(tasks.AcceptType, payloadBytes, env)
+	return r.buildTaskResponseV2(tasks.AcceptType, env, func() ([]byte, error) {
+		payload := tasks.Accept{
+			V:      tasks.Version,
+			TaskID: taskID,
+			TSMs:   timeutil.NowUnixMs(),
+		}
+		return tasks.EncodeAccept(payload)
+	})
 }
 
 func (r *Runtime) buildTaskResultV2(taskID string, nodeID string, env *envelopev2.Envelope) [][]byte {
-	payload := tasks.Result{
-		V:            tasks.Version,
-		TaskID:       taskID,
-		ResultNodeID: nodeID,
-		TSMs:         timeutil.NowUnixMs(),
-	}
-	payloadBytes, err := tasks.EncodeResult(payload)
-	if err != nil {
-		return nil
-	}
-	return r.wrapEnvelopeV2(tasks.ResultType, payloadBytes, env)
+	return r.buildTaskResponseV2(tasks.ResultType, env, func() ([]byte, error) {
+		payload := tasks.Result{
+			V:            tasks.Version,
+			TaskID:       taskID,
+			ResultNodeID: nodeID,
+			TSMs:         timeutil.NowUnixMs(),
+		}
+		return tasks.EncodeResult(payload)
+	})
 }
 
 func (r *Runtime) buildTaskFailV2(taskID string, code string, message string, env *envelopev2.Envelope) [][]byte {
-	payload := tasks.Fail{
-		V:            tasks.Version,
-		TaskID:       taskID,
-		ErrorCode:    code,
-		ErrorMessage: message,
-		TSMs:         timeutil.NowUnixMs(),
-	}
-	payloadBytes, err := tasks.EncodeFail(payload)
+	return r.buildTaskResponseV2(tasks.FailType, env, func() ([]byte, error) {
+		payload := tasks.Fail{
+			V:            tasks.Version,
+			TaskID:       taskID,
+			ErrorCode:    code,
+			ErrorMessage: message,
+			TSMs:         timeutil.NowUnixMs(),
+		}
+		return tasks.EncodeFail(payload)
+	})
+}
+
+func (r *Runtime) buildTaskResponseV2(typ string, env *envelopev2.Envelope, encode func() ([]byte, error)) [][]byte {
+	payloadBytes, err := encode()
 	if err != nil {
 		return nil
 	}
-	return r.wrapEnvelopeV2(tasks.FailType, payloadBytes, env)
+	return r.wrapEnvelopeV2(typ, payloadBytes, env)
 }
 
 func (r *Runtime) wrapEnvelopeV2(typ string, payload []byte, env *envelopev2.Envelope) [][]byte {

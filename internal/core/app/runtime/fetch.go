@@ -9,9 +9,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
-	"github.com/dianabuilds/ardents/internal/shared/pow"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
-	"github.com/dianabuilds/ardents/internal/shared/uuidv7"
 )
 
 var ErrProviderUnavailable = errors.New("ERR_PROVIDER_UNAVAILABLE")
@@ -58,128 +56,106 @@ func (r *Runtime) FetchNode(ctx context.Context, nodeID string) ([]byte, error) 
 }
 
 func (r *Runtime) resolveProviderAddr(peerID string) (string, bool) {
-	for _, bp := range r.cfg.BootstrapPeers {
-		if bp.PeerID != peerID {
-			continue
-		}
-		if len(bp.Addrs) == 0 {
-			return "", false
-		}
-		return stripSchemeLocal(bp.Addrs[0]), true
-	}
-	if r.quic != nil {
-		if addr, ok := r.quic.PeerAddr(peerID); ok {
-			return addr, true
-		}
-	}
-	return "", false
+	return r.resolvePeerAddr(peerID)
 }
 
 func (r *Runtime) fetchFromProvider(ctx context.Context, addr string, peerID string, nodeID string) ([]byte, error) {
 	if r.dial == nil {
 		return nil, ErrDialerUnavailable
 	}
-	reqBytes, err := nodefetch.EncodeRequest(nodefetch.Request{V: nodefetch.Version, NodeID: nodeID})
-	if err != nil {
-		return nil, err
-	}
-	msgID, err := uuidv7.New()
-	if err != nil {
-		return nil, err
-	}
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: msgID,
-		Type:  nodefetch.RequestType,
-		From: envelope.From{
-			PeerID:     r.peerID,
-			IdentityID: r.identity.ID,
-		},
-		To: envelope.To{
-			PeerID: peerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: reqBytes,
-	}
-	if r.identity.PrivateKey != nil && r.identity.ID != "" {
-		if err := env.Sign(r.identity.PrivateKey); err != nil {
-			return nil, err
-		}
-	} else {
-		sub := pow.Subject(env.MsgID, env.TSMs, env.From.PeerID)
-		stamp, err := pow.Generate(sub, r.cfg.Pow.DefaultDifficulty)
-		if err != nil {
-			return nil, err
-		}
-		env.Pow = stamp
-	}
-	envBytes, err := env.Encode()
+	envBytes, err := r.buildNodeFetchEnvelope(peerID, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	r.capture("out", peerID, envBytes)
+	ackBytes, respBytes, err := r.sendNodeFetchWithRetry(ctx, addr, peerID, envBytes)
+	if err != nil {
+		return nil, err
+	}
+	r.capture("in", peerID, ackBytes)
+	if len(respBytes) > 0 {
+		r.capture("in", peerID, respBytes)
+	}
+	return r.decodeNodeFetchResponse(respBytes, nodeID)
+}
+
+func (r *Runtime) buildNodeFetchEnvelope(peerID string, nodeID string) ([]byte, error) {
+	reqBytes, err := nodefetch.EncodeRequest(nodefetch.Request{V: nodefetch.Version, NodeID: nodeID})
+	if err != nil {
+		return nil, err
+	}
+	return r.buildSignedEnvelopeBytes(nodefetch.RequestType, peerID, reqBytes, ttlMinuteMs())
+}
+
+func (r *Runtime) sendNodeFetchWithRetry(ctx context.Context, addr string, peerID string, envBytes []byte) ([]byte, []byte, error) {
 	ackTimeout := 1500 * time.Millisecond
 	maxRetries := 3
-	var (
-		ackBytes  []byte
-		respBytes []byte
-		lastErr   error
-	)
+	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		ackCtx, cancel := context.WithTimeout(ctx, ackTimeout)
-		ackBytes, respBytes, err = r.dial.SendEnvelopeWithReply(ackCtx, addr, peerID, envBytes, r.cfg.Limits.MaxMsgBytes, func(b []byte) bool {
-			ackEnv, err := envelope.DecodeEnvelope(b)
-			if err != nil {
-				return false
-			}
-			p, err := ack.Decode(ackEnv.Payload)
-			if err != nil {
-				return false
-			}
-			return p.Status == "OK" || p.Status == "DUPLICATE"
-		}, 5*time.Second)
-		cancel()
+		ackBytes, respBytes, err := r.sendNodeFetchOnce(ctx, addr, peerID, envBytes, ackTimeout)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		r.capture("in", peerID, ackBytes)
-		if len(respBytes) > 0 {
-			r.capture("in", peerID, respBytes)
-		}
-		ackEnv, err := envelope.DecodeEnvelope(ackBytes)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		p, err := ack.Decode(ackEnv.Payload)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		switch p.Status {
-		case "OK", "DUPLICATE":
-		case "REJECTED":
-			if p.ErrorCode != "" {
-				return nil, errors.New(p.ErrorCode)
+		if err := r.validateNodeFetchAck(ackBytes); err != nil {
+			if errors.Is(err, nodefetch.ErrNodeNotFound) {
+				return nil, nil, err
 			}
-			return nil, nodefetch.ErrNodeNotFound
-		default:
-			lastErr = errors.New("ERR_ACK_INVALID")
+			lastErr = err
 			continue
 		}
 		if len(respBytes) == 0 {
-			return nil, nodefetch.ErrNodeNotFound
+			return nil, nil, nodefetch.ErrNodeNotFound
 		}
-		goto decodeResponse
+		return ackBytes, respBytes, nil
 	}
 	if lastErr == nil {
 		lastErr = errors.New("ERR_DELIVERY_FAILED")
 	}
-	return nil, lastErr
+	return nil, nil, lastErr
+}
 
-decodeResponse:
+func (r *Runtime) sendNodeFetchOnce(ctx context.Context, addr string, peerID string, envBytes []byte, ackTimeout time.Duration) ([]byte, []byte, error) {
+	ackCtx, cancel := context.WithTimeout(ctx, ackTimeout)
+	defer cancel()
+	return r.dial.SendEnvelopeWithReply(ackCtx, addr, peerID, envBytes, r.cfg.Limits.MaxMsgBytes, shouldAcceptAck, 5*time.Second)
+}
+
+func shouldAcceptAck(b []byte) bool {
+	ackEnv, err := envelope.DecodeEnvelope(b)
+	if err != nil {
+		return false
+	}
+	p, err := ack.Decode(ackEnv.Payload)
+	if err != nil {
+		return false
+	}
+	return p.Status == "OK" || p.Status == "DUPLICATE"
+}
+
+func (r *Runtime) validateNodeFetchAck(ackBytes []byte) error {
+	ackEnv, err := envelope.DecodeEnvelope(ackBytes)
+	if err != nil {
+		return err
+	}
+	p, err := ack.Decode(ackEnv.Payload)
+	if err != nil {
+		return err
+	}
+	switch p.Status {
+	case "OK", "DUPLICATE":
+		return nil
+	case "REJECTED":
+		if p.ErrorCode != "" {
+			return errors.New(p.ErrorCode)
+		}
+		return nodefetch.ErrNodeNotFound
+	default:
+		return errors.New("ERR_ACK_INVALID")
+	}
+}
+
+func (r *Runtime) decodeNodeFetchResponse(respBytes []byte, nodeID string) ([]byte, error) {
 	respEnv, err := envelope.DecodeEnvelope(respBytes)
 	if err != nil {
 		return nil, err

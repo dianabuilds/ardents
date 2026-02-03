@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -126,7 +127,7 @@ func Start(addr string, reg *Registry) *Server {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
-		if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return
 		}
 	}()

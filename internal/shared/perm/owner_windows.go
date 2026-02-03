@@ -3,6 +3,7 @@
 package perm
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -45,4 +46,11 @@ func restrictToCurrentUser(path string) error {
 		return err
 	}
 	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+}
+
+func EnsureOwnerOnly(path string) error {
+	if err := restrictToCurrentUser(path); err != nil {
+		return errors.New("ERR_GATEWAY_UNAUTHORIZED")
+	}
+	return nil
 }

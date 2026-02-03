@@ -177,70 +177,93 @@ func (b Book) ImportBundle(node contentnode.Node, nowMs int64) (Book, error) {
 		return b, ErrImportUntrusted
 	}
 	body := normalizeMap(node.Body)
-	if rawRevoked, ok := body["revoked_identity_ids"].([]any); ok {
-		for _, v := range rawRevoked {
-			id := asString(v)
-			if id == "" {
-				continue
-			}
-			b.RevokedIDs = appendUnique(b.RevokedIDs, id)
-		}
-	} else if list, ok := body["revoked_identity_ids"].([]string); ok {
-		for _, id := range list {
-			b.RevokedIDs = appendUnique(b.RevokedIDs, id)
-		}
-	}
-	if rawDep, ok := body["deprecated_identity_ids"].([]any); ok {
-		for _, v := range rawDep {
-			id := asString(v)
-			if id == "" {
-				continue
-			}
-			b.DeprecatedIDs = appendUnique(b.DeprecatedIDs, id)
-		}
-	} else if list, ok := body["deprecated_identity_ids"].([]string); ok {
-		for _, id := range list {
-			b.DeprecatedIDs = appendUnique(b.DeprecatedIDs, id)
-		}
-	}
-	if list, ok := body["entries"].([]Entry); ok {
-		for _, e := range list {
-			e.Source = "imported"
-			if e.Trust == "" {
-				e.Trust = "untrusted"
-			}
-			if e.CreatedAtMs == 0 {
-				e.CreatedAtMs = nowMs
-			}
-			if aliasErr := validateEntry(e); aliasErr != nil {
-				continue
-			}
-			b.Entries = append(b.Entries, e)
-		}
-	} else if rawEntries, ok := body["entries"].([]any); ok {
-		for _, re := range rawEntries {
-			obj := normalizeMap(re)
-			entry := Entry{
-				Alias:       asString(obj["alias"]),
-				TargetType:  asString(obj["target_type"]),
-				TargetID:    asString(obj["target_id"]),
-				Source:      "imported",
-				Trust:       asStringDefault(obj["trust"], "untrusted"),
-				CreatedAtMs: nowMs,
-			}
-			if exp, ok := obj["expires_at_ms"].(int64); ok {
-				entry.ExpiresAtMs = exp
-			}
-			if aliasErr := validateEntry(entry); aliasErr != nil {
-				continue
-			}
-			b.Entries = append(b.Entries, entry)
-		}
-	} else {
+	if err := importIDList(body["revoked_identity_ids"], &b.RevokedIDs); err != nil {
 		return b, ErrBundleInvalid
 	}
+	if err := importIDList(body["deprecated_identity_ids"], &b.DeprecatedIDs); err != nil {
+		return b, ErrBundleInvalid
+	}
+	entries, ok := importEntries(body["entries"], nowMs)
+	if !ok {
+		return b, ErrBundleInvalid
+	}
+	b.Entries = append(b.Entries, entries...)
 	b.UpdatedAtMs = nowMs
 	return b, nil
+}
+
+func importIDList(raw any, dst *[]string) error {
+	switch v := raw.(type) {
+	case []any:
+		for _, item := range v {
+			id := asString(item)
+			if id == "" {
+				continue
+			}
+			*dst = appendUnique(*dst, id)
+		}
+	case []string:
+		for _, id := range v {
+			*dst = appendUnique(*dst, id)
+		}
+	case nil:
+		return nil
+	default:
+		return ErrBundleInvalid
+	}
+	return nil
+}
+
+func importEntries(raw any, nowMs int64) ([]Entry, bool) {
+	switch v := raw.(type) {
+	case []Entry:
+		return normalizeEntries(v, nowMs), true
+	case []any:
+		return buildEntriesFromAny(v, nowMs), true
+	default:
+		return nil, false
+	}
+}
+
+func normalizeEntries(entries []Entry, nowMs int64) []Entry {
+	out := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		e.Source = "imported"
+		if e.Trust == "" {
+			e.Trust = "untrusted"
+		}
+		if e.CreatedAtMs == 0 {
+			e.CreatedAtMs = nowMs
+		}
+		if aliasErr := validateEntry(e); aliasErr != nil {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func buildEntriesFromAny(rawEntries []any, nowMs int64) []Entry {
+	out := make([]Entry, 0, len(rawEntries))
+	for _, re := range rawEntries {
+		obj := normalizeMap(re)
+		entry := Entry{
+			Alias:       asString(obj["alias"]),
+			TargetType:  asString(obj["target_type"]),
+			TargetID:    asString(obj["target_id"]),
+			Source:      "imported",
+			Trust:       asStringDefault(obj["trust"], "untrusted"),
+			CreatedAtMs: nowMs,
+		}
+		if exp, ok := obj["expires_at_ms"].(int64); ok {
+			entry.ExpiresAtMs = exp
+		}
+		if aliasErr := validateEntry(entry); aliasErr != nil {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func appendUnique(list []string, id string) []string {

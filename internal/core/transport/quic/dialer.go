@@ -64,88 +64,12 @@ func (d *Dialer) PeerPublicKey(peerID string) (ed25519.PublicKey, bool) {
 }
 
 func (d *Dialer) DialAndHandshake(ctx context.Context, addr string, expectedPeerID string) error {
-	addr = stripSchemeLocal(addr)
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		return ErrAddrInvalid
-	}
-	tlsConf := &tls.Config{
-		Certificates:       []tls.Certificate{d.keys.TLSCert},
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true,
-	}
-	quicConf := &quicgo.Config{
-		HandshakeIdleTimeout: 10 * time.Second,
-		MaxIdleTimeout:       30 * time.Second,
-		KeepAlivePeriod:      10 * time.Second,
-	}
-	conn, err := quicgo.DialAddr(ctx, addr, tlsConf, quicConf)
+	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = conn.CloseWithError(0, "")
-	}()
-
-	cs := conn.ConnectionState().TLS
-	if len(cs.PeerCertificates) == 0 {
-		return ErrPeerCertInvalid
-	}
-	peerID, err := PeerIDFromCert(cs.PeerCertificates[0])
-	if err != nil {
-		return err
-	}
-	if pk, ok := cs.PeerCertificates[0].PublicKey.(ed25519.PublicKey); ok {
-		d.mu.Lock()
-		d.peerPubs[peerID] = pk
-		d.mu.Unlock()
-	}
-	if expectedPeerID != "" && peerID != expectedPeerID {
-		return ErrPeerIDMismatch
-	}
-
-	stream, err := conn.OpenStreamSync(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = stream.Close()
-	}()
-
-	localHello := Hello{
-		V:                  HelloVersion,
-		PeerID:             d.peerID,
-		TSMs:               timeutil.NowUnixMs(),
-		Nonce:              make([]byte, 16),
-		PowDifficulty:      d.cfg.Pow.DefaultDifficulty,
-		MaxMsgBytes:        d.cfg.Limits.MaxMsgBytes,
-		CapabilitiesDigest: d.capDigest,
-	}
-	localBytes, err := EncodeHello(localHello)
-	if err != nil {
-		return err
-	}
-	if err := writeFrame(stream, localBytes); err != nil {
-		return err
-	}
-	remoteBytes, err := readFrame(stream, d.cfg.Limits.MaxMsgBytes)
-	if err != nil {
-		return err
-	}
-	remoteHello, err := DecodeHello(remoteBytes)
-	if err != nil {
-		return err
-	}
-	if d.onHello != nil {
-		d.onHello(remoteHello.PeerID, remoteHello.TSMs, remoteHello.CapabilitiesDigest)
-	}
-	if err := ValidateHello(timeutil.NowUnixMs(), remoteHello); err != nil {
-		return err
-	}
-	if expectedPeerID != "" && remoteHello.PeerID != expectedPeerID {
-		return ErrPeerIDMismatch
-	}
-	return nil
+	_ = stream.Close()
+	return conn.CloseWithError(0, "")
 }
 
 func stripSchemeLocal(addr string) string {
@@ -195,84 +119,14 @@ func powFloat(a float64, n int) float64 {
 }
 
 func (d *Dialer) SendEnvelope(ctx context.Context, addr string, expectedPeerID string, envelopeBytes []byte, maxBytes uint64) ([]byte, error) {
-	tlsConf := &tls.Config{
-		Certificates:       []tls.Certificate{d.keys.TLSCert},
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true,
-	}
-	quicConf := &quicgo.Config{
-		HandshakeIdleTimeout: 10 * time.Second,
-		MaxIdleTimeout:       30 * time.Second,
-		KeepAlivePeriod:      10 * time.Second,
-	}
-	conn, err := quicgo.DialAddr(ctx, addr, tlsConf, quicConf)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = conn.CloseWithError(0, "")
-	}()
-
-	cs := conn.ConnectionState().TLS
-	if len(cs.PeerCertificates) == 0 {
-		return nil, ErrPeerCertInvalid
-	}
-	peerID, err := PeerIDFromCert(cs.PeerCertificates[0])
-	if err != nil {
-		return nil, err
-	}
-	if pk, ok := cs.PeerCertificates[0].PublicKey.(ed25519.PublicKey); ok {
-		d.mu.Lock()
-		d.peerPubs[peerID] = pk
-		d.mu.Unlock()
-	}
-	if expectedPeerID != "" && peerID != expectedPeerID {
-		return nil, ErrPeerIDMismatch
-	}
-
-	stream, err := conn.OpenStreamSync(ctx)
+	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		_ = stream.Close()
+		_ = conn.CloseWithError(0, "")
 	}()
-
-	localHello := Hello{
-		V:                  HelloVersion,
-		PeerID:             d.peerID,
-		TSMs:               timeutil.NowUnixMs(),
-		Nonce:              make([]byte, 16),
-		PowDifficulty:      d.cfg.Pow.DefaultDifficulty,
-		MaxMsgBytes:        d.cfg.Limits.MaxMsgBytes,
-		CapabilitiesDigest: d.capDigest,
-	}
-	localBytes, err := EncodeHello(localHello)
-	if err != nil {
-		return nil, err
-	}
-	if err := writeFrame(stream, localBytes); err != nil {
-		return nil, err
-	}
-	remoteBytes, err := readFrame(stream, d.cfg.Limits.MaxMsgBytes)
-	if err != nil {
-		return nil, err
-	}
-	remoteHello, err := DecodeHello(remoteBytes)
-	if err != nil {
-		return nil, err
-	}
-	if d.onHello != nil {
-		d.onHello(remoteHello.PeerID, remoteHello.TSMs, remoteHello.CapabilitiesDigest)
-	}
-	if err := ValidateHello(timeutil.NowUnixMs(), remoteHello); err != nil {
-		return nil, err
-	}
-	if expectedPeerID != "" && remoteHello.PeerID != expectedPeerID {
-		return nil, ErrPeerIDMismatch
-	}
-
 	if err := writeFrame(stream, envelopeBytes); err != nil {
 		return nil, err
 	}
@@ -288,84 +142,14 @@ func (d *Dialer) SendEnvelope(ctx context.Context, addr string, expectedPeerID s
 }
 
 func (d *Dialer) SendEnvelopeWithReply(ctx context.Context, addr string, expectedPeerID string, envelopeBytes []byte, maxBytes uint64, shouldRead func([]byte) bool, replyTimeout time.Duration) ([]byte, []byte, error) {
-	tlsConf := &tls.Config{
-		Certificates:       []tls.Certificate{d.keys.TLSCert},
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true,
-	}
-	quicConf := &quicgo.Config{
-		HandshakeIdleTimeout: 10 * time.Second,
-		MaxIdleTimeout:       30 * time.Second,
-		KeepAlivePeriod:      10 * time.Second,
-	}
-	conn, err := quicgo.DialAddr(ctx, addr, tlsConf, quicConf)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() {
-		_ = conn.CloseWithError(0, "")
-	}()
-
-	cs := conn.ConnectionState().TLS
-	if len(cs.PeerCertificates) == 0 {
-		return nil, nil, ErrPeerCertInvalid
-	}
-	peerID, err := PeerIDFromCert(cs.PeerCertificates[0])
-	if err != nil {
-		return nil, nil, err
-	}
-	if pk, ok := cs.PeerCertificates[0].PublicKey.(ed25519.PublicKey); ok {
-		d.mu.Lock()
-		d.peerPubs[peerID] = pk
-		d.mu.Unlock()
-	}
-	if expectedPeerID != "" && peerID != expectedPeerID {
-		return nil, nil, ErrPeerIDMismatch
-	}
-
-	stream, err := conn.OpenStreamSync(ctx)
+	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() {
 		_ = stream.Close()
+		_ = conn.CloseWithError(0, "")
 	}()
-
-	localHello := Hello{
-		V:                  HelloVersion,
-		PeerID:             d.peerID,
-		TSMs:               timeutil.NowUnixMs(),
-		Nonce:              make([]byte, 16),
-		PowDifficulty:      d.cfg.Pow.DefaultDifficulty,
-		MaxMsgBytes:        d.cfg.Limits.MaxMsgBytes,
-		CapabilitiesDigest: d.capDigest,
-	}
-	localBytes, err := EncodeHello(localHello)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := writeFrame(stream, localBytes); err != nil {
-		return nil, nil, err
-	}
-	remoteBytes, err := readFrame(stream, d.cfg.Limits.MaxMsgBytes)
-	if err != nil {
-		return nil, nil, err
-	}
-	remoteHello, err := DecodeHello(remoteBytes)
-	if err != nil {
-		return nil, nil, err
-	}
-	if d.onHello != nil {
-		d.onHello(remoteHello.PeerID, remoteHello.TSMs, remoteHello.CapabilitiesDigest)
-	}
-	if err := ValidateHello(timeutil.NowUnixMs(), remoteHello); err != nil {
-		return nil, nil, err
-	}
-	if expectedPeerID != "" && remoteHello.PeerID != expectedPeerID {
-		return nil, nil, ErrPeerIDMismatch
-	}
-
 	if err := writeFrame(stream, envelopeBytes); err != nil {
 		return nil, nil, err
 	}
@@ -391,4 +175,102 @@ func (d *Dialer) SendEnvelopeWithReply(ctx context.Context, addr string, expecte
 		return ackBytes, nil, err
 	}
 	return ackBytes, respBytes, nil
+}
+
+func (d *Dialer) dialAndHandshakeStream(ctx context.Context, addr string, expectedPeerID string) (quicgo.Connection, quicgo.Stream, error) {
+	addr = stripSchemeLocal(addr)
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return nil, nil, ErrAddrInvalid
+	}
+	tlsConf := &tls.Config{
+		Certificates:       []tls.Certificate{d.keys.TLSCert},
+		MinVersion:         tls.VersionTLS13,
+		MaxVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: true,
+	}
+	quicConf := &quicgo.Config{
+		HandshakeIdleTimeout: 10 * time.Second,
+		MaxIdleTimeout:       30 * time.Second,
+		KeepAlivePeriod:      10 * time.Second,
+	}
+	conn, err := quicgo.DialAddr(ctx, addr, tlsConf, quicConf)
+	if err != nil {
+		return nil, nil, err
+	}
+	peerIDFromCert, err := d.storePeerCert(conn, expectedPeerID)
+	if err != nil {
+		_ = conn.CloseWithError(0, "")
+		return nil, nil, err
+	}
+	stream, err := conn.OpenStreamSync(ctx)
+	if err != nil {
+		_ = conn.CloseWithError(0, "")
+		return nil, nil, err
+	}
+	if err := d.exchangeHello(stream, peerIDFromCert, expectedPeerID); err != nil {
+		_ = stream.Close()
+		_ = conn.CloseWithError(0, "")
+		return nil, nil, err
+	}
+	return conn, stream, nil
+}
+
+func (d *Dialer) storePeerCert(conn quicgo.Connection, expectedPeerID string) (string, error) {
+	cs := conn.ConnectionState().TLS
+	if len(cs.PeerCertificates) == 0 {
+		return "", ErrPeerCertInvalid
+	}
+	peerID, err := PeerIDFromCert(cs.PeerCertificates[0])
+	if err != nil {
+		return "", err
+	}
+	if pk, ok := cs.PeerCertificates[0].PublicKey.(ed25519.PublicKey); ok {
+		d.mu.Lock()
+		d.peerPubs[peerID] = pk
+		d.mu.Unlock()
+	}
+	if expectedPeerID != "" && peerID != expectedPeerID {
+		return "", ErrPeerIDMismatch
+	}
+	return peerID, nil
+}
+
+func (d *Dialer) exchangeHello(stream quicgo.Stream, peerIDFromCert string, expectedPeerID string) error {
+	localHello := Hello{
+		V:                  HelloVersion,
+		PeerID:             d.peerID,
+		TSMs:               timeutil.NowUnixMs(),
+		Nonce:              make([]byte, 16),
+		PowDifficulty:      d.cfg.Pow.DefaultDifficulty,
+		MaxMsgBytes:        d.cfg.Limits.MaxMsgBytes,
+		CapabilitiesDigest: d.capDigest,
+	}
+	localBytes, err := EncodeHello(localHello)
+	if err != nil {
+		return err
+	}
+	if err := writeFrame(stream, localBytes); err != nil {
+		return err
+	}
+	remoteBytes, err := readFrame(stream, d.cfg.Limits.MaxMsgBytes)
+	if err != nil {
+		return err
+	}
+	remoteHello, err := DecodeHello(remoteBytes)
+	if err != nil {
+		return err
+	}
+	if d.onHello != nil {
+		d.onHello(remoteHello.PeerID, remoteHello.TSMs, remoteHello.CapabilitiesDigest)
+	}
+	if err := ValidateHello(timeutil.NowUnixMs(), remoteHello); err != nil {
+		return err
+	}
+	if remoteHello.PeerID != peerIDFromCert {
+		return ErrPeerIDMismatch
+	}
+	if expectedPeerID != "" && remoteHello.PeerID != expectedPeerID {
+		return ErrPeerIDMismatch
+	}
+	return nil
 }

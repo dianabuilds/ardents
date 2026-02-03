@@ -11,7 +11,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 )
 
-var ErrKeyInvalid = errors.New("invalid onion key")
+var ErrKeyInvalid = errors.New("ERR_ONION_KEY_INVALID")
 
 type Keypair struct {
 	Private []byte

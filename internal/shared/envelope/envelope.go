@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dianabuilds/ardents/internal/shared/codec"
+	"github.com/dianabuilds/ardents/internal/shared/envelopesig"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 	"github.com/dianabuilds/ardents/internal/shared/pow"
 	"github.com/dianabuilds/ardents/internal/shared/uuidv7"
@@ -105,37 +106,22 @@ func (e *Envelope) Sign(priv ed25519.PrivateKey) error {
 	if priv == nil {
 		return ErrInvalidEnvelope
 	}
-	clone := *e
-	clone.Sig = nil
-	b, err := codec.Marshal(&clone)
+	sig, err := envelopesig.Sign(priv, e.signingBytes)
 	if err != nil {
 		return err
 	}
-	e.Sig = ed25519.Sign(priv, b)
+	e.Sig = sig
 	return nil
 }
 
 func (e *Envelope) VerifySignature(identityID string) error {
-	if identityID == "" {
-		return ErrInvalidEnvelope
-	}
-	pub, err := ids.IdentityPublicKey(identityID)
-	if err != nil {
-		return err
-	}
-	if len(e.Sig) == 0 {
-		return ErrInvalidEnvelope
-	}
+	return envelopesig.VerifyIdentity(identityID, e.Sig, e.signingBytes, ErrInvalidEnvelope, ErrInvalidEnvelope, ErrInvalidEnvelope)
+}
+
+func (e *Envelope) signingBytes() ([]byte, error) {
 	clone := *e
 	clone.Sig = nil
-	b, err := codec.Marshal(&clone)
-	if err != nil {
-		return err
-	}
-	if !ed25519.Verify(pub, b, e.Sig) {
-		return ErrInvalidEnvelope
-	}
-	return nil
+	return codec.Marshal(&clone)
 }
 
 func (t To) HasExactlyOne() bool {

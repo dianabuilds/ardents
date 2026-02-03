@@ -70,7 +70,7 @@ Capability — CBOR map:
 В v1 сервис считается “найденным”, если выполняется одно из условий:
 
 1. `service_id` присутствует в локальной Address Book (alias → service_id); или
-2. peer получил `service.announce.v1` (см. SPEC-110) и descriptor прошёл проверку подписи.
+2. (deprecated) `service.announce.v1` удалён из текущей реализации; в v2 discovery выполняется через NetDB `service.head.v1`/`service.lease_set.v1`.
 
 Глобального “поиска по capabilities” в v1 **НЕТ**.
 
@@ -93,8 +93,7 @@ Capability — CBOR map:
 
 Service descriptor неизменяем (как Node), поэтому обновляемость достигается повторными анонсами:
 
-* peer, который хостит сервис, **ДОЛЖЕН** периодически (не реже 1 раза в 60 секунд) отправлять `service.announce.v1` с `node_id` актуального `service.descriptor.v1`;
-* при изменении конфигурации/версии сервиса peer **ДОЛЖЕН** немедленно отправить новый `service.announce.v1`.
+* (deprecated) `service.announce.v1` не используется; публикация выполняется через NetDB записи (SPEC-510/530).
 
 Правило “latest trusted descriptor” (фиксировано):
 

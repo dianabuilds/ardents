@@ -18,65 +18,80 @@ type Dirs struct {
 }
 
 func Resolve(overrideHome string) (Dirs, error) {
-	home := firstNonEmpty(overrideHome, os.Getenv(EnvHome))
-	if home != "" {
-		home = filepath.Clean(home)
-		if !filepath.IsAbs(home) {
-			wd, err := os.Getwd()
-			if err != nil {
-				return Dirs{}, err
-			}
-			home = filepath.Join(wd, home)
-		}
-		return Dirs{
-			Home:      home,
-			ConfigDir: filepath.Join(home, "config"),
-			DataDir:   filepath.Join(home, "data"),
-			StateDir:  filepath.Join(home, "run"),
-			RunDir:    filepath.Join(home, "run"),
-		}, nil
+	if dirs, ok, err := resolveExplicitHome(overrideHome); ok || err != nil {
+		return dirs, err
 	}
 
 	switch runtime.GOOS {
 	case "linux", "freebsd", "openbsd", "netbsd", "darwin":
-		userHome, err := os.UserHomeDir()
-		if err != nil || userHome == "" {
+		return resolveXDGDirs()
+	default:
+		return resolveWindowsDirs()
+	}
+}
+
+func resolveExplicitHome(overrideHome string) (Dirs, bool, error) {
+	home := firstNonEmpty(overrideHome, os.Getenv(EnvHome))
+	if home == "" {
+		return Dirs{}, false, nil
+	}
+	home = filepath.Clean(home)
+	if !filepath.IsAbs(home) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return Dirs{}, true, err
+		}
+		home = filepath.Join(wd, home)
+	}
+	return Dirs{
+		Home:      home,
+		ConfigDir: filepath.Join(home, "config"),
+		DataDir:   filepath.Join(home, "data"),
+		StateDir:  filepath.Join(home, "run"),
+		RunDir:    filepath.Join(home, "run"),
+	}, true, nil
+}
+
+func resolveXDGDirs() (Dirs, error) {
+	userHome, err := os.UserHomeDir()
+	if err != nil || userHome == "" {
+		return Dirs{}, errors.New("ERR_HOME_UNAVAILABLE")
+	}
+	cfgHome := firstNonEmpty(os.Getenv("XDG_CONFIG_HOME"), filepath.Join(userHome, ".config"))
+	dataHome := firstNonEmpty(os.Getenv("XDG_DATA_HOME"), filepath.Join(userHome, ".local", "share"))
+	stateHome := firstNonEmpty(os.Getenv("XDG_STATE_HOME"), filepath.Join(userHome, ".local", "state"))
+	cfg := filepath.Join(cfgHome, "ardents")
+	data := filepath.Join(dataHome, "ardents")
+	state := filepath.Join(stateHome, "ardents")
+	return Dirs{
+		Home:      "",
+		ConfigDir: cfg,
+		DataDir:   data,
+		StateDir:  state,
+		RunDir:    filepath.Join(state, "run"),
+	}, nil
+}
+
+func resolveWindowsDirs() (Dirs, error) {
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		base = os.Getenv("APPDATA")
+	}
+	if base == "" {
+		wd, err := os.Getwd()
+		if err != nil {
 			return Dirs{}, errors.New("ERR_HOME_UNAVAILABLE")
 		}
-		cfgHome := firstNonEmpty(os.Getenv("XDG_CONFIG_HOME"), filepath.Join(userHome, ".config"))
-		dataHome := firstNonEmpty(os.Getenv("XDG_DATA_HOME"), filepath.Join(userHome, ".local", "share"))
-		stateHome := firstNonEmpty(os.Getenv("XDG_STATE_HOME"), filepath.Join(userHome, ".local", "state"))
-		cfg := filepath.Join(cfgHome, "ardents")
-		data := filepath.Join(dataHome, "ardents")
-		state := filepath.Join(stateHome, "ardents")
-		return Dirs{
-			Home:      "",
-			ConfigDir: cfg,
-			DataDir:   data,
-			StateDir:  state,
-			RunDir:    filepath.Join(state, "run"),
-		}, nil
-	default:
-		base := os.Getenv("LOCALAPPDATA")
-		if base == "" {
-			base = os.Getenv("APPDATA")
-		}
-		if base == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				return Dirs{}, errors.New("ERR_HOME_UNAVAILABLE")
-			}
-			base = wd
-		}
-		home := filepath.Join(base, "ardents")
-		return Dirs{
-			Home:      home,
-			ConfigDir: filepath.Join(home, "config"),
-			DataDir:   filepath.Join(home, "data"),
-			StateDir:  filepath.Join(home, "run"),
-			RunDir:    filepath.Join(home, "run"),
-		}, nil
+		base = wd
 	}
+	home := filepath.Join(base, "ardents")
+	return Dirs{
+		Home:      home,
+		ConfigDir: filepath.Join(home, "config"),
+		DataDir:   filepath.Join(home, "data"),
+		StateDir:  filepath.Join(home, "run"),
+		RunDir:    filepath.Join(home, "run"),
+	}, nil
 }
 
 func (d Dirs) ConfigPath() string {

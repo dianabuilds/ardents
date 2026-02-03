@@ -3,13 +3,9 @@ package runtime
 import (
 	"encoding/hex"
 	"errors"
-	"time"
 
 	"github.com/dianabuilds/ardents/internal/core/domain/tunnel"
-	"github.com/dianabuilds/ardents/internal/shared/envelope"
-	"github.com/dianabuilds/ardents/internal/shared/pow"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
-	"github.com/dianabuilds/ardents/internal/shared/uuidv7"
 )
 
 var (
@@ -138,38 +134,7 @@ func (r *Runtime) buildTunnelReply(toPeerID string, reply tunnel.BuildReply) []b
 	if err != nil {
 		return nil
 	}
-	msgID, err := uuidv7.New()
-	if err != nil {
-		return nil
-	}
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: msgID,
-		Type:  tunnel.BuildReplyType,
-		From: envelope.From{
-			PeerID:     r.peerID,
-			IdentityID: r.identity.ID,
-		},
-		To: envelope.To{
-			PeerID: toPeerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payload,
-	}
-	if r.identity.PrivateKey != nil && r.identity.ID != "" {
-		if err := env.Sign(r.identity.PrivateKey); err != nil {
-			return nil
-		}
-	} else {
-		sub := pow.Subject(env.MsgID, env.TSMs, env.From.PeerID)
-		stamp, err := pow.Generate(sub, r.cfg.Pow.DefaultDifficulty)
-		if err != nil {
-			return nil
-		}
-		env.Pow = stamp
-	}
-	encoded, err := env.Encode()
+	encoded, err := r.buildSignedEnvelopeBytes(tunnel.BuildReplyType, toPeerID, payload, ttlMinuteMs())
 	if err != nil {
 		return nil
 	}
@@ -177,39 +142,7 @@ func (r *Runtime) buildTunnelReply(toPeerID string, reply tunnel.BuildReply) []b
 }
 
 func (r *Runtime) buildTunnelDataEnvelope(toPeerID string, dataBytes []byte) []byte {
-	env := envelope.Envelope{
-		V:     envelope.Version,
-		MsgID: "",
-		Type:  tunnel.DataType,
-		From: envelope.From{
-			PeerID:     r.peerID,
-			IdentityID: r.identity.ID,
-		},
-		To: envelope.To{
-			PeerID: toPeerID,
-		},
-		TSMs:    timeutil.NowUnixMs(),
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: dataBytes,
-	}
-	id, err := uuidv7.New()
-	if err != nil {
-		return nil
-	}
-	env.MsgID = id
-	if r.identity.PrivateKey != nil && r.identity.ID != "" {
-		if err := env.Sign(r.identity.PrivateKey); err != nil {
-			return nil
-		}
-	} else {
-		sub := pow.Subject(env.MsgID, env.TSMs, env.From.PeerID)
-		stamp, err := pow.Generate(sub, r.cfg.Pow.DefaultDifficulty)
-		if err != nil {
-			return nil
-		}
-		env.Pow = stamp
-	}
-	encoded, err := env.Encode()
+	encoded, err := r.buildSignedEnvelopeBytes(tunnel.DataType, toPeerID, dataBytes, ttlMinuteMs())
 	if err != nil {
 		return nil
 	}

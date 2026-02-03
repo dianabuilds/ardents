@@ -133,6 +133,7 @@ Peer **МОЖЕТ** после `hello` отправить `service.announce.v1`:
 * сообщение **ДОЛЖНО** содержать ссылку (`node_id`) на `service.descriptor.v1` (см. SPEC-300);
 * descriptor **ДОЛЖЕН** быть подписан Identity владельца;
 * peer **НЕ ДОЛЖЕН** считаться “доверенным” только из-за этого объявления.
+* текущая реализация `service.announce.v1` **НЕ ПОДДЕРЖИВАЕТ** и возвращает `ERR_UNSUPPORTED_TYPE`.
 
 ### 5.1 `service.announce.v1` (фиксировано)
 

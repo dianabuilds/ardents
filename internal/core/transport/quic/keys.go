@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
+	"github.com/dianabuilds/ardents/internal/shared/ed25519util"
 )
 
-var ErrKeyMaterialInvalid = errors.New("invalid key material")
+var ErrKeyMaterialInvalid = errors.New("ERR_KEY_MATERIAL_INVALID")
 
 type KeyMaterial struct {
 	PrivateKey ed25519.PrivateKey
@@ -48,17 +49,12 @@ func loadKeyMaterial(keyPath, crtPath string) (KeyMaterial, error) {
 	if err != nil {
 		return KeyMaterial{}, err
 	}
-	block, _ := pem.Decode(keyPEM)
-	if block == nil || block.Type != "PRIVATE KEY" {
-		return KeyMaterial{}, ErrKeyMaterialInvalid
-	}
-	priv, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	edPriv, err := ed25519util.ParsePrivateKeyPEM(keyPEM)
 	if err != nil {
+		if errors.Is(err, ed25519util.ErrPrivateKeyInvalid) {
+			return KeyMaterial{}, ErrKeyMaterialInvalid
+		}
 		return KeyMaterial{}, err
-	}
-	edPriv, ok := priv.(ed25519.PrivateKey)
-	if !ok {
-		return KeyMaterial{}, ErrKeyMaterialInvalid
 	}
 	crtPEM, err := os.ReadFile(crtPath)
 	if err != nil {
@@ -68,11 +64,7 @@ func loadKeyMaterial(keyPath, crtPath string) (KeyMaterial, error) {
 	if err != nil {
 		return KeyMaterial{}, err
 	}
-	return KeyMaterial{
-		PrivateKey: edPriv,
-		PublicKey:  edPriv.Public().(ed25519.PublicKey),
-		TLSCert:    cert,
-	}, nil
+	return buildKeyMaterial(edPriv, ed25519util.PublicKey(edPriv), cert), nil
 }
 
 func createKeyMaterial(keyPath, crtPath string) (KeyMaterial, error) {
@@ -91,12 +83,10 @@ func createKeyMaterial(keyPath, crtPath string) (KeyMaterial, error) {
 	if err != nil {
 		return KeyMaterial{}, err
 	}
-	keyBytes, err := x509.MarshalPKCS8PrivateKey(priv)
+	keyPEM, err := ed25519util.EncodePrivateKeyPEM(priv)
 	if err != nil {
 		return KeyMaterial{}, err
 	}
-
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes})
 	crtPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 
 	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
@@ -110,14 +100,18 @@ func createKeyMaterial(keyPath, crtPath string) (KeyMaterial, error) {
 	if err != nil {
 		return KeyMaterial{}, err
 	}
-	return KeyMaterial{
-		PrivateKey: priv,
-		PublicKey:  pub,
-		TLSCert:    cert,
-	}, nil
+	return buildKeyMaterial(priv, pub, cert), nil
 }
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func buildKeyMaterial(priv ed25519.PrivateKey, pub ed25519.PublicKey, cert tls.Certificate) KeyMaterial {
+	return KeyMaterial{
+		PrivateKey: priv,
+		PublicKey:  pub,
+		TLSCert:    cert,
+	}
 }

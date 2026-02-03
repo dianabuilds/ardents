@@ -8,7 +8,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 )
 
-var ErrPeerCertInvalid = errors.New("invalid peer certificate")
+var ErrPeerCertInvalid = errors.New("ERR_PEER_CERT_INVALID")
 
 func PeerIDFromCert(cert *x509.Certificate) (string, error) {
 	if cert == nil {

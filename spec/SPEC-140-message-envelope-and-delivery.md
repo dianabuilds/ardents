@@ -18,7 +18,7 @@ Envelope — CBOR map:
 
 * `v` = 1
 * `msg_id` (string, UUIDv7)
-* `type` (string, например: `chat.msg.v1`, `task.request.v1`)
+* `type` (string, например: `demo.msg.v1`, `task.request.v1`)
 * `from` (map):
   * `peer_id` (string, обязателен)
   * `identity_id` (string, optional)

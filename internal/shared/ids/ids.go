@@ -71,7 +71,7 @@ func IdentityPublicKey(identityID string) (ed25519.PublicKey, error) {
 	if len(data) != 34 || data[0] != 0xED || data[1] != 0x01 {
 		return nil, ErrInvalidIdentityID
 	}
-	return ed25519.PublicKey(data[2:]), nil
+	return data[2:], nil
 }
 
 func ValidatePeerID(peerID string) error {
