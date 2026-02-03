@@ -8,7 +8,9 @@
 
 ## 1) Wire-формат (CBOR, фиксировано)
 
-Любое сетевое сообщение **ДОЛЖНО** быть Envelope `envelope.v1` в CBOR.
+В профиле v1 (direct mode) любое overlay-сообщение **ДОЛЖНО** быть Envelope `envelope.v1` в CBOR.
+
+В профиле v2 (privacy-first) прикладные сообщения **ДОЛЖНЫ** передаваться как `envelope.v2` (SPEC-550) **внутри** `garlic.msg.v1` (SPEC-520). Прямой передачи `envelope.v2` по transport нет.
 
 ### 1.1 Envelope.v1
 
@@ -31,6 +33,10 @@ Envelope — CBOR map:
 * `pow` (map, optional) — PoW stamp `pow_v1` (см. SPEC-002)
 * `payload` (bytes) — CBOR bytes of payload-объекта, зависящего от `type`
 * `sig` (bytes, optional) — подпись Identity отправителя
+
+### 1.1b Envelope.v2 (privacy-first)
+
+`envelope.v2` определён в SPEC-550 и является прикладным контейнером без `from.peer_id`. Он используется только внутри туннельной доставки.
 
 ### 1.2 Подпись Envelope (фиксировано)
 

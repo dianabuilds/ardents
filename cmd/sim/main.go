@@ -10,12 +10,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/dianabuilds/ardents/internal/addressbook"
-	"github.com/dianabuilds/ardents/internal/config"
-	"github.com/dianabuilds/ardents/internal/contentnode"
-	"github.com/dianabuilds/ardents/internal/runtime"
-	"github.com/dianabuilds/ardents/internal/services/nodefetch"
-	"github.com/dianabuilds/ardents/internal/services/tasks"
+	"github.com/dianabuilds/ardents/internal/core/app/runtime"
+	"github.com/dianabuilds/ardents/internal/core/app/services/nodefetch"
+	"github.com/dianabuilds/ardents/internal/core/app/services/tasks"
+	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
+	"github.com/dianabuilds/ardents/internal/core/infra/addressbook"
+	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
 	"github.com/dianabuilds/ardents/internal/shared/codec"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
@@ -56,20 +56,27 @@ func main() {
 	dropRate := fs.Float64("drop-rate", 0, "drop rate 0..1")
 	powInvalidRate := fs.Float64("pow-invalid-rate", 0, "rate of invalid/missing PoW 0..1")
 	powDifficulty := fs.Uint64("pow-difficulty", 16, "PoW difficulty")
+	profile := fs.String("profile", "v1", "simulation profile: v1 or v2")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		fatal(err)
 	}
 	if *nPeers < 2 {
-		fatal(errors.New("n must be >= 2"))
+		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
 	}
 	if *rate <= 0 {
-		fatal(errors.New("rate must be > 0"))
+		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
 	}
 	if *dropRate < 0 || *dropRate > 1 || *powInvalidRate < 0 || *powInvalidRate > 1 {
-		fatal(errors.New("rates must be 0..1"))
+		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
 	}
 
 	rng := rand.New(rand.NewSource(*seed))
+	if *profile == "v2" {
+		if err := runV2(*nPeers, rng); err != nil {
+			fatal(err)
+		}
+		return
+	}
 	cfg := config.Default()
 	cfg.Pow.DefaultDifficulty = *powDifficulty
 

@@ -14,7 +14,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 )
 
-var ErrIdentityInvalid = errors.New("invalid identity")
+var ErrIdentityInvalid = errors.New("ERR_ID_INVALID")
 
 type Identity struct {
 	ID          string

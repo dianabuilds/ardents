@@ -42,6 +42,12 @@
 * gateway token: `run/peer.token`
 * packet capture: `run/pcap.jsonl`
 
+### 2.4 Правило хранения (репозиторий)
+
+* Runtime‑данные **НЕ** хранятся внутри репозитория: никаких `data/`, `run/`, `logs/`, `tmp/` в дереве проекта.
+* `ARDENTS_HOME` разрешён, но **должен** указывать на путь вне репозитория.
+* Если `appdirs.Resolve()` не смог определить директории, применяется безопасный fallback в `${TEMP}/ardents/` (system temp).
+
 ---
 
 ## 3) Запуск/настройка (CLI)

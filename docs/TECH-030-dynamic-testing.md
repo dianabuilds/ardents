@@ -1,4 +1,4 @@
-# TECH-030: Динамическое тестирование системы (sim)
+﻿# TECH-030: Динамическое тестирование системы (sim)
 
 **Статус:** Done (2026-02-02)  
 **Цель:** прогнать динамические сценарии через `cmd/sim` и зафиксировать результаты.
@@ -121,3 +121,59 @@ go run ./cmd/sim -n 5 -duration 5s -rate 20 -seed 3 -drop-rate 0 -pow-invalid-ra
 - При `drop-rate=0.2` число доставок соответствует ожидаемым потерям.
 - Инъекции PoW‑ошибок корректно переводятся в `ERR_POW_REQUIRED/ERR_POW_INVALID`.
 
+
+---
+
+## 4) V2 suite (privacy-first)
+
+### Сценарий D — v2 dynamic suite
+
+Команда:
+
+```
+go run ./cmd/sim -profile v2 -n 10 -seed 1
+```
+
+Ожидаемый выход:
+
+```
+{
+  "checks": {
+    "reseed_quorum": { "ok": true },
+    "netdb_poisoning_reject": { "ok": true },
+    "netdb_wire": { "ok": true },
+    "dirquery_e2e": { "ok": true },
+    "tunnel_rotate_padding": { "ok": true }
+  },
+  "latency_p95_ms": 0,
+  "duration_ms": 0
+}
+```
+
+При ошибке статус `ok=false` и указывается `error`.
+
+Фактический прогон (2026-02-03):
+
+```
+{
+  "checks": {
+    "dirquery_e2e": {
+      "ok": true
+    },
+    "netdb_poisoning_reject": {
+      "ok": true
+    },
+    "netdb_wire": {
+      "ok": true
+    },
+    "reseed_quorum": {
+      "ok": true
+    },
+    "tunnel_rotate_padding": {
+      "ok": true
+    }
+  },
+  "latency_p95_ms": 1,
+  "duration_ms": 41
+}
+```

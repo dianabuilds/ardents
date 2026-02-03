@@ -1,0 +1,26 @@
+{
+  "node_name": "peer",
+  "listen": {
+    "quic": true,
+    "quic_addr": "0.0.0.0:0"
+  },
+  "bootstrap_peers": [],
+  "limits": {
+    "max_inbound_conns": 64,
+    "max_outbound_conns": 64,
+    "max_msg_bytes": 262144,
+    "max_payload_bytes": 131072,
+    "max_inflight_msgs": 1024,
+    "ban_window_ms": 600000
+  },
+  "pow": {
+    "default_difficulty": 16
+  },
+  "observability": {
+    "health_addr": "127.0.0.1:8081",
+    "metrics_addr": "127.0.0.1:9090",
+    "pcap_enabled": false,
+    "log_format": "json",
+    "log_file": ""
+  }
+}

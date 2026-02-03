@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dianabuilds/ardents/internal/config"
-	"github.com/dianabuilds/ardents/internal/contentnode"
-	"github.com/dianabuilds/ardents/internal/runtime"
+	"github.com/dianabuilds/ardents/internal/core/app/runtime"
+	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
+	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 )
 
@@ -57,7 +57,7 @@ func getCmd(args []string) {
 		fatal(err)
 	}
 	if *id == "" {
-		fatal(errors.New("missing --id"))
+		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
 	}
 	if *home != "" {
 		_ = os.Setenv(appdirs.EnvHome, *home)
@@ -69,7 +69,7 @@ func getCmd(args []string) {
 	if *cfgPath == "" {
 		*cfgPath = dirs.ConfigPath()
 	}
-	cfg, err := loadOrInitConfig(*cfgPath)
+	cfg, err := config.LoadOrInit(*cfgPath)
 	if err != nil {
 		fatal(err)
 	}
@@ -160,18 +160,6 @@ func followHistory(ctx context.Context, rt *runtime.Runtime, root NodeView, dept
 		depth--
 	}
 	return out
-}
-
-func loadOrInitConfig(path string) (config.Config, error) {
-	cfg, err := config.Load(path)
-	if err == nil {
-		return cfg, nil
-	}
-	cfg = config.Default()
-	if err := config.Save(path, cfg); err != nil {
-		return config.Config{}, err
-	}
-	return cfg, nil
 }
 
 func fatal(err error) {

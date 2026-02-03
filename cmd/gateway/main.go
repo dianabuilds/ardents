@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dianabuilds/ardents/internal/addressbook"
-	"github.com/dianabuilds/ardents/internal/config"
-	"github.com/dianabuilds/ardents/internal/gateway"
-	"github.com/dianabuilds/ardents/internal/runtime"
+	"github.com/dianabuilds/ardents/internal/core/app/runtime"
+	"github.com/dianabuilds/ardents/internal/core/infra/addressbook"
+	"github.com/dianabuilds/ardents/internal/core/infra/config"
+	"github.com/dianabuilds/ardents/internal/core/transport/gateway"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
@@ -58,7 +58,7 @@ func main() {
 	}
 	fmt.Println("warn: gateway is loopback-only; token is a secret")
 
-	cfg, err := loadOrInitConfig(*cfgPath)
+	cfg, err := config.LoadOrInit(*cfgPath)
 	if err != nil {
 		fatal(err)
 	}
@@ -172,16 +172,4 @@ func resolveTargetPeerID(dirs appdirs.Dirs, to string) (string, error) {
 func fatal(err error) {
 	_, _ = fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
-}
-
-func loadOrInitConfig(path string) (config.Config, error) {
-	cfg, err := config.Load(path)
-	if err == nil {
-		return cfg, nil
-	}
-	cfg = config.Default()
-	if err := config.Save(path, cfg); err != nil {
-		return config.Config{}, err
-	}
-	return cfg, nil
 }

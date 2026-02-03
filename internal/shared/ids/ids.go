@@ -17,12 +17,12 @@ var (
 )
 
 var (
-	ErrInvalidIdentityID  = errors.New("invalid identity_id")
-	ErrInvalidPeerID      = errors.New("invalid peer_id")
-	ErrInvalidServiceID   = errors.New("invalid service_id")
-	ErrInvalidChannelID   = errors.New("invalid channel_id")
-	ErrInvalidServiceName = errors.New("invalid service_name")
-	ErrInvalidAlias       = errors.New("invalid alias")
+	ErrInvalidIdentityID  = errors.New("ERR_ID_INVALID")
+	ErrInvalidPeerID      = errors.New("ERR_ID_INVALID")
+	ErrInvalidServiceID   = errors.New("ERR_ID_INVALID")
+	ErrInvalidChannelID   = errors.New("ERR_ID_INVALID")
+	ErrInvalidServiceName = errors.New("ERR_ID_INVALID")
+	ErrInvalidAlias       = errors.New("ERR_ALIAS_INVALID")
 )
 
 func ValidateServiceName(name string) error {

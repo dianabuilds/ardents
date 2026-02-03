@@ -14,13 +14,13 @@ import (
 const Version = 1
 
 var (
-	ErrInvalidEnvelope    = errors.New("invalid envelope")
-	ErrInvalidMsgID       = errors.New("invalid msg_id")
-	ErrInvalidFrom        = errors.New("invalid from")
-	ErrInvalidTo          = errors.New("invalid to")
-	ErrInvalidTTL         = errors.New("invalid ttl")
-	ErrExpired            = errors.New("ttl expired")
-	ErrUnsupportedVersion = errors.New("unsupported version")
+	ErrInvalidEnvelope    = errors.New("ERR_PAYLOAD_DECODE")
+	ErrInvalidMsgID       = errors.New("ERR_PAYLOAD_DECODE")
+	ErrInvalidFrom        = errors.New("ERR_PAYLOAD_DECODE")
+	ErrInvalidTo          = errors.New("ERR_PAYLOAD_DECODE")
+	ErrInvalidTTL         = errors.New("ERR_TTL_EXPIRED")
+	ErrExpired            = errors.New("ERR_TTL_EXPIRED")
+	ErrUnsupportedVersion = errors.New("ERR_PAYLOAD_DECODE")
 )
 
 type Envelope struct {

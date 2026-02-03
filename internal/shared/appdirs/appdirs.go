@@ -95,6 +95,10 @@ func (d Dirs) KeysDir() string {
 	return filepath.Join(d.DataDir, "keys")
 }
 
+func (d Dirs) LKeysDir() string {
+	return filepath.Join(d.DataDir, "lkeys")
+}
+
 func (d Dirs) StatusPath() string {
 	return filepath.Join(d.RunDir, "status.json")
 }

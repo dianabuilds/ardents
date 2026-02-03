@@ -12,9 +12,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/dianabuilds/ardents/internal/config"
+	"github.com/dianabuilds/ardents/internal/core/infra/config"
+	"github.com/dianabuilds/ardents/internal/core/transport/quic"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
-	"github.com/dianabuilds/ardents/internal/transport/quic"
 )
 
 type pcapRecord struct {
@@ -37,10 +37,10 @@ func main() {
 		fatal(err)
 	}
 	if *addr == "" {
-		fatal(errors.New("missing --addr"))
+		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
 	}
 	if !*allowNetwork && !isLoopbackAddr(*addr) {
-		fatal(errors.New("replay is sandbox-only by default; use --allow-network to enable"))
+		fatal(errors.New("ERR_CLI_INVALID_ARGS"))
 	}
 	if *pcapPath == "" {
 		if *home != "" {

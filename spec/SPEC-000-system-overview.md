@@ -1,7 +1,7 @@
 # SPEC-000: Обзор системы и карта спецификаций
 
-**Проект:** распределённая overlay-сеть для сервисов и контента (i2p-like), с адресной книгой, каналами/задачами и интеграциями.
-**Статус:** Approved v1.0 (2026-02-02)
+**Проект:** распределённая overlay-сеть для сервисов и контента, ориентированная на приватность и анонимную доставку (Tor/I2P-like), с адресной книгой, задачами и интеграциями.
+**Статус:** Draft v2.0 (2026-02-02) — v1 профиль остаётся совместимым режимом “direct mode”.
 **Цель документа:** дать общую модель системы, словарь, компоненты, жизненные сценарии и карту спецификаций.
 
 ## 1) Цели и принципы
@@ -10,17 +10,32 @@
 
 1. **Внутренняя сеть сервисов и контента** поверх обычного интернета: узлы, адреса, каналы, маршруты, оффлайн-режим.
 2. **Простая прикладная ценность**: обмен контентом/состоянием + выполнение задач (в т.ч. ИИ) через единый транспорт.
-3. **Устойчивость и приватность как режимы**, без фанатизма: вначале наблюдаемость и дебаг важнее “идеальной анонимности”, но архитектура не должна её исключать.
+3. **Приватность и анонимность по умолчанию (v2):** туннели, directory/reseed, NetDB, минимизация метаданных.
+4. **Наблюдаемость без утечек:** диагностика обязательна, но не должна deanonymize пользователей и сервисы.
 
-### 1.2 Негативные цели (что НЕ делаем в MVP)
+### 1.2 Профили протокола (фиксировано)
 
-* Полноценная “анонимность уровня Tor/i2p” как верифицируемое утверждение.
+Система имеет два профиля, чтобы исключить двусмысленность поведения и требований:
+
+1. **Profile v1: direct mode (совместимость/разработка)**  
+   * discovery: только config/address book (SPEC-110, раздел 1)
+   * доставка: `envelope.v1` напрямую/через простые relays (SPEC-130 v1)
+   * приватность: ограниченная (SPEC-002)
+2. **Profile v2: privacy-first (основной)**  
+   * bootstrap: directory authorities + reseed (SPEC-500)
+   * NetDB (DHT) и записи сети (SPEC-510)
+   * туннели и garlic delivery (SPEC-520)
+   * прикладная доставка: `envelope.v2` внутри garlic (SPEC-550)
+   * анонимные сервисы и поиск по capabilities через directory service (SPEC-530)
+   * модель угроз v2: SPEC-540
+
+### 1.3 Негативные цели (что НЕ делаем как продукт)
 * Глобально согласованное состояние данных (“везде одно и то же состояние в один момент времени”).
 * Глобальный поиск “как Google”.
 * Децентрализованный финальный консенсус “всё всегда истинно”.
 * Монетизация/токены как обязательное ядро.
 
-### 1.3 Принципы
+### 1.4 Принципы
 
 * **Разделение сущностей:**
 
@@ -106,11 +121,14 @@
 
 * `msg_id`
 * `type` (chat | task.request | task.result | state.update | signal …)
-* `from` (`peer_id` + optional `identity_id`)
-* `to` (`peer_id` | `service_id` | `channel_id`)
+* `from`:
+  * v1: `peer_id` + optional `identity_id` (SPEC-140)
+  * v2: optional `identity_id` + optional `service_id` (SPEC-550)
+* `to`:
+  * v1: `peer_id` | `service_id` | `channel_id` (SPEC-140)
+  * v2: `service_id` (SPEC-550)
 * `ts_ms`, `ttl_ms`
 * `refs` (ссылки на связанные msg/node/task)
-* `route` (optional: hops metadata)
 * `sig` (подпись payload/envelope частей)
 
 ### 4.3 Основные потоки (end-to-end)
@@ -193,8 +211,17 @@
 * SPEC-100 Network Manager (NET)
 * SPEC-110 Peer Discovery и Handshake
 * SPEC-120 Address Book и Naming
-* SPEC-130 Routing и Relays (туннели)
-* SPEC-140 Сообщения (Envelope) и доставка (Delivery)
+* SPEC-130 Routing и Relays (v1 direct mode)
+* SPEC-140 Сообщения (Envelope v1) и доставка (direct)
+
+### Уровень 1b: privacy-first транспорт (v2)
+
+* SPEC-500 Directory Authorities & Reseed (bootstrap)
+* SPEC-510 NetDB (DHT) и записи сети
+* SPEC-520 Туннели и garlic/onion маршрутизация
+* SPEC-530 Анонимные сервисы и directory-поиск
+* SPEC-540 Модель угроз privacy-first
+* SPEC-550 Envelope v2 (анонимная доставка)
 
 ### Уровень 2: контент и состояние
 
@@ -216,7 +243,7 @@
 * SPEC-420 Диагностика и наблюдаемость
 * SPEC-430 Инструменты администрирования и разработки
 
-### Соответствие SPEC → файл (v1)
+### Соответствие SPEC → файл
 
 | SPEC | Файл |
 | --- | --- |
@@ -240,6 +267,12 @@
 | SPEC-410 | `spec/SPEC-410-client-node-browser.md` |
 | SPEC-420 | `spec/SPEC-420-diagnostics-and-observability.md` |
 | SPEC-430 | `spec/SPEC-430-admin-and-dev-tools.md` |
+| SPEC-500 | `spec/SPEC-500-directory-authorities-and-reseed.md` |
+| SPEC-510 | `spec/SPEC-510-netdb-and-records.md` |
+| SPEC-520 | `spec/SPEC-520-tunnels-and-garlic-routing.md` |
+| SPEC-530 | `spec/SPEC-530-anonymous-services-and-directory.md` |
+| SPEC-540 | `spec/SPEC-540-privacy-threat-model.md` |
+| SPEC-550 | `spec/SPEC-550-anonymous-envelope.md` |
 
 ---
 
