@@ -30,7 +30,7 @@ func LoadOrCreate(dir string) (Identity, error) {
 			dir = filepath.Join("data", "identity")
 		}
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return Identity{}, err
 	}
 	keyPath := filepath.Join(dir, "identity.key")
@@ -41,7 +41,7 @@ func LoadOrCreate(dir string) (Identity, error) {
 }
 
 func load(path string) (Identity, error) {
-	keyPEM, err := os.ReadFile(path)
+	keyPEM, err := os.ReadFile(path) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return Identity{}, err
 	}

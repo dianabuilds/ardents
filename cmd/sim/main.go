@@ -62,7 +62,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	rng := rand.New(rand.NewSource(opts.seed))
+	rng := rand.New(rand.NewSource(opts.seed)) // #nosec G404 -- simulation RNG, not for security.
 	if opts.profile == "v2" {
 		if err := runV2(opts.nPeers, rng); err != nil {
 			fatal(err)

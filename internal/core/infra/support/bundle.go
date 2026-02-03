@@ -43,11 +43,11 @@ func WriteBundle(opts BundleOptions) (string, error) {
 	if filepath.Ext(outPath) != ".zip" {
 		outPath += ".zip"
 	}
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil {
 		return "", err
 	}
 
-	f, err := os.Create(outPath)
+	f, err := os.Create(outPath) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return "", err
 	}
@@ -108,12 +108,14 @@ func addAddressBook(zw *zip.Writer, path string, include bool) {
 		return
 	}
 	if include {
+		// #nosec G304 -- path is controlled by app dirs.
 		if b, err := os.ReadFile(path); err == nil {
 			red, _ := redactAddressBookJSON(b)
 			_ = addBytes(zw, "data/addressbook.json", red)
 		}
 		return
 	}
+	// #nosec G304 -- path is controlled by app dirs.
 	if b, err := os.ReadFile(path); err == nil {
 		meta := addressBookMeta(b)
 		_ = addJSON(zw, "data/addressbook.meta.json", meta)
@@ -142,7 +144,7 @@ func buildInfo() any {
 }
 
 func addFile(zw *zip.Writer, name string, srcPath string) error {
-	b, err := os.ReadFile(srcPath)
+	b, err := os.ReadFile(srcPath) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return err
 	}
@@ -150,7 +152,7 @@ func addFile(zw *zip.Writer, name string, srcPath string) error {
 }
 
 func addFileRedacted(zw *zip.Writer, name string, srcPath string) error {
-	b, err := os.ReadFile(srcPath)
+	b, err := os.ReadFile(srcPath) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return err
 	}
@@ -179,7 +181,7 @@ func readTailWindow(path string, maxBytes int64) (data []byte, partial bool, fil
 	if path == "" || maxBytes <= 0 {
 		return nil, false, 0, ErrBadRequest
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return nil, false, 0, err
 	}

@@ -152,6 +152,7 @@ func statusCmd(args []string) {
 	if cfg.Observability.HealthAddr != "" {
 		// #nosec G101 -- health endpoint is loopback-only HTTP by design.
 		healthURL := buildHealthURL(cfg.Observability.HealthAddr)
+		// #nosec G107 -- URL is derived from trusted config and loopback.
 		if h, err := http.Get(healthURL); err == nil {
 			defer func() {
 				_ = h.Body.Close()

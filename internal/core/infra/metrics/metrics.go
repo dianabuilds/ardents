@@ -18,14 +18,16 @@ type Registry struct {
 	msgRejected      map[string]uint64
 	powRequired      uint64
 	powInvalid       uint64
-	ackLatencyMs     []uint64
+	ackLatencyCount  uint64
+	ackLatencySumMs  uint64
+	ackLatencyBucket []uint64
 }
 
 func New() *Registry {
 	return &Registry{
-		msgReceived:  make(map[string]uint64),
-		msgRejected:  make(map[string]uint64),
-		ackLatencyMs: make([]uint64, 0),
+		msgReceived:      make(map[string]uint64),
+		msgRejected:      make(map[string]uint64),
+		ackLatencyBucket: make([]uint64, len(ackLatencyBucketBounds)),
 	}
 }
 
@@ -67,10 +69,31 @@ func (r *Registry) DecNetInbound() {
 	}
 }
 
+func (r *Registry) IncNetOutbound() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.netOutboundConns++
+}
+
+func (r *Registry) DecNetOutbound() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.netOutboundConns > 0 {
+		r.netOutboundConns--
+	}
+}
+
 func (r *Registry) ObserveAckLatency(ms uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.ackLatencyMs = append(r.ackLatencyMs, ms)
+	r.ackLatencyCount++
+	r.ackLatencySumMs += ms
+	for i, b := range ackLatencyBucketBounds {
+		if ms <= b {
+			r.ackLatencyBucket[i]++
+			return
+		}
+	}
 }
 
 func (r *Registry) Handler() http.Handler {
@@ -101,20 +124,29 @@ func (r *Registry) Handler() http.Handler {
 		if _, err := fmt.Fprintf(&buf, "pow_invalid_total %d\n", r.powInvalid); err != nil {
 			return
 		}
-		if len(r.ackLatencyMs) > 0 {
-			var sum uint64
-			for _, v := range r.ackLatencyMs {
-				sum += v
-			}
-			if _, err := fmt.Fprintf(&buf, "ack_latency_ms_avg %d\n", sum/uint64(len(r.ackLatencyMs))); err != nil {
+		var cum uint64
+		for i, b := range ackLatencyBucketBounds {
+			cum += r.ackLatencyBucket[i]
+			if _, err := fmt.Fprintf(&buf, "ack_latency_ms_bucket{le=\"%d\"} %d\n", b, cum); err != nil {
 				return
 			}
+		}
+		if _, err := fmt.Fprintf(&buf, "ack_latency_ms_bucket{le=\"+Inf\"} %d\n", r.ackLatencyCount); err != nil {
+			return
+		}
+		if _, err := fmt.Fprintf(&buf, "ack_latency_ms_sum %d\n", r.ackLatencySumMs); err != nil {
+			return
+		}
+		if _, err := fmt.Fprintf(&buf, "ack_latency_ms_count %d\n", r.ackLatencyCount); err != nil {
+			return
 		}
 		if _, err := w.Write(buf.Bytes()); err != nil {
 			return
 		}
 	})
 }
+
+var ackLatencyBucketBounds = []uint64{50, 100, 250, 500, 1000, 2000, 5000}
 
 type Server struct {
 	srv *http.Server

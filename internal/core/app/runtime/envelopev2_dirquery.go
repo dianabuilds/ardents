@@ -14,6 +14,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
 	"github.com/dianabuilds/ardents/internal/shared/capabilities"
 	"github.com/dianabuilds/ardents/internal/shared/codec"
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/envelopev2"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
@@ -134,8 +135,8 @@ func (r *Runtime) dirQueryScore(body servicedesc.DescriptorBodyV2, jobTypes []st
 		}
 	}
 	if input.Query.MinResources != nil {
-		score += int64(minUint64(100, body.Resources["cpu_cores"]))
-		score += int64(minUint64(100, body.Resources["ram_mb"]/1024))
+		score += conv.ClampUint64ToInt64(minUint64(100, body.Resources["cpu_cores"]))
+		score += conv.ClampUint64ToInt64(minUint64(100, body.Resources["ram_mb"]/1024))
 	}
 	return score
 }

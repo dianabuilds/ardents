@@ -215,7 +215,7 @@ func rotateIPCToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(dirs.RunDir, 0o755); err != nil {
+	if err := os.MkdirAll(dirs.RunDir, 0o750); err != nil {
 		return "", err
 	}
 	f, err := perm.OpenOwnerOnly(dirs.GatewayTokenPath())

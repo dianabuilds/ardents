@@ -6,6 +6,8 @@ import (
 	"errors"
 	"regexp"
 	"time"
+
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 )
 
 var uuidV7Re = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -19,7 +21,7 @@ func New() (string, error) {
 		return "", err
 	}
 
-	ts := uint64(time.Now().UTC().UnixNano() / int64(time.Millisecond))
+	ts := conv.ClampInt64ToUint64(time.Now().UTC().UnixNano() / int64(time.Millisecond))
 	b[0] = byte(ts >> 40)
 	b[1] = byte(ts >> 32)
 	b[2] = byte(ts >> 24)

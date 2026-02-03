@@ -25,6 +25,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/transport/quic"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 	"github.com/dianabuilds/ardents/internal/shared/capabilities"
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/onionkey"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
@@ -55,6 +56,7 @@ type Runtime struct {
 	netdb             *netdb.DB
 	clockSkew         *clockSkewTracker
 	powAbuse          *powAbuseTracker
+	handshakeAbuse    *handshakeAbuseTracker
 	localCapabilities []string
 	capsMu            sync.Mutex
 	peerCaps          map[string][]byte
@@ -88,7 +90,7 @@ func New(cfg config.Config) *Runtime {
 	return &Runtime{
 		cfg:               cfg,
 		net:               netmgr.New(),
-		dedup:             netpkg.NewDedup(10*time.Minute, int(cfg.Limits.MaxInflightMsgs)),
+		dedup:             netpkg.NewDedup(10*time.Minute, conv.ClampUint64ToInt(cfg.Limits.MaxInflightMsgs)),
 		bans:              netpkg.NewBanList(),
 		quic:              qs,
 		dial:              dialer,
@@ -107,6 +109,7 @@ func New(cfg config.Config) *Runtime {
 		netdb:             netdb.New(netdb.DefaultRecordMaxTTLMs, netdb.DefaultK),
 		clockSkew:         newClockSkewTracker(4),
 		powAbuse:          newPowAbuseTracker(5),
+		handshakeAbuse:    newHandshakeAbuseTracker(5),
 		localCapabilities: []string{"node.fetch.v1"},
 		peerCaps:          make(map[string][]byte),
 		tunnels:           make(map[string]*tunnelSession),
@@ -346,7 +349,7 @@ func (r *Runtime) applyReseed(ctx context.Context) {
 	r.reseedParams = bundle.Params
 	r.bootstrapPeers = bundle.SeedPeers()
 	if r.netdb != nil {
-		r.netdb.UpdateParams(bundle.Params.NetDB.RecordMaxTTLMs, int(bundle.Params.NetDB.K))
+		r.netdb.UpdateParams(bundle.Params.NetDB.RecordMaxTTLMs, conv.ClampUint64ToInt(bundle.Params.NetDB.K))
 		nowMs := time.Now().UTC().UnixNano() / int64(time.Millisecond)
 		for _, seed := range bundle.Routers {
 			rec := netdb.RouterInfo{
@@ -379,9 +382,14 @@ func (r *Runtime) dialBootstrap(ctx context.Context) {
 	if r.dial == nil {
 		return
 	}
-	peers := r.bootstrapPeers
-	if len(peers) == 0 {
-		peers = r.cfg.BootstrapPeers
+	peers := make([]config.BootstrapPeer, 0)
+	if len(r.bootstrapPeers) > 0 {
+		peers = append(peers, r.bootstrapPeers...)
+	} else {
+		peers = append(peers, r.cfg.BootstrapPeers...)
+	}
+	if !r.cfg.Reseed.Enabled {
+		peers = mergeBootstrapPeers(peers, r.addressBookBootstrapPeers(timeutil.NowUnixMs()))
 	}
 	if len(peers) == 0 {
 		return
@@ -426,6 +434,9 @@ func (r *Runtime) observePeerConnected(peerID string) {
 	atomic.AddUint64(&r.peersConnected, 1)
 	if r.metrics != nil {
 		r.metrics.IncNetInbound()
+	}
+	if r.handshakeAbuse != nil {
+		r.handshakeAbuse.Reset(peerID)
 	}
 	r.log.Event("info", "net", "peer.connected", peerID, "", "")
 	r.checkLowPeers()

@@ -10,14 +10,14 @@ import (
 )
 
 func writeStatus(dirs appdirs.Dirs, st Status) error {
-	if err := os.MkdirAll(dirs.RunDir, 0o755); err != nil {
+	if err := os.MkdirAll(dirs.RunDir, 0o750); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dirs.StatusPath(), b, 0o644)
+	return os.WriteFile(dirs.StatusPath(), b, 0o600)
 }
 
 func readStatus(dirs appdirs.Dirs) (Status, error) {

@@ -134,7 +134,7 @@ func addressBookExport(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	if err := os.WriteFile(*out, data, 0o644); err != nil {
+	if err := os.WriteFile(*out, data, 0o600); err != nil {
 		fatal(err)
 	}
 	fmt.Println("addressbook bundle exported:", *out)

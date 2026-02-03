@@ -160,10 +160,10 @@ func installServiceCmd(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(unit), 0o600); err != nil {
 		fatal(err)
 	}
 	fmt.Println("installed:", path)

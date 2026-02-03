@@ -11,6 +11,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/app/services/servicedesc"
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 	"github.com/dianabuilds/ardents/internal/shared/lockeys"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
@@ -176,7 +177,7 @@ func (r *Runtime) ensureServiceDescriptorV2(info localServiceInfo) (string, erro
 		"max_payload_bytes": r.cfg.Limits.MaxPayloadBytes,
 	}
 	resources := map[string]uint64{
-		"cpu_cores": uint64(runtime.NumCPU()),
+		"cpu_cores": conv.ClampIntToUint64(runtime.NumCPU()),
 		"ram_mb":    0,
 	}
 	caps := []servicedesc.Capability{{

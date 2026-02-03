@@ -378,7 +378,7 @@ func clientConfigs() (quic.KeyMaterial, *tls.Config, *quicgo.Config, error) {
 		Certificates:       []tls.Certificate{keys.TLSCert},
 		MinVersion:         tls.VersionTLS13,
 		MaxVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: true, // #nosec G402 -- peer identity is validated at the envelope layer.
 	}
 	quicConf := &quicgo.Config{
 		HandshakeIdleTimeout: 10 * time.Second,
@@ -506,7 +506,7 @@ func loadBody(path string) ([]byte, error) {
 	if path == "" {
 		return nil, nil
 	}
-	return os.ReadFile(path)
+	return os.ReadFile(path) // #nosec G304 -- CLI user-supplied path.
 }
 
 func parseHeaders(list []string) map[string]string {

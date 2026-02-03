@@ -108,9 +108,12 @@ func (r *Runtime) forwardEnvelope(peerID string, envBytes []byte) ([]byte, error
 	if !ok || r.dial == nil {
 		return nil, errors.New("ERR_RELAY_NEXT_HOP_UNREACHABLE")
 	}
-	ackBytes, err := r.dial.SendEnvelope(context.Background(), addr, peerID, envBytes, r.cfg.Limits.MaxMsgBytes)
+	ackBytes, err := r.sendEnvelopeWithRetry(context.Background(), addr, peerID, envBytes, 1500*time.Millisecond, 3)
 	if err != nil {
 		return nil, err
+	}
+	if len(ackBytes) == 0 {
+		return nil, errors.New("ERR_RELAY_NEXT_HOP_UNREACHABLE")
 	}
 	ackEnv, err := envelope.DecodeEnvelope(ackBytes)
 	if err != nil {

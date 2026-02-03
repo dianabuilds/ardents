@@ -26,7 +26,7 @@ func LoadOrCreate(dir string) (Keypair, error) {
 			dir = filepath.Join("data", "keys")
 		}
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return Keypair{}, err
 	}
 	keyPath := filepath.Join(dir, "onion.key")
@@ -37,7 +37,7 @@ func LoadOrCreate(dir string) (Keypair, error) {
 }
 
 func load(path string) (Keypair, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return Keypair{}, err
 	}

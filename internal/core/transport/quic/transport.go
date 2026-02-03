@@ -11,6 +11,7 @@ import (
 	quicgo "github.com/quic-go/quic-go"
 
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
@@ -34,9 +35,13 @@ type Server struct {
 	capDigest          []byte
 	onPeerConnected    func(peerID string)
 	onPeerDisconnected func(peerID string)
+	onHandshakeError   func(peerID string, remoteAddr string, err error)
+	isPeerBanned       func(peerID string) bool
 	peerPubs           map[string]ed25519.PublicKey
 	mu                 sync.RWMutex
 	peerAddrs          map[string]string
+	inboundSem         chan struct{}
+	handshakeLimiter   *attemptLimiter
 }
 
 func NewServer(cfg config.Config) (*Server, error) {
@@ -48,13 +53,23 @@ func NewServer(cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	var inboundSem chan struct{}
+	if cfg.Limits.MaxInboundConns > 0 {
+		inboundSem = make(chan struct{}, conv.ClampUint64ToInt(cfg.Limits.MaxInboundConns))
+	}
+	window := time.Duration(cfg.Limits.BanWindowMs) * time.Millisecond
+	if window <= 0 {
+		window = 10 * time.Minute
+	}
 	return &Server{
-		cfg:       cfg,
-		keys:      keys,
-		peerID:    peerID,
-		stopCh:    make(chan struct{}),
-		peerAddrs: make(map[string]string),
-		peerPubs:  make(map[string]ed25519.PublicKey),
+		cfg:              cfg,
+		keys:             keys,
+		peerID:           peerID,
+		stopCh:           make(chan struct{}),
+		peerAddrs:        make(map[string]string),
+		peerPubs:         make(map[string]ed25519.PublicKey),
+		inboundSem:       inboundSem,
+		handshakeLimiter: newAttemptLimiter(handshakeAttemptLimit, window),
 	}, nil
 }
 
@@ -151,6 +166,14 @@ func (s *Server) SetPeerObserver(connected func(peerID string), disconnected fun
 	s.onPeerDisconnected = disconnected
 }
 
+func (s *Server) SetHandshakeErrorObserver(fn func(peerID string, remoteAddr string, err error)) {
+	s.onHandshakeError = fn
+}
+
+func (s *Server) SetPeerBanChecker(fn func(peerID string) bool) {
+	s.isPeerBanned = fn
+}
+
 func (s *Server) acceptLoop(ctx context.Context) {
 	defer s.wg.Done()
 	for {
@@ -163,6 +186,17 @@ func (s *Server) acceptLoop(ctx context.Context) {
 				continue
 			}
 		}
+		if s.inboundSem != nil {
+			select {
+			case s.inboundSem <- struct{}{}:
+			default:
+				if s.onHandshakeError != nil {
+					s.onHandshakeError("", conn.RemoteAddr().String(), ErrMaxInboundConns)
+				}
+				_ = conn.CloseWithError(0, "")
+				continue
+			}
+		}
 		s.wg.Add(1)
 		go s.handleConn(conn)
 	}
@@ -172,9 +206,28 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 	defer s.wg.Done()
 	defer func() {
 		_ = conn.CloseWithError(0, "")
+		if s.inboundSem != nil {
+			select {
+			case <-s.inboundSem:
+			default:
+			}
+		}
 	}()
+	remoteAddr := conn.RemoteAddr().String()
+	if s.handshakeLimiter != nil {
+		key := normalizeAddrKey(remoteAddr)
+		if !s.handshakeLimiter.Allow(key) {
+			if s.onHandshakeError != nil {
+				s.onHandshakeError("", remoteAddr, ErrHandshakeRateLimited)
+			}
+			return
+		}
+	}
 	peerID, peerPub, err := s.peerIDFromConn(conn)
 	if err != nil {
+		if s.onHandshakeError != nil {
+			s.onHandshakeError("", remoteAddr, err)
+		}
 		return
 	}
 	connected := false
@@ -185,6 +238,9 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 	}()
 	stream, err := conn.AcceptStream(context.Background())
 	if err != nil {
+		if s.onHandshakeError != nil {
+			s.onHandshakeError(peerID, remoteAddr, err)
+		}
 		return
 	}
 	defer func() {
@@ -192,9 +248,21 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 	}()
 	remoteHello, err := s.exchangeHello(stream)
 	if err != nil {
+		if s.onHandshakeError != nil {
+			s.onHandshakeError(peerID, remoteAddr, err)
+		}
 		return
 	}
 	if remoteHello.PeerID != peerID {
+		if s.onHandshakeError != nil {
+			s.onHandshakeError(remoteHello.PeerID, remoteAddr, ErrPeerIDMismatch)
+		}
+		return
+	}
+	if s.isPeerBanned != nil && s.isPeerBanned(peerID) {
+		if s.onHandshakeError != nil {
+			s.onHandshakeError(peerID, remoteAddr, ErrPeerBanned)
+		}
 		return
 	}
 	if s.onPeerConnected != nil {

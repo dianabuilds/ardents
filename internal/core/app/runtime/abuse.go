@@ -22,3 +22,19 @@ func (r *Runtime) resetPowAbuse(peerID string) {
 	}
 	r.powAbuse.Reset(peerID)
 }
+
+func (r *Runtime) handleHandshakeAbuse(peerID string, err error) {
+	if r == nil || r.handshakeAbuse == nil || peerID == "" {
+		return
+	}
+	if count, reached := r.handshakeAbuse.Inc(peerID); reached {
+		window := time.Duration(r.cfg.Limits.BanWindowMs) * time.Millisecond
+		r.Ban(peerID, window)
+		code := ""
+		if err != nil {
+			code = err.Error()
+		}
+		r.log.Event("warn", "net", "peer.banned", peerID, "", code)
+		_ = count
+	}
+}

@@ -2,12 +2,21 @@ package quic
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
+	"math"
+
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 )
 
+var ErrFrameTooLarge = errors.New("ERR_FRAME_TOO_LARGE")
+
 func writeFrame(w io.Writer, payload []byte) error {
+	if len(payload) > math.MaxUint32 {
+		return ErrFrameTooLarge
+	}
 	var lenBuf [4]byte
-	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(payload)))
+	binary.BigEndian.PutUint32(lenBuf[:], conv.ClampIntToUint32(len(payload)))
 	if _, err := w.Write(lenBuf[:]); err != nil {
 		return err
 	}

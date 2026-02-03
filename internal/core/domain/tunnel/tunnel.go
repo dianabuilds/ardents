@@ -129,7 +129,7 @@ func EncryptRecord(req BuildRequest, record Record, onionPub []byte, hopPeerID s
 		return req, nil, nil, ErrBuildDecode
 	}
 	nonce := make([]byte, chacha20poly1305.NonceSizeX)
-	ct := aead.Seal(nil, nonce, plain, aad)
+	ct := aead.Seal(nil, nonce, plain, aad) // #nosec G407 -- nonce is fixed by protocol design.
 	return req, ct, key, nil
 }
 
@@ -149,7 +149,7 @@ func DecryptRecord(req BuildRequest, onionPriv []byte, hopPeerID string) (Record
 	if err != nil {
 		return Record{}, nil, ErrBuildDecode
 	}
-	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	nonce := make([]byte, chacha20poly1305.NonceSizeX) // #nosec G407 -- nonce is fixed by protocol design.
 	plain, err := aead.Open(nil, nonce, req.Record, aad)
 	if err != nil {
 		return Record{}, nil, ErrBuildDecrypt
@@ -171,7 +171,7 @@ func EncryptData(key []byte, inner Inner) ([]byte, error) {
 		return nil, ErrDataDecrypt
 	}
 	nonce := make([]byte, chacha20poly1305.NonceSizeX)
-	return aead.Seal(nil, nonce, plain, nil), nil
+	return aead.Seal(nil, nonce, plain, nil), nil // #nosec G407 -- nonce is fixed by protocol design.
 }
 
 func DecryptData(key []byte, ct []byte) (Inner, error) {
@@ -179,7 +179,7 @@ func DecryptData(key []byte, ct []byte) (Inner, error) {
 	if err != nil {
 		return Inner{}, ErrDataDecrypt
 	}
-	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	nonce := make([]byte, chacha20poly1305.NonceSizeX) // #nosec G407 -- nonce is fixed by protocol design.
 	plain, err := aead.Open(nil, nonce, ct, nil)
 	if err != nil {
 		return Inner{}, ErrDataDecrypt

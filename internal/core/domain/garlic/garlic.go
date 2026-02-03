@@ -83,7 +83,7 @@ func Encrypt(toServiceID string, encPub []byte, inner Inner) (Message, error) {
 		return Message{}, ErrGarlicDecrypt
 	}
 	nonce := make([]byte, chacha20poly1305.NonceSizeX)
-	ct := aead.Seal(nil, nonce, plain, aad)
+	ct := aead.Seal(nil, nonce, plain, aad) // #nosec G407 -- nonce is fixed by protocol design.
 	header.CT = ct
 	return header, nil
 }
@@ -107,7 +107,7 @@ func Decrypt(msg Message, encPriv []byte) (Inner, error) {
 	if err != nil {
 		return Inner{}, ErrGarlicDecrypt
 	}
-	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	nonce := make([]byte, chacha20poly1305.NonceSizeX) // #nosec G407 -- nonce is fixed by protocol design.
 	plain, err := aead.Open(nil, nonce, msg.CT, aad)
 	if err != nil {
 		return Inner{}, ErrGarlicDecrypt

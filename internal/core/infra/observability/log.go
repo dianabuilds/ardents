@@ -48,7 +48,7 @@ func (l *Logger) Event(level, component, event, peerID, msgID, errorCode string)
 		return
 	}
 	if l.file == nil {
-		if err := os.MkdirAll(filepath.Dir(l.filePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(l.filePath), 0o750); err != nil {
 			return
 		}
 		f, err := perm.OpenOwnerOnly(l.filePath)

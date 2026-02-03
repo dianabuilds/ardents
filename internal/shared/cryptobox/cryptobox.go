@@ -37,9 +37,9 @@ func Ed25519PrivateKeyToX25519(priv ed25519.PrivateKey) ([32]byte, error) {
 	seed := priv.Seed()
 	h := sha512.Sum512(seed)
 	copy(out[:], h[:32])
-	out[0] &= 248
-	out[31] &= 127
-	out[31] |= 64
+	out[0] &= 248  // #nosec G602 -- out is fixed-size [32]byte; indices are safe.
+	out[31] &= 127 // #nosec G602 -- out is fixed-size [32]byte; indices are safe.
+	out[31] |= 64  // #nosec G602 -- out is fixed-size [32]byte; indices are safe.
 	return out, nil
 }
 

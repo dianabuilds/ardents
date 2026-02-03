@@ -65,7 +65,7 @@ func LoadOrInit(path string) (Book, error) {
 }
 
 func Load(path string) (Book, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return Book{}, err
 	}
@@ -84,14 +84,14 @@ func Save(path string, b Book) error {
 			path = DefaultPath
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func (b Book) IsTrustedIdentity(identityID string, nowMs int64) bool {

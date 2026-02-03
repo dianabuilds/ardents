@@ -32,7 +32,7 @@ func LoadOrCreateKeyMaterial(dir string) (KeyMaterial, error) {
 			dir = filepath.Join("data", "keys")
 		}
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return KeyMaterial{}, err
 	}
 	keyPath := filepath.Join(dir, "peer.key")
@@ -45,7 +45,7 @@ func LoadOrCreateKeyMaterial(dir string) (KeyMaterial, error) {
 }
 
 func loadKeyMaterial(keyPath, crtPath string) (KeyMaterial, error) {
-	keyPEM, err := os.ReadFile(keyPath)
+	keyPEM, err := os.ReadFile(keyPath) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return KeyMaterial{}, err
 	}
@@ -56,7 +56,7 @@ func loadKeyMaterial(keyPath, crtPath string) (KeyMaterial, error) {
 		}
 		return KeyMaterial{}, err
 	}
-	crtPEM, err := os.ReadFile(crtPath)
+	crtPEM, err := os.ReadFile(crtPath) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return KeyMaterial{}, err
 	}

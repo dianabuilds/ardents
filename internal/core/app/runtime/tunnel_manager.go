@@ -11,6 +11,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/app/netdb"
 	"github.com/dianabuilds/ardents/internal/core/domain/tunnel"
 	"github.com/dianabuilds/ardents/internal/core/infra/reseed"
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
@@ -137,12 +138,12 @@ func (r *Runtime) rotateTunnels(ctx context.Context) {
 	r.tunnelMgrMu.Unlock()
 
 	params := r.tunnelParams()
-	hopCount := int(params.HopCountDefault)
-	if hopCount < int(params.HopCountMin) {
-		hopCount = int(params.HopCountMin)
+	hopCount := conv.ClampUint64ToInt(params.HopCountDefault)
+	if hopCount < conv.ClampUint64ToInt(params.HopCountMin) {
+		hopCount = conv.ClampUint64ToInt(params.HopCountMin)
 	}
-	if hopCount > int(params.HopCountMax) {
-		hopCount = int(params.HopCountMax)
+	if hopCount > conv.ClampUint64ToInt(params.HopCountMax) {
+		hopCount = conv.ClampUint64ToInt(params.HopCountMax)
 	}
 	if hopCount < 2 {
 		hopCount = 2
@@ -314,7 +315,7 @@ func (r *Runtime) sendTunnelHopBuild(path *tunnelPath, hop netdb.RouterInfo, idx
 		V:         1,
 		Direction: direction,
 		TunnelID:  path.hops[idx].tunnelID,
-		HopIndex:  uint64(idx),
+		HopIndex:  conv.ClampIntToUint64(idx),
 	}
 	req, ct, key, err := tunnel.EncryptRecord(req, rec, hop.OnionPub, hop.PeerID)
 	if err != nil {
@@ -453,7 +454,7 @@ func jitter(base time.Duration, delta time.Duration) time.Duration {
 	return base + time.Duration(n)
 }
 
-var randSrc = mrand.New(mrand.NewSource(time.Now().UnixNano()))
+var randSrc = mrand.New(mrand.NewSource(time.Now().UnixNano())) // #nosec G404 -- non-crypto jitter/shuffle.
 var randMu sync.Mutex
 
 func randInt63n(n int64) int64 {

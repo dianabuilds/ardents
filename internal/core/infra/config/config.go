@@ -108,7 +108,7 @@ func Load(path string) (Config, error) {
 			path = defaultConfigPath()
 		}
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return Config{}, err
 	}
@@ -128,14 +128,14 @@ func Save(path string, c Config) error {
 			path = defaultConfigPath()
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func ApplyDefaults(c *Config) {

@@ -11,40 +11,40 @@
 ## Ближайшие задачи (MVP?1)
 
 ### JIRA-01: Полный pipeline Envelope (ACK/TTL/PoW/Signature)
-**Описание:** Завершить обработку Envelope по SPEC?140 с полным набором ошибок и корректным поведением ACK/REJECTED, включая PoW?проверку, подписи и дедуп.  
+**Описание:** Завершить обработку Envelope по SPEC-140 с полным набором ошибок и корректным поведением ACK/REJECTED, включая PoW?проверку, подписи и дедуп.  
 **Статус:** Done  
 **DoR:**  
-- Спеки SPEC?010, SPEC?140, SPEC?002 актуальны.  
+- Спеки SPEC-010, SPEC-140, SPEC-002 актуальны.  
 - Есть базовые реализации envelope/pow/signature.  
 **DoD:**  
-- Вся логика ACK/REJECTED соответствует SPEC?140.  
-- PoW применяется по правилам SPEC?002 (trusted skip + hard caps).  
-- Подписи проверяются строго по did:key (SPEC?001).  
+- Вся логика ACK/REJECTED соответствует SPEC-140.  
+- PoW применяется по правилам SPEC-002 (trusted skip + hard caps).  
+- Подписи проверяются строго по did:key (SPEC-001).  
 **AC:**  
 - Набор unit?тестов: TTL expired, dedup, sig required/invalid, pow required/invalid.  
 - Поведение одинаково для inbound/outbound.
 
 **Фактический прогресс:**  
-- Полный набор ошибок SPEC?140 (TTL/DEDUP/SIG/PoW/UNSUPPORTED/PAYLOAD_DECODE).  
+- Полный набор ошибок SPEC-140 (TTL/DEDUP/SIG/PoW/UNSUPPORTED/PAYLOAD_DECODE).  
 - Dedup окно = `max(ttl_ms, 10 минут)` и ACK.DUPLICATE без повторной обработки.  
 - Hard caps (`max_msg_bytes`/`max_payload_bytes`) enforced в pipeline.  
 - Единая политика ACK: OK/DUPLICATE/REJECTED во всех ветках.
 
 **Подзадачи:**  
-- JIRA-01.1: Полный набор ошибок SPEC?140 (ERR_TTL_EXPIRED, ERR_DEDUP, ERR_SIG_REQUIRED/INVALID, ERR_POW_REQUIRED/INVALID).  
+- JIRA-01.1: Полный набор ошибок SPEC-140 (ERR_TTL_EXPIRED, ERR_DEDUP, ERR_SIG_REQUIRED/INVALID, ERR_POW_REQUIRED/INVALID).  
 - JIRA-01.2: Hard caps enforcement (max_msg_bytes/max_payload_bytes) в обработке Envelope.  
 - JIRA-01.3: Единая политика ACK (OK/DUPLICATE/REJECTED) для всех веток (в т.ч. service response).  
 - JIRA-01.4: Unit?тесты pipeline (TTL, dedup, sig required/invalid, pow required/invalid).
 
 ### JIRA-02: Address Book (полная модель + импорт/экспорт)
-**Описание:** Реализовать полный Address Book по SPEC?120, включая детерминированное разрешение alias, импорт/экспорт bundle как Content Node.  
+**Описание:** Реализовать полный Address Book по SPEC-120, включая детерминированное разрешение alias, импорт/экспорт bundle как Content Node.  
 **Статус:** Done  
 **DoR:**  
 - JSON формат Address Book зафиксирован.  
 - Базовые CLI команды add/list есть.  
 **DoD:**  
 - Реализованы conflict resolution правила.  
-- Импорт/экспорт bundle.addressbook.v1 (SPEC?200).  
+- Импорт/экспорт bundle.addressbook.v1 (SPEC-200).  
 **AC:**  
 - Тесты на разрешение конфликтов и истечение `expires_at_ms`.  
 - Отказ импорта от untrusted Identity.
@@ -54,9 +54,9 @@
 - Реализованы: conflict resolution, expires_at_ms, import/export bundles (bundle.addressbook.v1), CLI import/export, тесты.
 
 **Подзадачи:**  
-- JIRA-02.1: Реализация conflict resolution по SPEC?120 (детерминированно).  
+- JIRA-02.1: Реализация conflict resolution по SPEC-120 (детерминированно).  
 - JIRA-02.2: Поддержка `expires_at_ms` для imported записей.  
-- JIRA-02.3: Импорт/экспорт `bundle.addressbook.v1` (SPEC?200).  
+- JIRA-02.3: Импорт/экспорт `bundle.addressbook.v1` (SPEC-200).  
 - JIRA-02.4: CLI команды import/export + тесты.
 
 ### JIRA-03: QUIC transport + Hello + peer_id verification
@@ -66,7 +66,7 @@
 - QUIC listener и dialer есть.  
 - Hello CBOR формат и ValidateHello описаны.  
 **DoD:**  
-- Полный набор ошибок SPEC?110.  
+- Полный набор ошибок SPEC-110.  
 - Таймауты/лимиты применяются.  
 **AC:**  
 - Тесты: mismatched peer_id, time skew, unsupported version.  
@@ -77,10 +77,10 @@
 - Реализовано: полный набор ошибок, ретраи/backoff, тесты, базовое net.* логирование.
 
 **Подзадачи:**  
-- JIRA-03.1: Полный набор ошибок SPEC?110 (ERR_HANDSHAKE_TIME_SKEW, ERR_PEER_ID_MISMATCH, ERR_UNSUPPORTED_VERSION, ERR_ADDR_INVALID).  
-- JIRA-03.2: Ретраи/backoff для исходящих соединений (SPEC?100).  
+- JIRA-03.1: Полный набор ошибок SPEC-110 (ERR_HANDSHAKE_TIME_SKEW, ERR_PEER_ID_MISMATCH, ERR_UNSUPPORTED_VERSION, ERR_ADDR_INVALID).  
+- JIRA-03.2: Ретраи/backoff для исходящих соединений (SPEC-100).  
 - JIRA-03.3: Тесты handshake (time skew, mismatch, unsupported).  
-- JIRA-03.4: Логирование событий net.* (SPEC?420).
+- JIRA-03.4: Логирование событий net.* (SPEC-420).
 
 ### JIRA-04: Message Send/Receive (chat.msg.v1)
 **Описание:** Реализовать полноценный обмен `chat.msg.v1` с ACK, логированием и состоянием доставки.  
@@ -105,12 +105,12 @@
 - JIRA-04.3: Интеграционные тесты send>ACK OK/REJECTED.
 
 ### JIRA-05: Runtime lifecycle и degraded причины
-**Описание:** Реализовать полный жизненный цикл runtime согласно SPEC?100, включая причины degraded и health.  
+**Описание:** Реализовать полный жизненный цикл runtime согласно SPEC-100, включая причины degraded и health.  
 **Статус:** Done  
 **DoR:**  
 - netmgr FSM есть.  
 **DoD:**  
-- health endpoint `/healthz` (SPEC?420).  
+- health endpoint `/healthz` (SPEC-420).  
 - degraded причины: `clock_skew`, `transport_errors`, `low_peers`.  
 **AC:**  
 - Тест: degraded выставляется при clock_skew.  
@@ -122,7 +122,7 @@
 - `clock_skew` отмечено как placeholder, требуются реальные события от handshake (зафиксировано в документации).
 
 **Подзадачи:**  
-- JIRA-05.1: HTTP `/healthz` endpoint (SPEC?420).  
+- JIRA-05.1: HTTP `/healthz` endpoint (SPEC-420).  
 - JIRA-05.2: Причины degraded (`clock_skew`, `low_peers`) + метрики/логи.  
 - JIRA-05.3: Тесты degraded переходов.
 
@@ -133,7 +133,7 @@
 ### JIRA-06: Observability v1
 **Описание:** JSONL логи, базовые метрики и события NET.  
 **Статус:** Done  
-**DoR:** SPEC?420 утверждён.  
+**DoR:** SPEC-420 утверждён.  
 **DoD:**  
 - JSONL логирование с обязательными полями.  
 - Метрики (минимум) доступны локально.  
@@ -146,7 +146,7 @@
 - JIRA-06.3: Retention policy (лог/pcap).
 
 ### JIRA-07: CLI/TUI console (минимальный UX)
-**Описание:** Консольный UX по SPEC?400 с индикаторами trust/pow/net.  
+**Описание:** Консольный UX по SPEC-400 с индикаторами trust/pow/net.  
 **Статус:** Done  
 **DoR:** Envelope pipeline готов.  
 **DoD:**  
@@ -162,14 +162,68 @@
 **Подзадачи:**  
 - JIRA-07.1: Индикаторы trust/pow/net.  
 - JIRA-07.2: UX ошибок ACK/REJECTED.  
-- JIRA-07.3: Команды статуса (peer status + health).
+- JIRA-07.3: Команды статуса (peer status + health).  
+
+---
+
+## MVP?1 (доработка транспорта/протокола)
+
+### JIRA-24: Лимиты соединений и backpressure (SPEC-100)
+**Описание:** Ввести обязательные лимиты inbound/outbound соединений, rate limits на handshake и защиту от перегруза.  
+**Статус:** Todo  
+**DoR:**  
+- SPEC-100 актуален.  
+- Есть базовый QUIC transport и netmgr.  
+**DoD:**  
+- inbound/outbound соединения ограничены по `limits.max_*`.  
+- Защита от всплеска handshake (rate limit) + бан при нарушении политики.  
+- Логирование `peer.banned` и `net.degraded` при превышении лимитов.  
+**AC:**  
+- Тест: превышение inbound лимита → отказ новых коннектов.  
+- Тест: >N ошибок handshake от одного peer → бан на `ban_window_ms`.  
+
+### JIRA-25: Discovery v1 через Address Book (SPEC-110/120)
+**Описание:** Добавить использование записей Address Book типа `peer` как источника bootstrap в v1 direct mode.  
+**Статус:** Todo  
+**DoR:**  
+- Address Book реализован.  
+**DoD:**  
+- Runtime использует trusted записи `peer` для discovery/bootstrapping.  
+- Истёкшие записи игнорируются.  
+- Поведение документировано в `docs/TECH-050-operations-and-service.md`.  
+**AC:**  
+- Тест: trusted запись peer → успешный bootstrap.  
+- Тест: expired запись → не используется.  
+
+### JIRA-26: RETRY/ACK timeout + delivery.failed (SPEC-140)
+**Описание:** Реализовать правила повторной отправки и фиксации `delivery.failed` при отсутствии ACK.  
+**Статус:** Todo  
+**DoR:**  
+- Envelope pipeline готов.  
+**DoD:**  
+- ack timeout = 1500ms, не более 3 retries (SPEC-140).  
+- После исчерпания попыток фиксируется `delivery.failed`.  
+**AC:**  
+- Тест: ACK не приходит → 3 ретрая → `delivery.failed`.  
+- Тест: ACK приходит на 2-й попытке → success.  
+
+### JIRA-27: Health статус и метрики (SPEC-420)
+**Описание:** Привести `/healthz` и метрики к точным требованиям SPEC-420.  
+**Статус:** Todo  
+**DoR:**  
+- Health endpoint и метрики доступны локально.  
+**DoD:**  
+- `/healthz.status` = `ok|degraded|stopped` (без `online`).  
+- Минимальные метрики SPEC-420 доступны и корректны.  
+**AC:**  
+- Тест: net online → health `ok`, degraded → `degraded`, stopped → `stopped`.  
 
 ---
 
 ## MVP?2 (после стабилизации ядра)
 
 ### JIRA-08: Node Graph (CID/dag?cbor)
-**Описание:** Реализация Content Node по SPEC?200 с проверкой CID/подписи/лимитов.  
+**Описание:** Реализация Content Node по SPEC-200 с проверкой CID/подписи/лимитов.  
 **Статус:** Done  
 **DoR:** Envelope pipeline стабилен.  
 **DoD:**  
@@ -189,7 +243,7 @@
 - JIRA-08.3: Golden tests CID.
 
 ### JIRA-09: Providers + node.fetch.v1
-**Описание:** Полная реализация provider hints и fetch по SPEC?210.  
+**Описание:** Полная реализация provider hints и fetch по SPEC-210.  
 **Статус:** Done  
 **DoR:** Node Graph готов.  
 **DoD:**  
@@ -208,7 +262,7 @@
 - JIRA-09.3: Fetch cache + errors.
 
 ### JIRA-10: Access Policy & Encryption
-**Описание:** Реализовать encrypted nodes по SPEC?220.  
+**Описание:** Реализовать encrypted nodes по SPEC-220.  
 **Статус:** Done  
 **DoR:** Node Graph готов.  
 **DoD:**  
@@ -231,7 +285,7 @@
 ## MVP?3 (сервисы/задачи/интеграции)
 
 ### JIRA-11: Service Descriptor + Updates
-**Описание:** Реализация service.descriptor.v1 и обновлений через announce (SPEC?300).  
+**Описание:** Реализация service.descriptor.v1 и обновлений через announce (SPEC-300).  
 **Статус:** Done  
 **DoR:** Envelope pipeline + Node Graph.  
 **DoD:**  
@@ -250,7 +304,7 @@
 - JIRA-11.3: service.announce.v1 обработка.
 
 ### JIRA-12: Tasks lifecycle
-**Описание:** task.request/accept/progress/result/fail/receipt (SPEC?310).  
+**Описание:** task.request/accept/progress/result/fail/receipt (SPEC-310).  
 **Статус:** Done  
 **DoR:** Service model готов.  
 **DoD:**  
@@ -269,7 +323,7 @@
 - JIRA-12.3: Идемпотентность client_request_id.
 
 ### JIRA-13: AI chat profile (Tasks?based)
-**Описание:** ai.chat.v1 профиль поверх Tasks (SPEC?330).  
+**Описание:** ai.chat.v1 профиль поверх Tasks (SPEC-330).  
 **Статус:** Done  
 **DoR:** Tasks lifecycle готов.  
 **DoD:**  
@@ -292,7 +346,7 @@
 ## Инструменты разработки
 
 ### JIRA-14: Packet capture + replay
-**Описание:** Реализация capture/replay по SPEC?430 (off by default).  
+**Описание:** Реализация capture/replay по SPEC-430 (off by default).  
 **Статус:** Done  
 **DoR:** Envelope pipeline стабилен.  
 **DoD:**  
@@ -334,14 +388,14 @@
 
 ## Полное закрытие SPEC (после MVP?1)
 
-### JIRA-16: Routing & Relays (SPEC?130)
+### JIRA-16: Routing & Relays (SPEC-130)
 **Описание:** Реализовать routing/relays v1: форматы relay?пакетов, forward/return ACK, ограничения N=1..2, правила ACK пути.  
 **Статус:** Done  
 **DoR:** Envelope pipeline стабилен; QUIC transport готов.  
 **DoD:**  
 - Реализован relay?маршрут N=1..2 с явными правилами ACK (через relay/прямо).  
 - Лимиты hop/TTL/size применяются.  
-- Ошибки и ACK соответствуют SPEC?130/140.  
+- Ошибки и ACK соответствуют SPEC-130/140.  
 **AC:**  
 - Интеграционный тест: sender > relay > receiver (ACK OK).  
 - Интеграционный тест: relay drop > sender получает REJECTED/timeout.  
@@ -353,10 +407,10 @@
 
 **Подзадачи:**  
 - JIRA-16.1: Wire?форматы relay?envelope и relay?routing. (Done)  
-- JIRA-16.2: Forward/return ACK (правила SPEC?130). (Done)  
+- JIRA-16.2: Forward/return ACK (правила SPEC-130). (Done)  
 - JIRA-16.3: Лимиты hop/TTL/size + тесты. (Done)  
 
-### JIRA-17: Integration Gateway (SPEC?320)
+### JIRA-17: Integration Gateway (SPEC-320)
 **Описание:** Реализовать минимальный gateway HTTP (loopback only) с локальным токеном.  
 **Статус:** Done  
 **DoR:** Runtime start/stop, send pipeline и addressbook готовы.  
@@ -378,7 +432,7 @@
 - JIRA-17.2: Реализация `/send`, `/status`, `/resolve`. (Done)  
 - JIRA-17.3: Тесты и документация. (Done)  
 
-### JIRA-18: Node Browser (SPEC?410)
+### JIRA-18: Node Browser (SPEC-410)
 **Описание:** Реализовать минимальный node?browser (CLI) для просмотра ноды и истории (`prev`/`supersedes`).  
 **Статус:** Done  
 **DoR:** Node Graph + storage готовы.  
@@ -403,14 +457,14 @@
 
 Ниже — задачи для **основного профиля v2** (см. `spec/SPEC-000-system-overview.md` и серию `SPEC-500..550`). Все задачи этого блока **не должны** ломать совместимый v1 direct mode.
 
-### JIRA-19: Directory Authorities + Reseed (SPEC?500)
+### JIRA-19: Directory Authorities + Reseed (SPEC-500)
 **Описание:** Реализовать bootstrap v2: загрузка `reseed.bundle.v1` по HTTPS, проверка quorum 3/5, применение `params`, загрузка initial seed routers в NetDB cache.  
 **Статус:** Done  
 **DoR:**  
 - Приняты и зафиксированы pinned identity_id 5 DA и URL(ы) reseed в конфигурации.  
 - Реализован CBOR canonical decode + Ed25519 verify (есть в кодовой базе для других сущностей).  
 **DoD:**  
-- Верификация `reseed.bundle.v1` (подписи, expires, params) строго по SPEC?500.  
+- Верификация `reseed.bundle.v1` (подписи, expires, params) строго по SPEC-500.  
 - При неуспехе входа в сеть — degraded `no_bootstrap` + backoff.  
 - Метрики/события: `reseed.fetch.*`, `reseed.verify.*`, `reseed.apply.*`.  
 **AC:**  
@@ -429,16 +483,16 @@
 - Runtime применяет reseed при отсутствии bootstrap peers и фиксирует `no_bootstrap` при неуспехе.  
 - Добавлены unit?тесты на quorum/подписи.
 
-### JIRA-20: NetDB core (DHT) + Records (SPEC?510)
+### JIRA-20: NetDB core (DHT) + Records (SPEC-510)
 **Описание:** Реализовать NetDB: хранение/валидация `router.info.v1`, `service.lease_set.v1`, `service.head.v1`; DHT операции `find_node/find_value/store/reply`; anti-poisoning и rate-limits.  
 **Статус:** Done  
 **DoR:**  
 - Реализован transport p2p (QUIC) и Envelope v1 control-plane.  
 - Определены источники времени (UTC ms) и лимиты (есть в v1 runtime).  
 **DoD:**  
-- Реализованы вычисление `dht_key` и обращение по нему строго по SPEC?510.  
+- Реализованы вычисление `dht_key` и обращение по нему строго по SPEC-510.  
 - Подписи всех record типов валидируются; невалидное не сохраняется.  
-- Включены rate-limits и PoW-гейты для `netdb.store` от untrusted (SPEC?002/510).  
+- Включены rate-limits и PoW-гейты для `netdb.store` от untrusted (SPEC-002/510).  
 **AC:**  
 - Тест: store invalid sig > REJECTED.  
 - Тест: store expired > REJECTED.  
@@ -451,11 +505,11 @@
 - JIRA-20.4: Anti-poisoning quarantine cache + “verified router” критерии.
 
 **Фактический прогресс:**  
-- Добавлен пакет `internal/core/app/netdb` с хранением, валидацией и DHT key derivation по SPEC?510.  
+- Добавлен пакет `internal/core/app/netdb` с хранением, валидацией и DHT key derivation по SPEC-510.  
 - Реализованы wire?типы `netdb.find_node/find_value/store/reply` и обработчики в runtime.  
 - Добавлены базовые unit?тесты на store/find.
 
-### JIRA-21: RouterInfo generation (local) + публикация в NetDB (SPEC?510)
+### JIRA-21: RouterInfo generation (local) + публикация в NetDB (SPEC-510)
 **Описание:** На стороне роутера: генерация `onion_pub` (X25519), формирование `router.info.v1`, периодическая публикация/обновление в NetDB.  
 **Статус:** Done  
 **DoR:**  
@@ -472,7 +526,7 @@
 - Runtime публикует `router.info.v1` в NetDB при старте и по таймеру `record_max_ttl_ms/2`.  
 - Подпись `router.info.v1` выполняется транспортным Ed25519 ключом.
 
-### JIRA-22: Tunnel build + rotation + padding (SPEC?520)
+### JIRA-22: Tunnel build + rotation + padding (SPEC-520)
 **Описание:** Реализовать туннели v2: build/reply, hop-to-hop keys, `tunnel.data.v1`, rotation и обязательный `basic.v1` padding.  
 **Статус:** Done  
 **DoR:**  
@@ -505,18 +559,18 @@
 - Добавлены тесты: `tunnel_integration_test.go` (3-hop delivery), `tunnel_replay_test.go` (replay seq).  
 - `go test ./...` — OK.  
 
-### JIRA-23: Envelope v2 + Garlic E2E (SPEC?550/SPEC?520)
+### JIRA-23: Envelope v2 + Garlic E2E (SPEC-550/SPEC-520)
 **Описание:** Реализовать `envelope.v2` и `garlic.msg.v1`: e2e шифрование до сервиса, упаковка в `tunnel.data.v1`, TTL/подписи/дедуп.  
 **Статус:** Done  
 **DoR:**  
 - Туннели работают (JIRA-22).  
-- Есть LeaseSet сервиса с `enc_pub` (SPEC?510).  
+- Есть LeaseSet сервиса с `enc_pub` (SPEC-510).  
 **DoD:**  
-- `envelope.v2` encode/decode/sign/verify строго по SPEC?550.  
+- `envelope.v2` encode/decode/sign/verify строго по SPEC-550.  
 - `garlic.msg.v1` e2e decrypt/validate на стороне сервиса.  
 - В v2 нет автоматического ACK; задачи используют Tasks протокол.  
 **AC:**  
-- Интеграционный тест: клиент отправляет `envelope.v2` в сервис через garlic и получает ответ через mailbox — выполнено.  
+- Интеграционный тест: клиент отправляет `envelope.v2` в сервис через garlic и получает ответ через mailbox.  
 
 **Фактический прогресс:**  
 - Добавлен пакет `internal/shared/envelopev2` с wire?типами, валидацией, подписью/проверкой.  
@@ -527,7 +581,7 @@
 - Добавлена доставка `envelope.v2` ответов через outbound?туннель на lease из NetDB LeaseSet (mailbox).
 - Интеграционный тест garlic > envelope.v2 > task > reply через mailbox добавлен и проходит.
 
-### JIRA-24: Публикация анонимного сервиса (Head + LeaseSet) (SPEC?510/530)
+### JIRA-24: Публикация анонимного сервиса (Head + LeaseSet) (SPEC-510/530)
 **Описание:** Реализовать v2 публикацию сервиса: `service.descriptor.v2`, NetDB `service.head.v1` + `service.lease_set.v1`, refresh каждые 5 минут.  
 **Статус:** Done  
 **DoR:**  
@@ -537,7 +591,7 @@
 **AC:**  
 - Интеграционный тест: после рестарта сервиса новый descriptor становится виден через `service.head.v1`.
 
-### JIRA-25: Directory Service `dir.query.v1` (SPEC?530)
+### JIRA-25: Directory Service `dir.query.v1` (SPEC-530)
 **Описание:** Реализовать сервис?индексатор: принимает `task.request(job_type=dir.query.v1)`, возвращает `dir.query.result.v1` Node с детерминированным скорингом и TTL 60s.  
 **Статус:** Done  
 **DoR:**  
@@ -555,7 +609,7 @@
 - Индексация по валидным `service.head.v1` + `service.descriptor.v2`, фильтры prefix/requirements/resources, детерминированный скоринг и сортировка.  
 - Добавлен тест на успешный `dir.query.v1` с выдачей result node.
 
-### JIRA-26: E2E динамическое тестирование v2 (SPEC?540)
+### JIRA-26: E2E динамическое тестирование v2 (SPEC-540)
 **Описание:** Добавить сценарии динамического тестирования privacy-first профиля (sim): bootstrap > netdb > tunnels > service discovery > tasks.  
 **Статус:** Done  
 **DoR:**  
@@ -720,3 +774,58 @@
 
 **Фактический прогресс:**  
 - `TECH-050` дополнен процедурой backup/restore и шагами валидации восстановления на чистом узле.  
+
+---
+
+## Новые задачи (добавлены в конец списка)
+
+### JIRA-35: Лимиты соединений и backpressure (SPEC-100)
+**Описание:** Ввести обязательные лимиты inbound/outbound соединений, rate limits на handshake и защиту от перегруза.  
+**Статус:** Todo  
+**DoR:**  
+- SPEC-100 актуален.  
+- Есть базовый QUIC transport и netmgr.  
+**DoD:**  
+- inbound/outbound соединения ограничены по `limits.max_*`.  
+- Защита от всплеска handshake (rate limit) + бан при нарушении политики.  
+- Логирование `peer.banned` и `net.degraded` при превышении лимитов.  
+**AC:**  
+- Тест: превышение inbound лимита → отказ новых коннектов.  
+- Тест: >N ошибок handshake от одного peer → бан на `ban_window_ms`.  
+
+### JIRA-36: Discovery v1 через Address Book (SPEC-110/120)
+**Описание:** Добавить использование записей Address Book типа `peer` как источника bootstrap в v1 direct mode.  
+**Статус:** Todo  
+**DoR:**  
+- Address Book реализован.  
+**DoD:**  
+- Runtime использует trusted записи `peer` для discovery/bootstrapping.  
+- Истёкшие записи игнорируются.  
+- Поведение документировано в `docs/TECH-050-operations-and-service.md`.  
+**AC:**  
+- Тест: trusted запись peer → успешный bootstrap.  
+- Тест: expired запись → не используется.  
+
+### JIRA-37: RETRY/ACK timeout + delivery.failed (SPEC-140)
+**Описание:** Реализовать правила повторной отправки и фиксации `delivery.failed` при отсутствии ACK.  
+**Статус:** Todo  
+**DoR:**  
+- Envelope pipeline готов.  
+**DoD:**  
+- ack timeout = 1500ms, не более 3 retries (SPEC-140).  
+- После исчерпания попыток фиксируется `delivery.failed`.  
+**AC:**  
+- Тест: ACK не приходит → 3 ретрая → `delivery.failed`.  
+- Тест: ACK приходит на 2-й попытке → success.  
+
+### JIRA-38: Health статус и метрики (SPEC-420)
+**Описание:** Привести `/healthz` и метрики к точным требованиям SPEC-420.  
+**Статус:** Todo  
+**DoR:**  
+- Health endpoint и метрики доступны локально.  
+**DoD:**  
+- `/healthz.status` = `ok|degraded|stopped` (без `online`).  
+- Минимальные метрики SPEC-420 доступны и корректны.  
+**AC:**  
+- Тест: net online → health `ok`, degraded → `degraded`, stopped → `stopped`.  
+

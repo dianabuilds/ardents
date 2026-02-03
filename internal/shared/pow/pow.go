@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 )
 
 var (
@@ -23,7 +25,7 @@ func Subject(msgID string, tsMs int64, peerID string) []byte {
 	h := sha256.New()
 	h.Write([]byte(msgID))
 	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], uint64(tsMs))
+	binary.BigEndian.PutUint64(buf[:], conv.ClampInt64ToUint64(tsMs))
 	h.Write(buf[:])
 	h.Write([]byte(peerID))
 	sum := h.Sum(nil)
@@ -38,7 +40,7 @@ func Verify(stamp *Stamp) error {
 	h.Write(stamp.Subject)
 	h.Write(stamp.Nonce)
 	sum := h.Sum(nil)
-	if leadingZeroBits(sum) < int(stamp.Difficulty) {
+	if leadingZeroBits(sum) < stamp.Difficulty {
 		return ErrPowInvalid
 	}
 	return nil
@@ -62,14 +64,14 @@ func Generate(subject []byte, difficulty uint64) (*Stamp, error) {
 		h.Write(stamp.Subject)
 		h.Write(stamp.Nonce)
 		sum := h.Sum(nil)
-		if leadingZeroBits(sum) >= int(stamp.Difficulty) {
+		if leadingZeroBits(sum) >= stamp.Difficulty {
 			return stamp, nil
 		}
 	}
 }
 
-func leadingZeroBits(b []byte) int {
-	total := 0
+func leadingZeroBits(b []byte) uint64 {
+	var total uint64
 	for _, v := range b {
 		if v == 0 {
 			total += 8

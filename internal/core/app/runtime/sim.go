@@ -16,6 +16,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/infra/reseed"
 	"github.com/dianabuilds/ardents/internal/core/infra/storage"
 	"github.com/dianabuilds/ardents/internal/core/transport/quic"
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 	"github.com/dianabuilds/ardents/internal/shared/onionkey"
@@ -60,7 +61,7 @@ func newSimRuntime(cfg config.Config, peerID string, id identity.Identity, book 
 	return &Runtime{
 		cfg:       cfg,
 		net:       netmgr.New(),
-		dedup:     netpkg.NewDedup(10*time.Minute, int(cfg.Limits.MaxInflightMsgs)),
+		dedup:     netpkg.NewDedup(10*time.Minute, conv.ClampUint64ToInt(cfg.Limits.MaxInflightMsgs)),
 		bans:      netpkg.NewBanList(),
 		peerID:    peerID,
 		store:     storage.NewNodeStore(1_048_576),

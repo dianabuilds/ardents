@@ -18,6 +18,7 @@ import (
 
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/perm"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
@@ -285,7 +286,7 @@ func doUpstreamRequest(client *http.Client, req *http.Request, maxBody int) (ups
 		return upstreamResponse{}, errors.New("ERR_WEB_UPSTREAM_FAILED")
 	}
 	return upstreamResponse{
-		status:  uint16(resp.StatusCode),
+		status:  conv.ClampIntToUint16(resp.StatusCode),
 		headers: flattenHeaders(resp.Header),
 		body:    body,
 	}, nil

@@ -12,6 +12,7 @@ import (
 	quicgo "github.com/quic-go/quic-go"
 
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
+	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
@@ -21,13 +22,14 @@ var (
 )
 
 type Dialer struct {
-	cfg       config.Config
-	keys      KeyMaterial
-	peerID    string
-	onHello   func(peerID string, remoteTSMs int64, capabilitiesDigest []byte)
-	capDigest []byte
-	mu        sync.RWMutex
-	peerPubs  map[string]ed25519.PublicKey
+	cfg         config.Config
+	keys        KeyMaterial
+	peerID      string
+	onHello     func(peerID string, remoteTSMs int64, capabilitiesDigest []byte)
+	capDigest   []byte
+	mu          sync.RWMutex
+	peerPubs    map[string]ed25519.PublicKey
+	outboundSem chan struct{}
 }
 
 func NewDialer(cfg config.Config) (*Dialer, error) {
@@ -39,7 +41,11 @@ func NewDialer(cfg config.Config) (*Dialer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Dialer{cfg: cfg, keys: keys, peerID: peerID, peerPubs: make(map[string]ed25519.PublicKey)}, nil
+	var outboundSem chan struct{}
+	if cfg.Limits.MaxOutboundConns > 0 {
+		outboundSem = make(chan struct{}, conv.ClampUint64ToInt(cfg.Limits.MaxOutboundConns))
+	}
+	return &Dialer{cfg: cfg, keys: keys, peerID: peerID, peerPubs: make(map[string]ed25519.PublicKey), outboundSem: outboundSem}, nil
 }
 
 func (d *Dialer) SetHelloObserver(fn func(peerID string, remoteTSMs int64)) {
@@ -64,6 +70,10 @@ func (d *Dialer) PeerPublicKey(peerID string) (ed25519.PublicKey, bool) {
 }
 
 func (d *Dialer) DialAndHandshake(ctx context.Context, addr string, expectedPeerID string) error {
+	if err := d.acquireOutbound(); err != nil {
+		return err
+	}
+	defer d.releaseOutbound()
 	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
 	if err != nil {
 		return err
@@ -119,6 +129,10 @@ func powFloat(a float64, n int) float64 {
 }
 
 func (d *Dialer) SendEnvelope(ctx context.Context, addr string, expectedPeerID string, envelopeBytes []byte, maxBytes uint64) ([]byte, error) {
+	if err := d.acquireOutbound(); err != nil {
+		return nil, err
+	}
+	defer d.releaseOutbound()
 	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
 	if err != nil {
 		return nil, err
@@ -142,6 +156,10 @@ func (d *Dialer) SendEnvelope(ctx context.Context, addr string, expectedPeerID s
 }
 
 func (d *Dialer) SendEnvelopeWithReply(ctx context.Context, addr string, expectedPeerID string, envelopeBytes []byte, maxBytes uint64, shouldRead func([]byte) bool, replyTimeout time.Duration) ([]byte, []byte, error) {
+	if err := d.acquireOutbound(); err != nil {
+		return nil, nil, err
+	}
+	defer d.releaseOutbound()
 	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
 	if err != nil {
 		return nil, nil, err
@@ -186,7 +204,7 @@ func (d *Dialer) dialAndHandshakeStream(ctx context.Context, addr string, expect
 		Certificates:       []tls.Certificate{d.keys.TLSCert},
 		MinVersion:         tls.VersionTLS13,
 		MaxVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: true, // #nosec G402 -- peer identity verified via certificate-derived peer ID.
 	}
 	quicConf := &quicgo.Config{
 		HandshakeIdleTimeout: 10 * time.Second,
@@ -213,6 +231,28 @@ func (d *Dialer) dialAndHandshakeStream(ctx context.Context, addr string, expect
 		return nil, nil, err
 	}
 	return conn, stream, nil
+}
+
+func (d *Dialer) acquireOutbound() error {
+	if d.outboundSem == nil {
+		return nil
+	}
+	select {
+	case d.outboundSem <- struct{}{}:
+		return nil
+	default:
+		return ErrMaxOutboundConns
+	}
+}
+
+func (d *Dialer) releaseOutbound() {
+	if d.outboundSem == nil {
+		return
+	}
+	select {
+	case <-d.outboundSem:
+	default:
+	}
 }
 
 func (d *Dialer) storePeerCert(conn quicgo.Connection, expectedPeerID string) (string, error) {

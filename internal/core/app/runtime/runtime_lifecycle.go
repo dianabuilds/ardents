@@ -72,7 +72,18 @@ func (r *Runtime) NetReasons() []string {
 }
 
 func (r *Runtime) Status() (state string, peersConnected uint64) {
-	return string(r.net.State()), atomic.LoadUint64(&r.peersConnected)
+	return mapHealthState(r.net.State()), atomic.LoadUint64(&r.peersConnected)
+}
+
+func mapHealthState(state netmgr.State) string {
+	switch state {
+	case netmgr.StateOnline:
+		return "ok"
+	case netmgr.StateStopped, netmgr.StateStopping:
+		return "stopped"
+	default:
+		return "degraded"
+	}
 }
 
 func (r *Runtime) enforceRetention() {
@@ -115,6 +126,8 @@ func (r *Runtime) startQUIC(ctx context.Context) {
 	r.quic.SetCapabilitiesDigest(r.capabilitiesDigest())
 	r.quic.SetHelloObserverWithDigest(r.observeHello)
 	r.quic.SetPeerObserver(r.observePeerConnected, r.observePeerDisconnected)
+	r.quic.SetHandshakeErrorObserver(r.observeHandshakeError)
+	r.quic.SetPeerBanChecker(r.IsBanned)
 	r.quic.SetEnvelopeHandler(r.handleEnvelope)
 	if err := r.quic.Start(ctx); err != nil {
 		r.net.AddDegradedReason("transport_errors")

@@ -24,7 +24,7 @@ func Load(dir string, serviceID string) (Keypair, error) {
 		return Keypair{}, ErrKeyInvalid
 	}
 	path := filepath.Join(dir, serviceID+".key")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is controlled by app dirs.
 	if err != nil {
 		return Keypair{}, err
 	}
