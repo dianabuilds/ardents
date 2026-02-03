@@ -1,4 +1,4 @@
-# TECH-050: Эксплуатация, директории и запуск (v1)
+﻿﻿# TECH-050: Эксплуатация, директории и запуск (v1)
 
 **Статус:** Draft (2026-02-02)  
 **Назначение:** зафиксировать целевую схему “удобного продукта” для v1 (headless-first): где лежат файлы, как запускать и как оформить daemon/service.
@@ -228,3 +228,85 @@ Portable пример:
 
 ---
 
+## 9) Dynamic testing results (local sim)
+
+Дата: 2026-02-03.
+
+### 9.1 Load (short)
+
+Команда:
+
+```
+pwsh -File scripts/load/load.ps1
+```
+
+Результат (ok):
+
+* Peers: 50, Duration: 10s, Rate: 50
+* sent/delivered: 478/478
+* ack_ok: 478, ack_rejected: 0
+* latency_avg_ms: 1, latency_p95_ms: 1
+
+### 9.2 Soak (short)
+
+Команда:
+
+```
+pwsh -File scripts/load/soak.ps1
+```
+
+Результат (ok):
+
+* Peers: 10, Duration: 30s, Rate: 10
+* sent/delivered: 300/300
+* ack_ok: 300, ack_rejected: 0
+* latency_avg_ms: 1, latency_p95_ms: 1
+
+### 9.3 Target MVP-1 (30 min)
+
+Команда:
+
+```
+go run ./cmd/sim -n 100 -duration "30m" -rate 200 -seed 6 -drop-rate 0 -pow-invalid-rate 0
+```
+
+Результат (ok):
+
+* Peers: 100, Duration: 30m, Rate: 200
+* sent/delivered: 156010/156010
+* ack_ok: 156010, ack_rejected: 0
+* latency_avg_ms: 1, latency_p95_ms: 1
+
+---
+
+### 9.4 Service scenario (init -> start -> status -> healthz -> stop)
+
+Команды:
+
+```
+go run ./cmd/peer init --home .\.tmp\service-check
+go run ./cmd/peer start --home .\.tmp\service-check
+go run ./cmd/peer status --home .\.tmp\service-check
+```
+
+Результат (ok):
+
+* status: `online` (reason: `low_peers`)
+* healthz: `{"status":"online","peers_connected":0}`
+
+Остановка:
+
+* process stop (test run)
+
+---
+
+## 10) Security check: IPC on Windows (ACL)
+
+Требование:
+* IPC на Windows **ДОЛЖЕН** подниматься только если Named Pipe создан с owner-only ACL.
+* При невозможности выставить ACL — IPC **НЕ** запускается с `ERR_GATEWAY_UNAUTHORIZED`.
+
+Наблюдение:
+* При отказе IPC логируется `owner-only ACL required`.
+
+---

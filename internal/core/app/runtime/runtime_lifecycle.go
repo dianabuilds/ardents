@@ -98,6 +98,10 @@ func (r *Runtime) startIPCIfEnabled() {
 	}
 	ipc, err := startIPC(r)
 	if err != nil {
+		if err.Error() == "ERR_GATEWAY_UNAUTHORIZED" {
+			r.log.Event("warn", "ipc", "ipc.start_failed", "", "", "owner-only ACL required")
+			return
+		}
 		r.log.Event("warn", "ipc", "ipc.start_failed", "", "", err.Error())
 		return
 	}
