@@ -22,13 +22,13 @@
 ## 1) Просмотр ноды
 
 ```
-go run ./cmd/node get --id <cid>
+go run ./cmd/node get --target <node_id>
 ```
 
 По умолчанию `cmd/node` использует XDG/дефолтные директории узла. Для portable режима:
 
 ```
-go run ./cmd/node get --home ./ardents-home --id <cid>
+go run ./cmd/node get --home ./ardents-home --target <node_id>
 ```
 
 Выводит:
@@ -42,7 +42,7 @@ go run ./cmd/node get --home ./ardents-home --id <cid>
 ## 2) Просмотр истории (prev/supersedes)
 
 ```
-go run ./cmd/node get --id <cid> --history-depth 5
+go run ./cmd/node get --target <node_id> --history-depth 5
 ```
 
 �?стория выводится в поле `history` (BFS по `prev`/`supersedes`, глубина ограничена).
@@ -52,7 +52,7 @@ go run ./cmd/node get --id <cid> --history-depth 5
 ## 3) Encrypted nodes
 
 ```
-go run ./cmd/node get --id <cid> --decrypt
+go run ./cmd/node get --target <node_id> --decrypt
 ```
 
 Если есть ключ получателя (локальная identity), `encrypted=false`, иначе остаётся `encrypted=true`.
@@ -90,7 +90,7 @@ go run ./cmd/webclient request --addr <quic-host:port> --service-id <service_id>
 Либо напрямую через `cmd/node`:
 
 ```
-go run ./cmd/node get --id <cid>
+go run ./cmd/node get --target <node_id>
 ```
 
 ## 6) Замечания по ограничениям

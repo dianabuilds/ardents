@@ -27,7 +27,7 @@ Node — CBOR map (в `dag-cbor`), обязательные поля:
 * `type` (string, формат: `<domain>.<name>.v<major>`)
 * `created_at_ms` (int64)
 * `owner` (string, `identity_id`)
-* `links` (array) — может быть пустым
+* `links` (array) — допускается пустой
 * `body` (any) — тип зависит от `type`
 * `policy` (map) — см. SPEC-220
 * `sig` (bytes) — Ed25519 подпись владельца

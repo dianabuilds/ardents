@@ -36,6 +36,7 @@ type Server struct {
 	onPeerConnected    func(peerID string)
 	onPeerDisconnected func(peerID string)
 	onHandshakeError   func(peerID string, remoteAddr string, err error)
+	onConnError        func(peerID string, remoteAddr string, stage string, err error)
 	isPeerBanned       func(peerID string) bool
 	peerPubs           map[string]ed25519.PublicKey
 	mu                 sync.RWMutex
@@ -57,10 +58,11 @@ func NewServer(cfg config.Config) (*Server, error) {
 	if cfg.Limits.MaxInboundConns > 0 {
 		inboundSem = make(chan struct{}, conv.ClampUint64ToInt(cfg.Limits.MaxInboundConns))
 	}
-	window := time.Duration(cfg.Limits.BanWindowMs) * time.Millisecond
+	window := time.Duration(cfg.Limits.HandshakeRateWindowMs) * time.Millisecond
 	if window <= 0 {
-		window = 10 * time.Minute
+		window = 10 * time.Second
 	}
+	handshakeLimit := conv.ClampUint64ToInt(cfg.Limits.HandshakeRateLimit)
 	return &Server{
 		cfg:              cfg,
 		keys:             keys,
@@ -69,7 +71,7 @@ func NewServer(cfg config.Config) (*Server, error) {
 		peerAddrs:        make(map[string]string),
 		peerPubs:         make(map[string]ed25519.PublicKey),
 		inboundSem:       inboundSem,
-		handshakeLimiter: newAttemptLimiter(handshakeAttemptLimit, window),
+		handshakeLimiter: newAttemptLimiter(handshakeLimit, window),
 	}, nil
 }
 
@@ -170,6 +172,10 @@ func (s *Server) SetHandshakeErrorObserver(fn func(peerID string, remoteAddr str
 	s.onHandshakeError = fn
 }
 
+func (s *Server) SetConnErrorObserver(fn func(peerID string, remoteAddr string, stage string, err error)) {
+	s.onConnError = fn
+}
+
 func (s *Server) SetPeerBanChecker(fn func(peerID string) bool) {
 	s.isPeerBanned = fn
 }
@@ -202,7 +208,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 	}
 }
 
-func (s *Server) handleConn(conn quicgo.Connection) {
+func (s *Server) handleConn(conn *quicgo.Conn) {
 	defer s.wg.Done()
 	defer func() {
 		_ = conn.CloseWithError(0, "")
@@ -241,6 +247,9 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 		if s.onHandshakeError != nil {
 			s.onHandshakeError(peerID, remoteAddr, err)
 		}
+		if s.onConnError != nil {
+			s.onConnError(peerID, remoteAddr, "accept_stream", err)
+		}
 		return
 	}
 	defer func() {
@@ -250,6 +259,9 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 	if err != nil {
 		if s.onHandshakeError != nil {
 			s.onHandshakeError(peerID, remoteAddr, err)
+		}
+		if s.onConnError != nil {
+			s.onConnError(peerID, remoteAddr, "exchange_hello", err)
 		}
 		return
 	}
@@ -270,10 +282,10 @@ func (s *Server) handleConn(conn quicgo.Connection) {
 		connected = true
 	}
 	s.storePeer(peerID, peerPub, conn.RemoteAddr().String())
-	s.handleEnvelopeLoop(stream, remoteHello.PeerID)
+	s.handleEnvelopeLoop(stream, remoteHello.PeerID, remoteAddr)
 }
 
-func (s *Server) peerIDFromConn(conn quicgo.Connection) (string, ed25519.PublicKey, error) {
+func (s *Server) peerIDFromConn(conn *quicgo.Conn) (string, ed25519.PublicKey, error) {
 	cs := conn.ConnectionState().TLS
 	if len(cs.PeerCertificates) == 0 {
 		return "", nil, ErrPeerCertInvalid
@@ -288,7 +300,7 @@ func (s *Server) peerIDFromConn(conn quicgo.Connection) (string, ed25519.PublicK
 	return peerID, nil, nil
 }
 
-func (s *Server) exchangeHello(stream quicgo.Stream) (Hello, error) {
+func (s *Server) exchangeHello(stream *quicgo.Stream) (Hello, error) {
 	localHello := Hello{
 		V:                  HelloVersion,
 		PeerID:             s.peerID,
@@ -331,10 +343,13 @@ func (s *Server) storePeer(peerID string, peerPub ed25519.PublicKey, addr string
 	s.mu.Unlock()
 }
 
-func (s *Server) handleEnvelopeLoop(stream quicgo.Stream, peerID string) {
+func (s *Server) handleEnvelopeLoop(stream *quicgo.Stream, peerID string, remoteAddr string) {
 	for {
 		data, err := readFrame(stream, s.cfg.Limits.MaxMsgBytes)
 		if err != nil {
+			if s.onConnError != nil {
+				s.onConnError(peerID, remoteAddr, "read_frame", err)
+			}
 			return
 		}
 		if s.onEnvelope == nil {
@@ -349,6 +364,9 @@ func (s *Server) handleEnvelopeLoop(stream quicgo.Stream, peerID string) {
 				continue
 			}
 			if err := writeFrame(stream, resp); err != nil {
+				if s.onConnError != nil {
+					s.onConnError(peerID, remoteAddr, "write_frame", err)
+				}
 				return
 			}
 		}

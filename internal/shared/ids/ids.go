@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multibase"
 	"github.com/multiformats/go-multihash"
 )
@@ -21,6 +22,7 @@ var (
 	ErrInvalidPeerID      = errors.New("ERR_ID_INVALID")
 	ErrInvalidServiceID   = errors.New("ERR_ID_INVALID")
 	ErrInvalidChannelID   = errors.New("ERR_ID_INVALID")
+	ErrInvalidNodeID      = errors.New("ERR_ID_INVALID")
 	ErrInvalidServiceName = errors.New("ERR_ID_INVALID")
 	ErrInvalidAlias       = errors.New("ERR_ALIAS_INVALID")
 )
@@ -103,6 +105,30 @@ func ValidateChannelID(channelID string) error {
 	_, _, err := multibase.Decode(channelID[len("ch_"):])
 	if err != nil {
 		return ErrInvalidChannelID
+	}
+	return nil
+}
+
+func ValidateNodeID(nodeID string) error {
+	if nodeID == "" {
+		return ErrInvalidNodeID
+	}
+	if strings.ToLower(nodeID) != nodeID {
+		return ErrInvalidNodeID
+	}
+	c, err := cid.Decode(nodeID)
+	if err != nil {
+		return ErrInvalidNodeID
+	}
+	if c.Version() != 1 {
+		return ErrInvalidNodeID
+	}
+	prefix := c.Prefix()
+	if prefix.Codec != cid.DagCBOR {
+		return ErrInvalidNodeID
+	}
+	if prefix.MhType != multihash.SHA2_256 {
+		return ErrInvalidNodeID
 	}
 	return nil
 }

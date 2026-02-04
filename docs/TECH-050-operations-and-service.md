@@ -1,23 +1,23 @@
-﻿﻿# TECH-050: Эксплуатация, директории и запуск (v1)
+﻿# TECH-050: Эксплуатация, директории и запуск (v1)
 
 **Статус:** Draft (2026-02-02)  
-**Назначение:** зафиксировать целевую схему “удобного продукта” для v1 (headless-first): где лежат файлы, как запускать и как оформить daemon/service.
+**Назначение:** инструкция по запуску и эксплуатации узла (headless-first).
 
 ---
 
 ## 1) Целевой режим v1
 
-* Primary user v1: **server/node (headless-first)**.
+* Основной режим: **сервер/узел (headless-first)**.
 * Основной интерфейс: CLI + конфиги, минимум интерактива.
-* Автозапуск после reboot: **НЕ по умолчанию**, только по явному действию пользователя (systemd unit).
-* Gateway: **выключен по умолчанию** (отдельный процесс, включение — явным действием).
-* Логи: **stdout/journald по умолчанию** (структурированные JSON lines). Запись логов в файл — опциональная настройка/флаг.
+* Автозапуск после reboot: **не по умолчанию**, только по явному включению.
+* Gateway: **выключен по умолчанию** (отдельный процесс, включение — явно).
+* Логи: **stdout/journald по умолчанию** (JSONL). Запись в файл — опционально.
 
 ---
 
-## 2) Директории и раскладка (XDG/portable)
+## 2) Директории и раскладка
 
-### 2.1 Linux default (XDG)
+### 2.1 Linux (XDG)
 
 * Config: `${XDG_CONFIG_HOME:-~/.config}/ardents/`
 * Data: `${XDG_DATA_HOME:-~/.local/share}/ardents/`
@@ -26,7 +26,7 @@
 
 ### 2.2 Portable mode
 
-Если задан `ARDENTS_HOME` или флаг `--home`, то используется portable раскладка:
+Если задан `ARDENTS_HOME` или флаг `--home`:
 
 * `<home>/config/`
 * `<home>/data/`
@@ -34,8 +34,9 @@
 
 ### 2.3 Файлы v1
 
-* config: `node.json` (в `config/`)
-* address book: `addressbook.json` (в `data/`)
+* config: `config/node.json`
+* client config: `config/client.json`
+* address book: `data/addressbook.json`
 * identity: `data/identity/identity.key`
 * transport keys: `data/keys/peer.key`, `data/keys/peer.crt`
 * status: `run/status.json`
@@ -44,269 +45,364 @@
 
 ---
 
-## 3) Запуск/настройка (CLI)
+## 3) Запуск и управление (CLI)
 
 ### 3.1 Инициализация
 
-* `peer init` — создаёт директории, config (если нет), identity, transport keys и address book.
+* `peer init` — создаёт директории, config (если нет), identity, transport keys, address book.
 
-Portable пример:
+Пример (portable):
 
-* `peer init --home ./ardents-home`
+```
+peer init --home ./ardents-home
+```
+
+**Client config (для режима без `addr`):**  
+создаётся отдельным шагом, вручную или утилитой (см. SPEC-460).  
+Файл: `config/client.json`.
+
+Шаблон: `docs/examples/client.json`.
 
 ### 3.2 Запуск
 
-* `peer start` — запускает узел, пишет status в `run/status.json`, пишет логи в stdout.
+* `peer start` — запускает узел, пишет status в `run/status.json`, логи в stdout.
 * `peer status` — показывает status и `/healthz` (если включён).
 
-Portable пример:
+Пример (portable):
 
-* `peer start --home ./ardents-home`
+```
+peer start --home ./ardents-home
+peer status --home ./ardents-home
+```
 
 Опционально (локальный файл логов):
 
-* `peer start --log.file log.jsonl` (пишет в `<run>/log.jsonl` для текущего home/XDG)
-* `peer start --log.format json|text`
+```
+peer start --log.file log.jsonl
+peer start --log.format json|text
+```
 
-### 3.3 Gateway (опционально)
+### 3.3 Остановка
 
-По умолчанию gateway не запускается.
-
-Чтобы подготовить token (owner-only) и явно включить gateway-интеграцию:
-
-* `peer start --enable-gateway ...`
-* затем `gateway --home <same>` (или `gateway --token <path>`)
+* Остановка процесса (signal/systemd).
+* После остановки должен обновиться `run/status.json`.
 
 ---
 
-## 5) Support bundle (диагностика без секретов)
+## 3.4 Единая пользовательская строка (UFA)
 
-Для поддержки и воспроизводимости багов есть команда:
+Клиентские утилиты принимают **одну строку UFA** вместо набора `peer_id/service_id/owner_id`.  
+Формат и порядок резолвинга определены в SPEC-415.
+
+**Поддерживаемые варианты UFA:**
+
+* alias из `data/addressbook.json`
+* `node_id` (CIDv1, base32 lower)
+* `service_id` (`svc_...`)
+* `identity_id` (`did:key:...`) — преобразуется в `service_id` по `service_name`
+
+**Примеры:**
+
+```
+webclient request --addr <host:port> --target <identity_id>
+webclient request --addr <host:port> --target <service_id>
+node get --target <alias>
+node get --target <node_id>
+```
+
+Режим без явного `--addr` (требует `config/client.json`, см. SPEC-460):
+
+```
+webclient request --target <identity_id> --fetch-result
+```
+
+Если UFA не распознана — ошибка `ERR_UFA_UNSUPPORTED`.  
+Если UFA не соответствует контексту клиента (например, `service_id` в Node Browser) — `ERR_UFA_TYPE_MISMATCH`.
+
+---
+
+## 3.5 Обнаружение узлов и сервисов: как сейчас и чего нет
+
+### Что есть сейчас (v1)
+
+1) **Bootstrap/Reseed (SPEC-500)**  
+   Узел получает начальные адреса через reseed‑bundle от доверенных DA. Это старт сети без ручного ввода списка пиров.
+
+2) **NetDB (SPEC-510)**  
+   После входа узлы публикуют `router.info` и сервисные записи (`service.head.v1`, `service.lease_set.v1`).  
+   Дальше доступность строится на TTL/обновлениях, без статических IP.
+
+3) **Directory Service (SPEC-530)**  
+   Поиск сервисов по возможностям/capabilities через `dir.query.v1`.  
+   **По умолчанию внешние каталоги отключены** и используются только при явном включении локальной конфигурацией.
+
+4) **Address Book bundles (SPEC-125/120)**  
+   Локальные доверенные списки alias → target.  
+   Не являются глобальным поиском; это trust‑политика и удобство.
+
+### Чего нет (осознанно)
+
+* **Глобального регистра доменных имён** с уникальностью “по всей сети”.  
+* **Автоматического пополнения address book** из сети без trust‑политики.  
+* **Поиска по узлам “вслепую”** без service_id/descriptor/NetDB.
+
+### Практика в проде
+
+* Ручной IP нужен только для старта (reseed).  
+* Дальше сеть работает через NetDB/Directory и TTL‑обновления.
+
+---
+
+## 4) Инструкция по запуску на сервере (Linux)
+
+### 4.1 Подготовка сервера
+
+1) Создать системного пользователя и каталог данных:
+
+```
+sudo useradd -r -m -d /var/lib/ardents -s /usr/sbin/nologin ardents
+sudo mkdir -p /var/lib/ardents
+sudo chown -R ardents:ardents /var/lib/ardents
+```
+
+2) Открыть UDP порт для QUIC (пример для 3840/udp):
+
+```
+sudo ufw allow 3840/udp
+```
+
+3) Убедиться, что health/metrics доступны только локально
+(по умолчанию `127.0.0.1` в конфиге).
+
+### 4.2 Инициализация данных
+
+```
+sudo -u ardents peer init --home /var/lib/ardents
+```
+
+Проверить наличие файлов:
+
+* `/var/lib/ardents/config/node.json`
+* `/var/lib/ardents/data/identity/identity.key`
+* `/var/lib/ardents/data/keys/peer.key`, `/var/lib/ardents/data/keys/peer.crt`
+* `/var/lib/ardents/data/addressbook.json`
+
+### 4.3 Настройка конфигов
+
+Файл: `/var/lib/ardents/config/node.json`
+
+Минимально проверить/настроить:
+
+* `listen.quic_addr` — адрес/порт для входящих QUIC (например `"0.0.0.0:3840"`).
+* `limits.*` — лимиты входящих/исходящих соединений, размер сообщений.
+* `limits.handshake_rate_limit` и `limits.handshake_rate_window_ms` — ограничение частоты handshake (защита от всплесков).
+* `observability.health_addr` и `observability.metrics_addr` — оставить `127.0.0.1:*`
+  или включить reverse-proxy с ACL.
+
+### 4.4 Запуск и проверка
+
+```
+sudo -u ardents peer start --home /var/lib/ardents
+sudo -u ardents peer status --home /var/lib/ardents
+```
+
+`healthz` должен вернуть `status: ok|degraded`.
+
+---
+
+## 5) Автоматизация запуска
+
+### 5.1 systemd (рекомендуется)
+
+Сгенерировать unit:
+
+```
+peer systemd unit --mode=system --home /var/lib/ardents
+```
+
+Установить unit:
+
+```
+sudo peer install-service --mode=system --home /var/lib/ardents
+sudo systemctl enable --now ardents.service
+```
+
+Проверка:
+
+```
+systemctl status ardents.service
+```
+
+### 5.2 Скрипт запуска
+
+Пример wrapper:
+
+```
+#!/usr/bin/env sh
+set -eu
+export ARDENTS_HOME=/var/lib/ardents
+exec /usr/local/bin/peer start --home "$ARDENTS_HOME"
+```
+
+---
+
+## 6) Gateway (опционально)
+
+По умолчанию gateway не запускается.
+
+Чтобы включить:
+
+* `peer start --enable-gateway`
+* затем `gateway --home <тот же home>` (или `gateway --token <path>`)
+
+---
+
+## 7) Support bundle (диагностика без секретов)
+
+Команда:
 
 * `peer support bundle`
 
-Что попадает в ZIP:
+Включает:
 
 * метаданные (OS/arch/go version/build info)
 * снимок путей (`meta/paths.json`)
-* `config/node.json` (редактирование “секретов” зарезервировано; в v1 секретов в конфиге нет)
+* `config/node.json`
 * `run/status.json` (если есть)
 * tail файла логов (если включён `observability.log_file`)
-* метаданные packet capture (`run/pcap.meta.json`), если существует `run/pcap.jsonl` (raw payload не включается)
-* `data/addressbook.meta.json` по умолчанию, или полный `data/addressbook.json` по флагу `--include-addressbook` (поле `note` редактируется)
+* метаданные packet capture (`run/pcap.meta.json`), если существует `run/pcap.jsonl`
+* `data/addressbook.meta.json` по умолчанию, или полный `data/addressbook.json` по флагу `--include-addressbook`
 
-Не попадает (всегда):
+Не включается:
 
 * `run/peer.token`
 * приватные ключи identity и transport keys (`data/identity/*`, `data/keys/*`)
 
 ---
 
-## 4) systemd units (Linux)
+## 8) Обновление и откат
 
-### 4.1 Генерация unit файла
+### 8.1 Обновление
 
-`peer systemd unit --mode=user` печатает unit в stdout.
+1) Остановить сервис.
+2) Сделать backup (см. раздел 9).
+3) Обновить бинарник `peer` и связанные утилиты.
+4) Запустить сервис.
+5) Проверить `peer status` и `/healthz`.
 
-Для system-wide (обычно server/VPS) рекомендуется portable home:
+### 8.2 Откат
 
-* `peer systemd unit --mode=system --home /var/lib/ardents`
-
-### 4.1.1 Установка unit файла (удобная команда)
-
-* `peer install-service --mode=user` — пишет unit в `${XDG_CONFIG_HOME:-~/.config}/systemd/user/ardents.service`.
-* `peer install-service --mode=system --home /var/lib/ardents` — пытается записать unit в `/etc/systemd/system/ardents.service` (обычно требует root).
-
-### 4.2 Установка/включение
-
-Проект не включает автозапуск по умолчанию. Пользователь сам решает:
-
-* `systemctl --user enable --now ardents.service` (user service)
-* `sudo systemctl enable --now ardents.service` (system service)
+1) Остановить сервис.
+2) Восстановить предыдущий бинарник `peer`.
+3) Восстановить backup (если менялись данные).
+4) Запустить сервис и проверить `/healthz`.
 
 ---
 
-## 5) Runbook: init -> start -> verify -> stop
+## 9) Backup / Restore
 
-### 5.1 Initialization (one-time)
-
-1) `peer init --home /var/lib/ardents`
-2) Ensure files exist:
-   - `config/node.json`
-   - `data/identity/identity.key`
-   - `data/keys/peer.key`, `data/keys/peer.crt`
-
-### 5.2 Start
-
-1) `peer start --home /var/lib/ardents`
-2) Verify:
-   - `peer status --home /var/lib/ardents`
-   - `/healthz` should be `OK` (if enabled)
-
-### 5.3 Stop
-
-1) Stop the service (systemd or signal):
-   - `systemctl --user stop ardents.service` or `sudo systemctl stop ardents.service`
-2) Check that `run/status.json` updated.
-
----
-
-## 6) Upgrade and rollback
-
-### 6.1 Upgrade
-
-1) Stop service (see 5.3).
-2) Backup data (see 7.1).
-3) Update `peer` binary and related tools.
-4) Start service (see 5.2).
-5) Verify `peer status` and `/healthz`.
-
-### 6.2 Rollback
-
-1) Stop service.
-2) Restore previous `peer` binary.
-3) Restore backup (if data changed).
-4) Start service and verify `/healthz`.
-
-### 6.3 Config compatibility
-
-* `config/node.json` must be backward compatible within minor versions.
-* If incompatible, add an explicit migration in SPEC/TECH.
-
----
-
-## 7) Backup / Restore
-
-### 7.1 What to back up
+### 9.1 Что бэкапить
 
 * `config/node.json`
 * `data/identity/identity.key`
 * `data/addressbook.json`
 * `data/keys/peer.key`, `data/keys/peer.crt`
-* `data/lkeys/` (if v2 services are used)
+* `data/lkeys/` (если используются v2 сервисы)
 
-### 7.2 Restore
+### 9.2 Восстановление
 
-1) Restore the same paths under `ARDENTS_HOME` or XDG.
-2) Put files back from backup.
-3) Start `peer` and verify `/healthz`.
-
-### 7.3 Restore validation (clean node)
-
-1) Create a clean `ARDENTS_HOME`.
-2) Restore backup files (see 7.1).
-3) Start `peer start --home <restored>` and verify:
-   - `peer status` shows the same `identity_id`;
-   - `/healthz` = `OK`;
-   - `data/addressbook.json` loads without errors.
+1) Восстановить те же пути под `ARDENTS_HOME` или XDG.
+2) Вернуть файлы из backup.
+3) Запустить `peer` и проверить `/healthz`.
 
 ---
 
-## 8) Observability baseline and alerts (SPEC-420)
+## 10) Наблюдаемость (минимум)
 
-### 8.1 Logs
+### 10.1 Логи
 
-* JSON Lines format.
-* External boundary errors must be `ERR_*`.
-* Logs must not include secrets (tokens, private keys, sensitive plaintext).
+* Формат: JSON Lines.
+* Ошибки на внешних границах — `ERR_*`.
+* Логи не должны содержать секретов.
 
-### 8.2 Metrics (minimum)
+### 10.2 Метрики (минимум)
 
-* Network state: `net_inbound_conns`, `net_outbound_conns`, `peers_connected`.
-* IPC/Tasks errors: `ipc_errors_total`, `task_fail_total{code}`.
-* Timeouts: `task_timeout_total`, `ipc_timeout_total`.
-* Latency: `ack_latency_ms_bucket` (p50/p95 computed by monitoring).
-
-### 8.3 Alert thresholds (recommended)
-
-* `healthz != ok` for 2+ minutes.
-* `peers_connected == 0` for 10+ minutes.
-* `ack_rejected_total / msg_received_total > 5%` over 10 minutes.
-* `task_fail_total` > 1% of `task_request_total` over 10 minutes.
-* `ipc_errors_total` > 1% of `ipc_requests_total` over 10 minutes.
-* `ack_latency_p95_ms > 2000` for 10 minutes.
+* Состояние сети: `net_inbound_conns`, `net_outbound_conns`, `peers_connected`.
+* Ошибки IPC/Tasks: `ipc_errors_total`, `task_fail_total{code}`.
+* Таймауты: `task_timeout_total`, `ipc_timeout_total`.
+* Латентность: `ack_latency_ms_bucket` (p50/p95 считаются мониторингом).
 
 ---
 
-## 9) Dynamic testing results (local sim)
+## 11) Безопасность (минимум)
 
-Дата: 2026-02-03.
-
-### 9.1 Load (short)
-
-Команда:
-
-```
-pwsh -File scripts/load/load.ps1
-```
-
-Результат (ok):
-
-* Peers: 50, Duration: 10s, Rate: 50
-* sent/delivered: 478/478
-* ack_ok: 478, ack_rejected: 0
-* latency_avg_ms: 1, latency_p95_ms: 1
-
-### 9.2 Soak (short)
-
-Команда:
-
-```
-pwsh -File scripts/load/soak.ps1
-```
-
-Результат (ok):
-
-* Peers: 10, Duration: 30s, Rate: 10
-* sent/delivered: 300/300
-* ack_ok: 300, ack_rejected: 0
-* latency_avg_ms: 1, latency_p95_ms: 1
-
-### 9.3 Target MVP-1 (30 min)
-
-Команда:
-
-```
-go run ./cmd/sim -n 100 -duration "30m" -rate 200 -seed 6 -drop-rate 0 -pow-invalid-rate 0
-```
-
-Результат (ok):
-
-* Peers: 100, Duration: 30m, Rate: 200
-* sent/delivered: 156010/156010
-* ack_ok: 156010, ack_rejected: 0
-* latency_avg_ms: 1, latency_p95_ms: 1
+* IPC только локальный, токен обязателен.
+* Файлы с ключами и токенами — owner-only.
+* Gateway включается только явно.
 
 ---
 
-### 9.4 Service scenario (init -> start -> status -> healthz -> stop)
+## 12) Docker: локальный стенд для интеграций
 
-Команды:
+Файлы:
+
+* `Dockerfile`
+* `docker/docker-compose.yml`
+* `docker/ardents-home/config/node.json`
+* `docker/static/index.html`
+
+### 12.1 Сборка и запуск
+
+Из корня репозитория:
 
 ```
-go run ./cmd/peer init --home .\.tmp\service-check
-go run ./cmd/peer start --home .\.tmp\service-check
-go run ./cmd/peer status --home .\.tmp\service-check
+cd docker
+docker compose build
+docker compose up -d
 ```
 
-Результат (ok):
+Посмотреть логи peer (нужен `identity_id`):
 
-* status: `online` (reason: `low_peers`)
-* healthz: `{"status":"online","peers_connected":0}`
+```
+docker compose logs peer
+```
 
-Остановка:
+`identity_id` печатается в выводе `peer init`.
 
-* process stop (test run)
+**Усиленные настройки контейнера (server-like):**
 
----
+* контейнеры запускаются **не от root** (UID/GID 10001);
+* `read_only: true`;
+* `cap_drop: ALL`;
+* `security_opt: no-new-privileges:true`;
+* `tmpfs: /tmp, /run`;
+* healthcheck по `/healthz`.
 
-## 10) Security check: IPC on Windows (ACL)
+### 12.2 Проверка интеграции: статический контент
 
-Требование:
-* IPC на Windows **ДОЛЖЕН** подниматься только если Named Pipe создан с owner-only ACL.
-* При невозможности выставить ACL — IPC **НЕ** запускается с `ERR_GATEWAY_UNAUTHORIZED`.
+```
+docker compose run --rm webclient request \
+  --addr peer:3840 \
+  --target <identity_id|service_id|alias> \
+  --path /
+```
 
-Наблюдение:
-* При отказе IPC логируется `owner-only ACL required`.
+Ожидаемо: ACK OK и `result_node_id` в выводе.
 
----
+### 12.3 Проверка интеграции: выполнение задачи + fetch результата
+
+```
+docker compose run --rm webclient request \
+  --addr peer:3840 \
+  --target <identity_id|service_id|alias> \
+  --path / \
+  --fetch-result
+```
+
+Ожидаемо: вывод `web.response.v1` с HTML‑текстом страницы.
+
+### 12.4 Остановка
+
+```
+docker compose down
+```

@@ -6,6 +6,7 @@ import (
 
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
+	"github.com/dianabuilds/ardents/internal/shared/netaddr"
 )
 
 func (r *Runtime) addressBookBootstrapPeers(nowMs int64) []config.BootstrapPeer {
@@ -54,7 +55,7 @@ func parsePeerAddrs(note string) []string {
 		if addr == "" {
 			continue
 		}
-		a := stripSchemeLocal(addr)
+		a := netaddr.StripQUICScheme(addr)
 		if _, _, err := net.SplitHostPort(a); err != nil {
 			continue
 		}

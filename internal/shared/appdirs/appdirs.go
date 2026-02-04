@@ -98,8 +98,16 @@ func (d Dirs) ConfigPath() string {
 	return filepath.Join(d.ConfigDir, "node.json")
 }
 
+func (d Dirs) ClientConfigPath() string {
+	return filepath.Join(d.ConfigDir, "client.json")
+}
+
 func (d Dirs) AddressBookPath() string {
 	return filepath.Join(d.DataDir, "addressbook.json")
+}
+
+func (d Dirs) DiscoveryCachePath() string {
+	return filepath.Join(d.DataDir, "discovery_cache.json")
 }
 
 func (d Dirs) IdentityDir() string {

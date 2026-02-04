@@ -31,12 +31,16 @@ type BootstrapPeer struct {
 }
 
 type Limits struct {
-	MaxInboundConns  uint64 `json:"max_inbound_conns"`
-	MaxOutboundConns uint64 `json:"max_outbound_conns"`
-	MaxMsgBytes      uint64 `json:"max_msg_bytes"`
-	MaxPayloadBytes  uint64 `json:"max_payload_bytes"`
-	MaxInflightMsgs  uint64 `json:"max_inflight_msgs"`
-	BanWindowMs      int64  `json:"ban_window_ms"`
+	MaxInboundConns       uint64 `json:"max_inbound_conns"`
+	MaxOutboundConns      uint64 `json:"max_outbound_conns"`
+	MaxMsgBytes           uint64 `json:"max_msg_bytes"`
+	MaxPayloadBytes       uint64 `json:"max_payload_bytes"`
+	MaxInflightMsgs       uint64 `json:"max_inflight_msgs"`
+	BanWindowMs           int64  `json:"ban_window_ms"`
+	HandshakeRateLimit    uint64 `json:"handshake_rate_limit"`
+	HandshakeRateWindowMs int64  `json:"handshake_rate_window_ms"`
+	DirQueryRateLimit     uint64 `json:"dirquery_rate_limit"`
+	DirQueryRateWindowMs  int64  `json:"dirquery_rate_window_ms"`
 }
 
 type Pow struct {
@@ -71,12 +75,16 @@ func Default() Config {
 		},
 		BootstrapPeers: []BootstrapPeer{},
 		Limits: Limits{
-			MaxInboundConns:  64,
-			MaxOutboundConns: 64,
-			MaxMsgBytes:      256 * 1024,
-			MaxPayloadBytes:  128 * 1024,
-			MaxInflightMsgs:  1024,
-			BanWindowMs:      int64((10 * time.Minute) / time.Millisecond),
+			MaxInboundConns:       64,
+			MaxOutboundConns:      64,
+			MaxMsgBytes:           256 * 1024,
+			MaxPayloadBytes:       128 * 1024,
+			MaxInflightMsgs:       1024,
+			BanWindowMs:           int64((10 * time.Minute) / time.Millisecond),
+			HandshakeRateLimit:    50,
+			HandshakeRateWindowMs: int64((10 * time.Second) / time.Millisecond),
+			DirQueryRateLimit:     20,
+			DirQueryRateWindowMs:  int64((10 * time.Second) / time.Millisecond),
 		},
 		Pow: Pow{
 			DefaultDifficulty: 16,
@@ -163,6 +171,18 @@ func ApplyDefaults(c *Config) {
 	}
 	if c.Limits.BanWindowMs == 0 {
 		c.Limits.BanWindowMs = def.Limits.BanWindowMs
+	}
+	if c.Limits.HandshakeRateLimit == 0 {
+		c.Limits.HandshakeRateLimit = def.Limits.HandshakeRateLimit
+	}
+	if c.Limits.HandshakeRateWindowMs == 0 {
+		c.Limits.HandshakeRateWindowMs = def.Limits.HandshakeRateWindowMs
+	}
+	if c.Limits.DirQueryRateLimit == 0 {
+		c.Limits.DirQueryRateLimit = def.Limits.DirQueryRateLimit
+	}
+	if c.Limits.DirQueryRateWindowMs == 0 {
+		c.Limits.DirQueryRateWindowMs = def.Limits.DirQueryRateWindowMs
 	}
 	if c.Pow.DefaultDifficulty == 0 {
 		c.Pow.DefaultDifficulty = def.Pow.DefaultDifficulty

@@ -20,6 +20,10 @@ import (
 )
 
 func (r *Runtime) handleDirQueryV2(req tasks.Request, env *envelopev2.Envelope) ([][]byte, error) {
+	nowMs := timeutil.NowUnixMs()
+	if !r.allowDirQuery(env, nowMs) {
+		return nil, errors.New("ERR_DIR_RATE_LIMITED")
+	}
 	input, err := dirquery.DecodeInput(req.Input)
 	if err != nil {
 		return nil, errors.New("ERR_PAYLOAD_DECODE")
@@ -32,7 +36,6 @@ func (r *Runtime) handleDirQueryV2(req tasks.Request, env *envelopev2.Envelope) 
 	if err != nil {
 		return nil, err
 	}
-	nowMs := timeutil.NowUnixMs()
 	results := r.rankDirQueryResults(input, nowMs, limit)
 	nodeID, err := r.storeDirQueryNode(queryHash, results, nowMs)
 	if err != nil {
@@ -41,6 +44,21 @@ func (r *Runtime) handleDirQueryV2(req tasks.Request, env *envelopev2.Envelope) 
 	accept := r.buildTaskAcceptV2(req.TaskID, env)
 	result := r.buildTaskResultV2(req.TaskID, nodeID, env)
 	return append(accept, result...), nil
+}
+
+func (r *Runtime) allowDirQuery(env *envelopev2.Envelope, nowMs int64) bool {
+	if r == nil || r.dirQueryLimiter == nil {
+		return true
+	}
+	key := ""
+	if env != nil {
+		if env.From.IdentityID != "" {
+			key = env.From.IdentityID
+		} else if env.From.ServiceID != "" {
+			key = env.From.ServiceID
+		}
+	}
+	return r.dirQueryLimiter.Allow(key, nowMs)
 }
 
 func (r *Runtime) buildDirQueryResults(input dirquery.Input, nowMs int64) []dirquery.ResultItem {

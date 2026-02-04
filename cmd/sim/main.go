@@ -151,6 +151,7 @@ func buildSelfBook(id identity.Identity) addressbook.Book {
 		Trust:       "trusted",
 		CreatedAtMs: timeutil.NowUnixMs(),
 	})
+	book.RebuildIndex()
 	return book
 }
 

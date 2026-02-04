@@ -1,42 +1,23 @@
 package runtime
 
-import "sync"
-
 type powAbuseTracker struct {
-	mu        sync.Mutex
-	counts    map[string]int
-	threshold int
+	counter *thresholdCounter
 }
 
 func newPowAbuseTracker(threshold int) *powAbuseTracker {
-	if threshold <= 0 {
-		threshold = 5
-	}
-	return &powAbuseTracker{
-		counts:    make(map[string]int),
-		threshold: threshold,
-	}
+	return &powAbuseTracker{counter: newThresholdCounter(threshold)}
 }
 
 func (t *powAbuseTracker) Inc(peerID string) (count int, reached bool) {
-	if peerID == "" {
+	if t == nil {
 		return 0, false
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.counts[peerID]++
-	count = t.counts[peerID]
-	if count >= t.threshold {
-		return count, true
-	}
-	return count, false
+	return t.counter.Inc(peerID)
 }
 
 func (t *powAbuseTracker) Reset(peerID string) {
-	if peerID == "" {
+	if t == nil {
 		return
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.counts, peerID)
+	t.counter.Reset(peerID)
 }

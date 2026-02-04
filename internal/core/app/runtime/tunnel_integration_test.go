@@ -126,6 +126,7 @@ func buildTrustBookForTest(idsList []identity.Identity, nowMs int64) addressbook
 			CreatedAtMs: nowMs,
 		})
 	}
+	book.RebuildIndex()
 	return book
 }
 

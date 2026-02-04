@@ -1,7 +1,7 @@
-# SPEC-530: Анонимные сервисы, публикация и directory-поиск (privacy-first)
+﻿# SPEC-530: Анонимные сервисы, публикация и directory-поиск (privacy-first)
 
 **Статус:** Draft v2.0 (2026-02-02)  
-**Зависимости:** SPEC-001, SPEC-010, SPEC-110, SPEC-200, SPEC-210, SPEC-300, SPEC-310, SPEC-420, SPEC-500, SPEC-510, SPEC-520, SPEC-550  
+**Зависимости:** SPEC-001, SPEC-010, SPEC-110, SPEC-120, SPEC-200, SPEC-210, SPEC-300, SPEC-310, SPEC-420, SPEC-500, SPEC-510, SPEC-520, SPEC-550  
 **Назначение:** зафиксировать, как сервисы публикуются и обнаруживаются в privacy-first сети, как доставляются запросы/ответы без раскрытия адресов сервис-хоста.
 
 ---
@@ -80,16 +80,20 @@
 
 ## 5) Directory-поиск по возможностям (fixed)
 
-Поиск сервисов “по мощности/capabilities” реализуется не DHT-перебором, а отдельным сервисом **Directory Service**:
+Поиск сервисов “по мощностям/capabilities” реализуется не DHT-перебором, а отдельным сервисом **Directory Service**:
 
 * `service_name` = `dir.query.v1`
 * Сервис предоставляет query API поверх Tasks (SPEC-310) и возвращает **подписанные** результаты.
 * Доверие к Directory Service определяется локально (Address Book, trusted identities).
 
+**Ограничение:** Directory Service **ДОЛЖЕН** использоваться только если он явно подключён в локальной конфигурации. По умолчанию обращения к внешним каталогам отключены.
+
 Directory Service **ДОЛЖЕН** индексировать только:
 
 * Service descriptors, подписанные владельцами (SPEC-300),
 * И с валидным `service.head.v1` в NetDB (SPEC-510).
+
+Directory Service **ДОЛЖЕН** применять rate‑limit на входящие запросы `dir.query.v1`. При превышении лимита сервис **ДОЛЖЕН** вернуть `task.fail.v1` с `error_code=ERR_DIR_RATE_LIMITED`.
 
 ### 5.1 Протокол `dir.query.v1` (Tasks, fixed)
 
@@ -140,3 +144,4 @@ Directory Service **ДОЛЖЕН** сортировать выдачу по `sco
 * `ERR_SVC_DESCRIPTOR_FETCH`
 * `ERR_SVC_DELIVERY_FAILED`
 * `ERR_DIR_UNTRUSTED`
+* `ERR_DIR_RATE_LIMITED`

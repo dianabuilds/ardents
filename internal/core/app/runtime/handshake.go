@@ -11,6 +11,13 @@ func (r *Runtime) observeHandshakeError(peerID string, remoteAddr string, err er
 	if r == nil {
 		return
 	}
+	if err != nil && r.log != nil {
+		fields := map[string]any{
+			"remote_addr": remoteAddr,
+			"error":       err.Error(),
+		}
+		r.log.EventWithFields("warn", "net", "net.handshake.error", peerID, "", fields)
+	}
 	if err != nil && (errors.Is(err, quic.ErrMaxInboundConns) || errors.Is(err, quic.ErrHandshakeRateLimited)) {
 		r.net.AddDegradedReason("transport_errors")
 		r.log.Event("warn", "net", "net.degraded", "", "", "transport_errors")

@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "bootstrap_peers": [
+    {
+      "peer_id": "peer_<seed_peer_id>",
+      "identity_id": "did:key:<seed_identity_id>",
+      "addrs": ["<host:port>"]
+    }
+  ],
+  "trusted_identities": [],
+  "refresh_ms": 300000,
+  "reseed": {
+    "enabled": false,
+    "network_id": "ardents.mainnet",
+    "urls": [],
+    "authorities": []
+  },
+  "limits": {
+    "max_peers": 512,
+    "add_rate_limit": 50,
+    "add_rate_window_ms": 10000,
+    "cooldown_base_ms": 2000,
+    "cooldown_max_ms": 60000,
+    "handshake_hint_ttl_ms": 10000
+  }
+}

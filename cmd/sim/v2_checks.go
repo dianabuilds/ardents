@@ -336,6 +336,7 @@ func buildSelfBookAt(id identity.Identity, nowMs int64) addressbook.Book {
 		Trust:       "trusted",
 		CreatedAtMs: nowMs,
 	})
+	book.RebuildIndex()
 	return book
 }
 

@@ -221,4 +221,5 @@ func trustIdentity(rt *Runtime, id string) {
 		Trust:       "trusted",
 		CreatedAtMs: timeutil.NowUnixMs(),
 	})
+	rt.book.RebuildIndex()
 }

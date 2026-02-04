@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/app/services/servicedesc"
 	"github.com/dianabuilds/ardents/internal/core/app/services/tasks"
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
+	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/shared/envelopev2"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 	"github.com/dianabuilds/ardents/internal/shared/uuidv7"
@@ -131,5 +133,107 @@ func TestDirQueryV2ReturnsResultNode(t *testing.T) {
 		if err := contentnode.VerifyBytes(b, resPayload.ResultNodeID); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestDirQueryV2RateLimit(t *testing.T) {
+	cfg := config.Default()
+	cfg.Observability.HealthAddr = freeAddr(t)
+	cfg.Observability.MetricsAddr = freeAddr(t)
+	cfg.Limits.DirQueryRateLimit = 1
+	cfg.Limits.DirQueryRateWindowMs = int64((10 * time.Minute) / time.Millisecond)
+	rt := New(cfg)
+	if err := rt.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = rt.Stop(context.Background())
+	})
+
+	nowMs := timeutil.NowUnixMs()
+	taskID, err := uuidv7.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientReqID, err := uuidv7.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := tasks.Request{
+		V:               tasks.Version,
+		TaskID:          taskID,
+		ClientRequestID: clientReqID,
+		JobType:         dirquery.JobType,
+		Input: map[string]any{
+			"v": uint64(1),
+			"query": map[string]any{
+				"service_name_prefix": "demo.",
+			},
+			"limit": uint64(1),
+		},
+		TSMs: nowMs,
+	}
+	payload, err := tasks.EncodeRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &envelopev2.Envelope{
+		V:     envelopev2.Version,
+		MsgID: taskID,
+		Type:  tasks.RequestType,
+		From: envelopev2.From{
+			IdentityID: rt.identity.ID,
+		},
+		To: envelopev2.To{
+			ServiceID: "svc_dummy",
+		},
+		ReplyTo: &envelopev2.Reply{ServiceID: "svc_reply"},
+		TSMs:    nowMs,
+		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
+		Payload: payload,
+	}
+	if err := env.Sign(rt.identity.PrivateKey); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := rt.handleTaskV2(env); err != nil {
+		t.Fatal(err)
+	}
+	taskID, err = uuidv7.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientReqID, err = uuidv7.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.TaskID = taskID
+	req.ClientRequestID = clientReqID
+	payload, err = tasks.EncodeRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.MsgID = taskID
+	env.Payload = payload
+	resps, err := rt.handleTaskV2(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resps) == 0 {
+		t.Fatal("expected responses")
+	}
+	respEnv, err := envelopev2.DecodeEnvelope(resps[len(resps)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if respEnv.Type != tasks.FailType {
+		t.Fatalf("expected fail, got %s", respEnv.Type)
+	}
+	failPayload, err := tasks.DecodeFail(respEnv.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failPayload.ErrorCode != "ERR_DIR_RATE_LIMITED" {
+		t.Fatalf("expected ERR_DIR_RATE_LIMITED, got %s", failPayload.ErrorCode)
 	}
 }

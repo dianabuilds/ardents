@@ -21,6 +21,9 @@ var (
 	ErrEntryInvalid    = errors.New("ERR_ADDRESSBOOK_ENTRY_INVALID")
 	ErrAliasInvalid    = errors.New("ERR_ALIAS_INVALID")
 	ErrAliasConflict   = errors.New("ERR_ALIAS_CONFLICT")
+	ErrDomainInvalid   = errors.New("ERR_DOMAIN_INVALID")
+	ErrDomainConflict  = errors.New("ERR_DOMAIN_CONFLICT")
+	ErrDomainUntrusted = errors.New("ERR_DOMAIN_UNTRUSTED")
 )
 
 type Book struct {
@@ -29,6 +32,8 @@ type Book struct {
 	Entries       []Entry  `json:"entries"`
 	RevokedIDs    []string `json:"revoked_identity_ids,omitempty"`
 	DeprecatedIDs []string `json:"deprecated_identity_ids,omitempty"`
+
+	idx *bookIndex
 }
 
 type Entry struct {
@@ -40,6 +45,12 @@ type Entry struct {
 	Note        string `json:"note,omitempty"`
 	CreatedAtMs int64  `json:"created_at_ms"`
 	ExpiresAtMs int64  `json:"expires_at_ms,omitempty"`
+}
+
+type ImportStats struct {
+	Total   int
+	Added   int
+	Skipped int
 }
 
 func LoadOrInit(path string) (Book, error) {
@@ -58,6 +69,7 @@ func LoadOrInit(path string) (Book, error) {
 		UpdatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
 		Entries:     []Entry{},
 	}
+	b.idx = buildIndex(b)
 	if err := Save(path, b); err != nil {
 		return Book{}, err
 	}
@@ -73,6 +85,7 @@ func Load(path string) (Book, error) {
 	if err := json.Unmarshal(data, &b); err != nil {
 		return Book{}, err
 	}
+	b.idx = buildIndex(b)
 	return b, nil
 }
 
@@ -95,13 +108,9 @@ func Save(path string, b Book) error {
 }
 
 func (b Book) IsTrustedIdentity(identityID string, nowMs int64) bool {
-	for _, e := range b.Entries {
-		if e.TargetType != "identity" || e.Trust != "trusted" {
-			continue
-		}
-		if e.TargetID != identityID {
-			continue
-		}
+	idx := b.index()
+	for _, i := range idx.trustedIdentity[identityID] {
+		e := b.Entries[i]
 		if e.ExpiresAtMs != 0 && nowMs > e.ExpiresAtMs {
 			continue
 		}
@@ -111,33 +120,27 @@ func (b Book) IsTrustedIdentity(identityID string, nowMs int64) bool {
 }
 
 func (b Book) IsRevokedIdentity(identityID string) bool {
-	for _, id := range b.RevokedIDs {
-		if id == identityID {
-			return true
-		}
-	}
-	return false
+	idx := b.index()
+	return idx.revoked[identityID]
 }
 
 func (b Book) IsDeprecatedIdentity(identityID string) bool {
-	for _, id := range b.DeprecatedIDs {
-		if id == identityID {
-			return true
-		}
-	}
-	return false
+	idx := b.index()
+	return idx.deprecated[identityID]
 }
 
 func (b Book) TrustedPeers(nowMs int64) map[string]bool {
 	out := make(map[string]bool)
-	for _, e := range b.Entries {
-		if e.TargetType != "peer" || e.Trust != "trusted" {
-			continue
+	idx := b.index()
+	for peerID, entries := range idx.trustedPeers {
+		for _, i := range entries {
+			e := b.Entries[i]
+			if e.ExpiresAtMs != 0 && nowMs > e.ExpiresAtMs {
+				continue
+			}
+			out[peerID] = true
+			break
 		}
-		if e.ExpiresAtMs != 0 && nowMs > e.ExpiresAtMs {
-			continue
-		}
-		out[e.TargetID] = true
 	}
 	return out
 }
@@ -166,30 +169,36 @@ func (b Book) ExportBundle(author identity.Identity) (contentnode.Node, error) {
 	return n, nil
 }
 
-func (b Book) ImportBundle(node contentnode.Node, nowMs int64) (Book, error) {
+func (b Book) ImportBundle(node contentnode.Node, nowMs int64) (Book, ImportStats, error) {
 	if node.Type != "bundle.addressbook.v1" {
-		return b, ErrBundleInvalid
+		return b, ImportStats{}, ErrBundleInvalid
 	}
 	if err := contentnode.Verify(&node); err != nil {
-		return b, ErrBundleInvalid
+		return b, ImportStats{}, ErrBundleInvalid
 	}
 	if !b.IsTrustedIdentity(node.Owner, nowMs) {
-		return b, ErrImportUntrusted
+		return b, ImportStats{}, ErrImportUntrusted
 	}
 	body := normalizeMap(node.Body)
 	if err := importIDList(body["revoked_identity_ids"], &b.RevokedIDs); err != nil {
-		return b, ErrBundleInvalid
+		return b, ImportStats{}, ErrBundleInvalid
 	}
 	if err := importIDList(body["deprecated_identity_ids"], &b.DeprecatedIDs); err != nil {
-		return b, ErrBundleInvalid
+		return b, ImportStats{}, ErrBundleInvalid
 	}
-	entries, ok := importEntries(body["entries"], nowMs)
+	entries, total, ok := importEntries(body["entries"], nowMs)
 	if !ok {
-		return b, ErrBundleInvalid
+		return b, ImportStats{}, ErrBundleInvalid
 	}
 	b.Entries = append(b.Entries, entries...)
 	b.UpdatedAtMs = nowMs
-	return b, nil
+	b.idx = buildIndex(b)
+	stats := ImportStats{
+		Total:   total,
+		Added:   len(entries),
+		Skipped: total - len(entries),
+	}
+	return b, stats, nil
 }
 
 func importIDList(raw any, dst *[]string) error {
@@ -214,14 +223,16 @@ func importIDList(raw any, dst *[]string) error {
 	return nil
 }
 
-func importEntries(raw any, nowMs int64) ([]Entry, bool) {
+func importEntries(raw any, nowMs int64) ([]Entry, int, bool) {
 	switch v := raw.(type) {
 	case []Entry:
-		return normalizeEntries(v, nowMs), true
+		entries := normalizeEntries(v, nowMs)
+		return entries, len(v), true
 	case []any:
-		return buildEntriesFromAny(v, nowMs), true
+		entries := buildEntriesFromAny(v, nowMs)
+		return entries, len(v), true
 	default:
-		return nil, false
+		return nil, 0, false
 	}
 }
 
@@ -234,6 +245,9 @@ func normalizeEntries(entries []Entry, nowMs int64) []Entry {
 		}
 		if e.CreatedAtMs == 0 {
 			e.CreatedAtMs = nowMs
+		}
+		if e.ExpiresAtMs == 0 || e.ExpiresAtMs <= nowMs {
+			continue
 		}
 		if aliasErr := validateEntry(e); aliasErr != nil {
 			continue
@@ -255,8 +269,11 @@ func buildEntriesFromAny(rawEntries []any, nowMs int64) []Entry {
 			Trust:       asStringDefault(obj["trust"], "untrusted"),
 			CreatedAtMs: nowMs,
 		}
-		if exp, ok := obj["expires_at_ms"].(int64); ok {
+		if exp, ok := asInt64(obj["expires_at_ms"]); ok {
 			entry.ExpiresAtMs = exp
+		}
+		if entry.ExpiresAtMs == 0 || entry.ExpiresAtMs <= nowMs {
+			continue
 		}
 		if aliasErr := validateEntry(entry); aliasErr != nil {
 			continue
@@ -299,6 +316,22 @@ func asStringDefault(v any, def string) string {
 	return def
 }
 
+func asInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case float64:
+		return int64(n), true
+	case json.Number:
+		if v, err := n.Int64(); err == nil {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
 func normalizeMap(v any) map[string]any {
 	switch m := v.(type) {
 	case map[string]any:
@@ -331,11 +364,11 @@ func (b Book) ResolveAlias(alias string, nowMs int64) (Entry, bool, error) {
 	if err := validateAlias(alias); err != nil {
 		return Entry{}, false, err
 	}
-	candidates := make([]Entry, 0)
-	for _, e := range b.Entries {
-		if e.Alias != alias {
-			continue
-		}
+	idx := b.index()
+	ids := idx.aliasToEntries[alias]
+	candidates := make([]Entry, 0, len(ids))
+	for _, i := range ids {
+		e := b.Entries[i]
 		if e.ExpiresAtMs != 0 && nowMs > e.ExpiresAtMs {
 			continue
 		}
@@ -359,6 +392,26 @@ func (b Book) ResolveAlias(alias string, nowMs int64) (Entry, bool, error) {
 	return best, true, nil
 }
 
+func (b Book) ResolveDomain(alias string, nowMs int64) (Entry, bool, error) {
+	entry, ok, err := b.ResolveAlias(alias, nowMs)
+	if err != nil {
+		if errors.Is(err, ErrAliasInvalid) {
+			return Entry{}, false, ErrDomainInvalid
+		}
+		if errors.Is(err, ErrAliasConflict) {
+			return Entry{}, false, ErrDomainConflict
+		}
+		return Entry{}, false, err
+	}
+	if !ok {
+		return Entry{}, false, nil
+	}
+	if entry.Trust != "trusted" {
+		return Entry{}, false, ErrDomainUntrusted
+	}
+	return entry, true, nil
+}
+
 func sameRank(a, b Entry) bool {
 	if a.Trust != b.Trust {
 		return false
@@ -370,6 +423,85 @@ func sameRank(a, b Entry) bool {
 		return false
 	}
 	return true
+}
+
+// RebuildIndex recomputes in-memory indices for hot-path operations (resolve, trust checks).
+// It doesn't affect the serialized JSON format.
+func (b *Book) RebuildIndex() {
+	if b == nil {
+		return
+	}
+	b.idx = buildIndex(*b)
+}
+
+type bookIndex struct {
+	updatedAtMs   int64
+	entriesLen    int
+	revokedLen    int
+	deprecatedLen int
+
+	aliasToEntries  map[string][]int
+	trustedIdentity map[string][]int
+	trustedPeers    map[string][]int
+	revoked         map[string]bool
+	deprecated      map[string]bool
+}
+
+func (b Book) index() *bookIndex {
+	if b.idx != nil &&
+		b.idx.updatedAtMs == b.UpdatedAtMs &&
+		b.idx.entriesLen == len(b.Entries) &&
+		b.idx.revokedLen == len(b.RevokedIDs) &&
+		b.idx.deprecatedLen == len(b.DeprecatedIDs) {
+		return b.idx
+	}
+	return buildIndex(b)
+}
+
+func buildIndex(b Book) *bookIndex {
+	idx := &bookIndex{
+		updatedAtMs:     b.UpdatedAtMs,
+		entriesLen:      len(b.Entries),
+		revokedLen:      len(b.RevokedIDs),
+		deprecatedLen:   len(b.DeprecatedIDs),
+		aliasToEntries:  make(map[string][]int),
+		trustedIdentity: make(map[string][]int),
+		trustedPeers:    make(map[string][]int),
+		revoked:         make(map[string]bool),
+		deprecated:      make(map[string]bool),
+	}
+
+	for i, e := range b.Entries {
+		if e.Alias != "" {
+			idx.aliasToEntries[e.Alias] = append(idx.aliasToEntries[e.Alias], i)
+		}
+		if e.Trust != "trusted" {
+			continue
+		}
+		switch e.TargetType {
+		case "identity":
+			if e.TargetID != "" {
+				idx.trustedIdentity[e.TargetID] = append(idx.trustedIdentity[e.TargetID], i)
+			}
+		case "peer":
+			if e.TargetID != "" {
+				idx.trustedPeers[e.TargetID] = append(idx.trustedPeers[e.TargetID], i)
+			}
+		}
+	}
+	for _, id := range b.RevokedIDs {
+		if id == "" {
+			continue
+		}
+		idx.revoked[id] = true
+	}
+	for _, id := range b.DeprecatedIDs {
+		if id == "" {
+			continue
+		}
+		idx.deprecated[id] = true
+	}
+	return idx
 }
 
 func pickBetter(a, b Entry) Entry {

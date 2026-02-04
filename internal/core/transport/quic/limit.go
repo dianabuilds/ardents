@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-const handshakeAttemptLimit = 5
-
 var (
 	ErrMaxInboundConns      = errors.New("ERR_MAX_INBOUND_CONNS")
 	ErrMaxOutboundConns     = errors.New("ERR_MAX_OUTBOUND_CONNS")

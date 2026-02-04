@@ -18,6 +18,7 @@ type Registry struct {
 	msgRejected      map[string]uint64
 	powRequired      uint64
 	powInvalid       uint64
+	clockInvalid     uint64
 	ackLatencyCount  uint64
 	ackLatencySumMs  uint64
 	ackLatencyBucket []uint64
@@ -53,6 +54,12 @@ func (r *Registry) IncPowInvalid() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.powInvalid++
+}
+
+func (r *Registry) IncClockInvalid() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clockInvalid++
 }
 
 func (r *Registry) IncNetInbound() {
@@ -122,6 +129,9 @@ func (r *Registry) Handler() http.Handler {
 			return
 		}
 		if _, err := fmt.Fprintf(&buf, "pow_invalid_total %d\n", r.powInvalid); err != nil {
+			return
+		}
+		if _, err := fmt.Fprintf(&buf, "clock_invalid_total %d\n", r.clockInvalid); err != nil {
 			return
 		}
 		var cum uint64

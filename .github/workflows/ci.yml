@@ -13,8 +13,56 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
+      - name: golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          golangci-lint run
+      - name: gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -exclude-dir=legacy ./...
+      - name: dupl
+        run: |
+          go install github.com/mibk/dupl@latest
+          # Keep the threshold high to catch meaningful duplicates and avoid noise.
+          dupl -threshold 150 ./internal ./cmd
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
       - name: go vet
         run: go vet ./...
       - name: go test
         run: go test ./...
 
+  artifacts:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - name: build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          ext=""
+          if [ "${GOOS}" = "windows" ]; then ext=".exe"; fi
+          go build -o "dist/peer${ext}" ./cmd/peer
+          go build -o "dist/replay${ext}" ./cmd/replay
+          go build -o "dist/sim${ext}" ./cmd/sim
+          go build -o "dist/webclient${ext}" ./cmd/webclient
+          go build -o "dist/integration-ipc${ext}" ./cmd/integration-ipc
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ardents-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/

@@ -149,6 +149,7 @@ func TestPipeline_RevokedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt.book.RevokedIDs = []string{id.ID}
+	rt.book.RebuildIndex()
 	env, err := buildEnv(rt, "demo.msg.v1", []byte{0x01})
 	if err != nil {
 		t.Fatal(err)

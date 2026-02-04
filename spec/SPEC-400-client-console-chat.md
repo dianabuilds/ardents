@@ -1,70 +1,25 @@
-# SPEC-400: Клиент Console/Chat (минимум v1)
+# SPEC-400: Client Console/Chat (ARCHIVED)
 
-**Статус:** Deprecated (2026-02-03)  
-**Зависимости:** SPEC-000, SPEC-120, SPEC-140, SPEC-420  
-**Назначение:** зафиксировать обязательный UX клиента “чат-консоль” и диагностику доставки.
+**Status:** Archived (2026-02-04)  
+**Dependencies:** SPEC-000, SPEC-120, SPEC-140, SPEC-420  
+**Purpose:** Historical note only. This document used to describe an early "chat-console" UX.
 
-Примечание: direct-mode chat удалён из текущей реализации. Этот SPEC сохранён как reference.
+This SPEC is **NOT** part of the active spec set and **MUST NOT** be implemented.
 
----
+Replaced by:
 
-## 1) Scope
+* SPEC-410 (Client Node Browser)
+* SPEC-340 (Web service profile) + `cmd/webclient`
+* SPEC-415 (User-facing resolution / UFA)
+* SPEC-420 (Diagnostics and observability)
 
-Клиент v1 — локальная консоль/TUI, которая:
+## Historical notes (non-normative)
 
-* позволяет выбрать alias/peer/service из Address Book;
-* отправляет `chat.msg.v1` и показывает ответы;
-* показывает базовую диагностику доставки (ACK, latency).
+The old idea included:
 
-Минимальные команды CLI:
+* a local CLI/TUI that selects `alias|peer|service` from Address Book;
+* a `chat.msg.v1` payload with a simple text body;
+* basic delivery diagnostics (ACK/latency/error_code).
 
-* `peer start`
-* `peer status`
-* `send --to <alias|peer_id|service_id> --text`
+This approach was dropped in favor of task-based services and content node workflows.
 
----
-
-## 2) Формат сообщения `chat.msg.v1`
-
-Payload:
-
-* `v` = 1
-* `text` (string)
-
----
-
-## 3) Диагностика (обязательная)
-
-Клиент **ДОЛЖЕН** отображать по каждому сообщению:
-
-* `msg_id`
-* время отправки/получения
-* статус: `sent` / `acked` / `failed`
-* если failed — `error_code`
-
-Клиент **ДОЛЖЕН** отображать индикаторы состояния:
-
-* `trust`: trusted / untrusted (по результату резолва Address Book)
-* `pow`: required / not-required (по локальной политике и наличию stamp)
-* `net`: online / degraded / stopped (по статусу NET)
-
----
-
-## 4) Edge cases
-
-* Нет записи alias → показать ошибку резолва (SPEC-120).
-* Нет ACK → выполнить ретраи по SPEC-140 и отобразить `failed`.
-
-## 4.1) Ошибки CLI (стабильные коды)
-
-CLI‑ошибки **ДОЛЖНЫ** быть классифицируемыми:
-
-* `ERR_CLI_INVALID_ARGS` — отсутствуют обязательные флаги/параметры или некорректные значения CLI.
-* `ERR_CLI_BAD_INPUT` — входные данные некорректного формата (например, файл/ID/addr).
-
----
-
-## 5) История чата (v1)
-
-* Хранение истории — **in-memory**.
-* Персистентная история в v1 **НЕ ТРЕБУЕТСЯ**.

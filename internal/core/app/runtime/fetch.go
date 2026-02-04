@@ -23,6 +23,19 @@ func (r *Runtime) FetchNode(ctx context.Context, nodeID string) ([]byte, error) 
 			return bytes, nil
 		}
 	}
+	if r.sessionPeers != nil {
+		if peerID, ok := r.sessionPeers.Lookup(nodeID); ok {
+			if addr, ok := r.resolvePeerAddr(peerID); ok {
+				bytes, err := r.fetchFromProvider(ctx, addr, peerID, nodeID)
+				if err == nil {
+					if r.store != nil {
+						_ = r.store.Put(nodeID, bytes)
+					}
+					return bytes, nil
+				}
+			}
+		}
+	}
 	if r.providers == nil {
 		return nil, nodefetch.ErrNodeNotFound
 	}
@@ -53,6 +66,14 @@ func (r *Runtime) FetchNode(ctx context.Context, nodeID string) ([]byte, error) 
 		lastErr = nodefetch.ErrNodeNotFound
 	}
 	return nil, lastErr
+}
+
+// FetchNodeFromPeer fetches a node directly from a known peer address.
+func (r *Runtime) FetchNodeFromPeer(ctx context.Context, addr string, peerID string, nodeID string) ([]byte, error) {
+	if addr == "" || peerID == "" {
+		return nil, ErrProviderUnavailable
+	}
+	return r.fetchFromProvider(ctx, addr, peerID, nodeID)
 }
 
 func (r *Runtime) resolveProviderAddr(peerID string) (string, bool) {

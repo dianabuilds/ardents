@@ -14,6 +14,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
+	"github.com/dianabuilds/ardents/internal/shared/netaddr"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
@@ -80,14 +81,6 @@ func (d *Dialer) DialAndHandshake(ctx context.Context, addr string, expectedPeer
 	}
 	_ = stream.Close()
 	return conn.CloseWithError(0, "")
-}
-
-func stripSchemeLocal(addr string) string {
-	const prefix = "quic://"
-	if len(addr) >= len(prefix) && addr[:len(prefix)] == prefix {
-		return addr[len(prefix):]
-	}
-	return addr
 }
 
 func (d *Dialer) DialWithRetry(ctx context.Context, addr string, expectedPeerID string) error {
@@ -195,8 +188,64 @@ func (d *Dialer) SendEnvelopeWithReply(ctx context.Context, addr string, expecte
 	return ackBytes, respBytes, nil
 }
 
-func (d *Dialer) dialAndHandshakeStream(ctx context.Context, addr string, expectedPeerID string) (quicgo.Connection, quicgo.Stream, error) {
-	addr = stripSchemeLocal(addr)
+// SendEnvelopeWithReplyUntil is like SendEnvelopeWithReply, but keeps reading reply frames
+// while shouldContinue returns true. This is needed for protocols where the peer may
+// send intermediate frames (e.g. accept/progress) before the terminal reply.
+func (d *Dialer) SendEnvelopeWithReplyUntil(ctx context.Context, addr string, expectedPeerID string, envelopeBytes []byte, maxBytes uint64, shouldRead func([]byte) bool, replyTimeout time.Duration, shouldContinue func([]byte) bool) ([]byte, []byte, error) {
+	if err := d.acquireOutbound(); err != nil {
+		return nil, nil, err
+	}
+	defer d.releaseOutbound()
+	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		_ = stream.Close()
+		_ = conn.CloseWithError(0, "")
+	}()
+	if err := writeFrame(stream, envelopeBytes); err != nil {
+		return nil, nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = stream.SetReadDeadline(deadline)
+	}
+	ackBytes, err := readFrame(stream, maxBytes)
+	_ = stream.SetReadDeadline(time.Time{})
+	if err != nil {
+		return nil, nil, err
+	}
+	if shouldRead != nil && !shouldRead(ackBytes) {
+		return ackBytes, nil, nil
+	}
+	if replyTimeout > 0 {
+		_ = stream.SetReadDeadline(time.Now().Add(replyTimeout))
+	}
+	const maxReplies = 128
+	for i := 0; i < maxReplies; i++ {
+		respBytes, err := readFrame(stream, maxBytes)
+		if err != nil {
+			if replyTimeout > 0 {
+				_ = stream.SetReadDeadline(time.Time{})
+			}
+			return ackBytes, nil, err
+		}
+		if shouldContinue != nil && shouldContinue(respBytes) {
+			continue
+		}
+		if replyTimeout > 0 {
+			_ = stream.SetReadDeadline(time.Time{})
+		}
+		return ackBytes, respBytes, nil
+	}
+	if replyTimeout > 0 {
+		_ = stream.SetReadDeadline(time.Time{})
+	}
+	return ackBytes, nil, errors.New("ERR_QUIC_TOO_MANY_REPLIES")
+}
+
+func (d *Dialer) dialAndHandshakeStream(ctx context.Context, addr string, expectedPeerID string) (*quicgo.Conn, *quicgo.Stream, error) {
+	addr = netaddr.StripQUICScheme(addr)
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		return nil, nil, ErrAddrInvalid
 	}
@@ -255,7 +304,7 @@ func (d *Dialer) releaseOutbound() {
 	}
 }
 
-func (d *Dialer) storePeerCert(conn quicgo.Connection, expectedPeerID string) (string, error) {
+func (d *Dialer) storePeerCert(conn *quicgo.Conn, expectedPeerID string) (string, error) {
 	cs := conn.ConnectionState().TLS
 	if len(cs.PeerCertificates) == 0 {
 		return "", ErrPeerCertInvalid
@@ -275,7 +324,7 @@ func (d *Dialer) storePeerCert(conn quicgo.Connection, expectedPeerID string) (s
 	return peerID, nil
 }
 
-func (d *Dialer) exchangeHello(stream quicgo.Stream, peerIDFromCert string, expectedPeerID string) error {
+func (d *Dialer) exchangeHello(stream *quicgo.Stream, peerIDFromCert string, expectedPeerID string) error {
 	localHello := Hello{
 		V:                  HelloVersion,
 		PeerID:             d.peerID,

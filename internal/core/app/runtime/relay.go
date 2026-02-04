@@ -10,6 +10,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/domain/relay"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
+	"github.com/dianabuilds/ardents/internal/shared/netaddr"
 )
 
 const relayType = "relay.packet.v1"
@@ -140,7 +141,7 @@ func (r *Runtime) resolvePeerAddr(peerID string) (string, bool) {
 		if len(bp.Addrs) == 0 {
 			return "", false
 		}
-		return stripSchemeLocal(bp.Addrs[0]), true
+		return netaddr.StripQUICScheme(bp.Addrs[0]), true
 	}
 	if r.quic != nil {
 		if addr, ok := r.quic.PeerAddr(peerID); ok {

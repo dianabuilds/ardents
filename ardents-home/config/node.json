@@ -11,7 +11,11 @@
     "max_msg_bytes": 262144,
     "max_payload_bytes": 131072,
     "max_inflight_msgs": 1024,
-    "ban_window_ms": 600000
+    "ban_window_ms": 600000,
+    "handshake_rate_limit": 50,
+    "handshake_rate_window_ms": 10000,
+    "dirquery_rate_limit": 20,
+    "dirquery_rate_window_ms": 10000
   },
   "pow": {
     "default_difficulty": 16

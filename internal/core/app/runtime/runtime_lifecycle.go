@@ -127,6 +127,7 @@ func (r *Runtime) startQUIC(ctx context.Context) {
 	r.quic.SetHelloObserverWithDigest(r.observeHello)
 	r.quic.SetPeerObserver(r.observePeerConnected, r.observePeerDisconnected)
 	r.quic.SetHandshakeErrorObserver(r.observeHandshakeError)
+	r.quic.SetConnErrorObserver(r.observeConnError)
 	r.quic.SetPeerBanChecker(r.IsBanned)
 	r.quic.SetEnvelopeHandler(r.handleEnvelope)
 	if err := r.quic.Start(ctx); err != nil {
@@ -139,6 +140,7 @@ func (r *Runtime) afterTransportStart(ctx context.Context) {
 	r.publishRouterInfo()
 	r.startRouterInfoTicker(ctx)
 	r.checkClockSkew(timeutil.NowUnixMs())
+	r.startClockSkewTicker(ctx)
 	r.checkLowPeers()
 	r.startHealth(ctx)
 	r.startMetrics()

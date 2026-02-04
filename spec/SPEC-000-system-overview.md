@@ -54,8 +54,8 @@
 * **Peer**: сетевой участник (процесс/узел сети), имеющий `peer_id` и транспортные возможности.
 * **Identity**: криптографическая сущность (ключи), используемая для подписей и доверия.
 * **Service**: обработчик запросов/задач, привязанный к identity/peer.
-* **Node (Content Node)**: адресуемый объект контента/состояния в графе (`node_id`), может иметь версии, ссылки, политику доступа.
-* **Channel**: логический поток сообщений/событий (тема), который может быть чат-лентой, очередью задач, стримом состояния.
+* **Node (Content Node)**: адресуемый объект контента/состояния в графе (`node_id`), допускается наличие версий, ссылок, политики доступа.
+* **Channel**: логический поток сообщений/событий (тема), допускается реализация в виде чат-ленты, очереди задач, стрима состояния.
 * **Address Book**: локальная/доверенная таблица alias → destination (service_id/node_id), включая источники и доверие.
 * **Route / Tunnel**: путь доставки сообщений через hops.
 * **Envelope**: стандартная “обёртка” сообщения сети.
@@ -122,7 +122,7 @@
 Минимальная форма (расширяемая):
 
 * `msg_id`
-* `type` (chat | task.request | task.result | state.update | signal …)
+* `type` (task.request | task.result | state.update | signal …)
 * `from`:
   * v1: `peer_id` + optional `identity_id` (SPEC-140)
   * v2: optional `identity_id` + optional `service_id` (SPEC-550)
@@ -135,15 +135,7 @@
 
 ### 4.3 Основные потоки (end-to-end)
 
-#### A) “Консоль/чат” как базовый UX сети (deprecated)
-
-1. user выбирает alias или peer
-2. клиент резолвит через address book
-3. direct-mode chat удалён из текущей реализации
-4. доставка через routing (прямо или через hops)
-5. отображение и диагностика (latency, hops, trust)
-
-#### B) Контентный граф (узлы как адрес контента)
+#### A) Контентный граф (узлы как адрес контента)
 
 1. publish node: `node.create`/`state.publish`
 2. announce providers: `node.provide`
@@ -151,7 +143,7 @@
 4. verify signature/policy
 5. render links → переходы по графу
 
-#### C) Задачи (в том числе AI) как сервисы
+#### B) Задачи (в том числе AI) как сервисы
 
 1. discover service по capability `job_type=ai.chat`
 2. `task.request` → сервису
@@ -168,7 +160,7 @@
 * NET: старт/стоп, соединение peer↔peer, сессии
 * NAMING: локальный address book alias→peer/service
 * MSG: envelope, доставка, ack, дедуп
-* CLIENT: чат-консоль + диагностика (пинги, трассировка)
+* CLIENT: webclient + node (CLI) + базовая диагностика (ACK/latency/trust)
 * OBS: события сети (peer connected/disconnected)
 
 **MVP-2 (контент/граф):**
@@ -186,15 +178,15 @@
 ### 5.1 Фиксация границ v1
 
 * **v1 = строго MVP-1** из раздела выше.
-* Всё из MVP-2/MVP-3 **НЕ ВХОДИТ В v1** и может присутствовать только как типы/интерфейсы без реализации.
+* Всё из MVP-2/MVP-3 **НЕ ВХОДИТ В v1** и допускается только как типы/интерфейсы без реализации.
 
 ### 5.2 Проектные ограничения v1 (зафиксировано)
 
 * Репозиторий: open-source, лицензия MIT.
-* Go: **не ниже 1.25** (dev-версия может быть 1.25.6), без жёсткого pin toolchain.
+* Go: **не ниже 1.25** (допускается dev-версия 1.25.6), без жёсткого pin toolchain.
 * `go.mod` module: `github.com/<org>/ardents`.
 * Целевые платформы v1: **Windows + Linux**, архитектура **amd64**.
-* `legacy/` — reference-only, не часть реализации v1 и может быть удалён при исчезновении нужды.
+* `legacy/` — reference-only, не часть реализации v1 и допускается удаление при исчезновении нужды.
 * Релизы v1: `CHANGELOG` не обязателен; SemVer вводится при появлении внешних пользователей.
 
 ---
@@ -241,7 +233,6 @@
 
 ### Уровень 4: клиенты и наблюдаемость
 
-* SPEC-400 Клиент Console/Chat (deprecated)
 * SPEC-410 Клиент Node Browser
 * SPEC-420 Диагностика и наблюдаемость
 * SPEC-430 Инструменты администрирования и разработки
@@ -267,7 +258,6 @@
 | SPEC-320 | `spec/SPEC-320-integration-gateways.md`              |
 | SPEC-330 | `spec/SPEC-330-ai-service-profile.md`                |
 | SPEC-340 | `spec/SPEC-340-web-service-profile.md`               |
-| SPEC-400 | `spec/SPEC-400-client-console-chat.md` (deprecated)  |
 | SPEC-410 | `spec/SPEC-410-client-node-browser.md`               |
 | SPEC-420 | `spec/SPEC-420-diagnostics-and-observability.md`     |
 | SPEC-430 | `spec/SPEC-430-admin-and-dev-tools.md`               |

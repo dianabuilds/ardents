@@ -22,6 +22,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/perm"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
+	"github.com/dianabuilds/ardents/internal/shared/webtypes"
 )
 
 const (
@@ -53,14 +54,6 @@ type webRequestInput struct {
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    []byte            `json:"body,omitempty"`
 	Policy  map[string]any    `json:"policy,omitempty"`
-}
-
-type webResponseBody struct {
-	V       uint64            `cbor:"v"`
-	TaskID  string            `cbor:"task_id"`
-	Status  uint16            `cbor:"status"`
-	Headers map[string]string `cbor:"headers,omitempty"`
-	Body    []byte            `cbor:"body,omitempty"`
 }
 
 type ipcConfig struct {
@@ -153,7 +146,7 @@ func handleTask(msg ipcMessage, expectedJob string, baseURL *url.URL, client *ht
 }
 
 func buildResponseNode(taskID string, status uint16, headers map[string]string, body []byte, policy map[string]any, id identity.Identity) (contentnode.Node, error) {
-	respBody := webResponseBody{
+	respBody := webtypes.ResponseV1{
 		V:       1,
 		TaskID:  taskID,
 		Status:  status,

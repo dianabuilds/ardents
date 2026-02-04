@@ -15,6 +15,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/core/transport/quic"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
+	"github.com/dianabuilds/ardents/internal/shared/netaddr"
 )
 
 type pcapRecord struct {
@@ -154,7 +155,7 @@ func sendReplayEnvelope(dialer *quic.Dialer, cfg config.Config, opts replayOptio
 	if err != nil {
 		return err
 	}
-	_, err = dialer.SendEnvelope(context.Background(), stripScheme(opts.addr), opts.expectedPeer, data, cfg.Limits.MaxMsgBytes)
+	_, err = dialer.SendEnvelope(context.Background(), netaddr.StripQUICScheme(opts.addr), opts.expectedPeer, data, cfg.Limits.MaxMsgBytes)
 	return err
 }
 
@@ -165,16 +166,8 @@ func shouldReplayDir(dir string, filter string) bool {
 	return dir == filter
 }
 
-func stripScheme(addr string) string {
-	const prefix = "quic://"
-	if len(addr) >= len(prefix) && addr[:len(prefix)] == prefix {
-		return addr[len(prefix):]
-	}
-	return addr
-}
-
 func isLoopbackAddr(addr string) bool {
-	host := stripScheme(addr)
+	host := netaddr.StripQUICScheme(addr)
 	h, _, err := net.SplitHostPort(host)
 	if err != nil {
 		return false

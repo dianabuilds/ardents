@@ -2,6 +2,7 @@ package addressbook
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/dianabuilds/ardents/internal/shared/identity"
@@ -80,6 +81,78 @@ func TestResolveAliasConflict(t *testing.T) {
 	}
 }
 
+func TestResolveDomainConflictRules(t *testing.T) {
+	b := Book{
+		V: 1,
+		Entries: []Entry{
+			{Alias: "web", TargetType: "service", TargetID: "z9", Trust: "untrusted", Source: "self", CreatedAtMs: 1},
+			{Alias: "web", TargetType: "service", TargetID: "z1", Trust: "trusted", Source: "imported", CreatedAtMs: 1},
+			{Alias: "web", TargetType: "service", TargetID: "z2", Trust: "trusted", Source: "self", CreatedAtMs: 1},
+			{Alias: "web", TargetType: "service", TargetID: "z0", Trust: "trusted", Source: "self", CreatedAtMs: 2},
+		},
+	}
+	best, ok, err := b.ResolveDomain("web", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected resolve")
+	}
+	if best.TargetID != "z0" {
+		t.Fatalf("expected z0, got %s", best.TargetID)
+	}
+}
+
+func TestResolveDomainTieBreaker(t *testing.T) {
+	b := Book{
+		V: 1,
+		Entries: []Entry{
+			{Alias: "app", TargetType: "service", TargetID: "z2", Trust: "trusted", Source: "self", CreatedAtMs: 1},
+			{Alias: "app", TargetType: "service", TargetID: "z1", Trust: "trusted", Source: "self", CreatedAtMs: 1},
+		},
+	}
+	best, ok, err := b.ResolveDomain("app", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected resolve")
+	}
+	if best.TargetID != "z1" {
+		t.Fatalf("expected z1, got %s", best.TargetID)
+	}
+}
+
+func TestResolveDomainUntrusted(t *testing.T) {
+	b := Book{
+		V: 1,
+		Entries: []Entry{
+			{Alias: "untrusted", TargetType: "service", TargetID: "z1", Trust: "untrusted", Source: "self", CreatedAtMs: 1},
+		},
+	}
+	_, _, err := b.ResolveDomain("untrusted", 0)
+	if !errors.Is(err, ErrDomainUntrusted) {
+		t.Fatalf("expected ERR_DOMAIN_UNTRUSTED, got %v", err)
+	}
+}
+
+func TestResolveDomainExpired(t *testing.T) {
+	now := int64(100)
+	b := Book{
+		V: 1,
+		Entries: []Entry{
+			{Alias: "expired", TargetType: "service", TargetID: "z1", Trust: "trusted", Source: "imported", CreatedAtMs: 1, ExpiresAtMs: 50},
+		},
+	}
+	_, ok, err := b.ResolveDomain("expired", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected expired entry to be ignored")
+	}
+}
+
 func TestBundleExportImport(t *testing.T) {
 	id, err := identity.LoadOrCreate(t.TempDir())
 	if err != nil {
@@ -88,7 +161,7 @@ func TestBundleExportImport(t *testing.T) {
 	b := Book{
 		V: 1,
 		Entries: []Entry{
-			{Alias: "aa", TargetType: "identity", TargetID: id.ID, Trust: "trusted", Source: "self", CreatedAtMs: 1},
+			{Alias: "aa", TargetType: "identity", TargetID: id.ID, Trust: "trusted", Source: "self", CreatedAtMs: 1, ExpiresAtMs: 1000},
 		},
 	}
 	node, err := b.ExportBundle(id)
@@ -102,7 +175,7 @@ func TestBundleExportImport(t *testing.T) {
 			{Alias: "author", TargetType: "identity", TargetID: id.ID, Trust: "trusted", Source: "self", CreatedAtMs: 1},
 		},
 	}
-	imp, err = imp.ImportBundle(node, 10)
+	imp, _, err = imp.ImportBundle(node, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,8 +200,38 @@ func TestBundleImportUntrusted(t *testing.T) {
 		t.Fatal(err)
 	}
 	imp := Book{V: 1, Entries: []Entry{}}
-	_, err = imp.ImportBundle(node, 10)
+	_, _, err = imp.ImportBundle(node, 10)
 	if err == nil {
 		t.Fatal("expected untrusted import error")
+	}
+}
+
+func BenchmarkResolveAlias_10k(b *testing.B) {
+	nowMs := int64(100)
+	book := Book{
+		V:           1,
+		UpdatedAtMs: nowMs,
+		Entries:     make([]Entry, 0, 10_000),
+	}
+	for i := 0; i < 10_000; i++ {
+		alias := fmt.Sprintf("a%05d", i)
+		book.Entries = append(book.Entries, Entry{
+			Alias:       alias,
+			TargetType:  "peer",
+			TargetID:    fmt.Sprintf("peer_%05d", i),
+			Source:      "self",
+			Trust:       "trusted",
+			CreatedAtMs: 1,
+			ExpiresAtMs: nowMs + 1_000_000,
+		})
+	}
+	book.RebuildIndex()
+	target := "a09999"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, ok, err := book.ResolveAlias(target, nowMs); err != nil || !ok {
+			b.Fatal("unexpected resolve failure")
+		}
 	}
 }

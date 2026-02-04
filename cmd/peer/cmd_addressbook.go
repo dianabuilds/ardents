@@ -9,6 +9,7 @@ import (
 
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
 	"github.com/dianabuilds/ardents/internal/core/infra/addressbook"
+	"github.com/dianabuilds/ardents/internal/core/infra/observability"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
@@ -99,6 +100,7 @@ func addressBookAdd(args []string) {
 	}
 	book.Entries = append(book.Entries, entry)
 	book.UpdatedAtMs = timeutil.NowUnixMs()
+	book.RebuildIndex()
 	if err := addressbook.Save(*path, book); err != nil {
 		fatal(err)
 	}
@@ -110,6 +112,7 @@ func addressBookExport(args []string) {
 	home := fs.String("home", "", "portable mode root (also Env: ARDENTS_HOME)")
 	path := fs.String("path", "", "path to addressbook.json (default: XDG/ARDENTS_HOME)")
 	out := fs.String("out", "addressbook.bundle.cbor", "output file")
+	includeImported := fs.Bool("include-imported", false, "include imported entries")
 	if err := fs.Parse(args); err != nil {
 		fatal(err)
 	}
@@ -122,11 +125,15 @@ func addressBookExport(args []string) {
 	if err != nil {
 		fatal(err)
 	}
+	exported := book
+	if !*includeImported {
+		exported.Entries = filterSelfEntries(book.Entries)
+	}
 	id, err := identity.LoadOrCreate(dirs.IdentityDir())
 	if err != nil {
 		fatal(err)
 	}
-	node, err := book.ExportBundle(id)
+	node, err := exported.ExportBundle(id)
 	if err != nil {
 		fatal(err)
 	}
@@ -138,6 +145,12 @@ func addressBookExport(args []string) {
 		fatal(err)
 	}
 	fmt.Println("addressbook bundle exported:", *out)
+	logger := observability.NewWithOptions("json", "")
+	logger.EventWithFields("info", "addressbook", "addressbook.exported", id.ID, "", map[string]any{
+		"entries_total":    len(book.Entries),
+		"entries_exported": len(exported.Entries),
+		"include_imported": *includeImported,
+	})
 }
 
 func addressBookImport(args []string) {
@@ -167,7 +180,7 @@ func addressBookImport(args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	book, err = book.ImportBundle(node, timeutil.NowUnixMs())
+	book, stats, err := book.ImportBundle(node, timeutil.NowUnixMs())
 	if err != nil {
 		fatal(err)
 	}
@@ -175,4 +188,20 @@ func addressBookImport(args []string) {
 		fatal(err)
 	}
 	fmt.Println("addressbook bundle imported")
+	logger := observability.NewWithOptions("json", "")
+	logger.EventWithFields("info", "addressbook", "addressbook.imported", node.Owner, "", map[string]any{
+		"entries_total":   stats.Total,
+		"entries_added":   stats.Added,
+		"entries_skipped": stats.Skipped,
+	})
+}
+
+func filterSelfEntries(entries []addressbook.Entry) []addressbook.Entry {
+	out := make([]addressbook.Entry, 0, len(entries))
+	for _, e := range entries {
+		if e.Source == "" || e.Source == "self" {
+			out = append(out, e)
+		}
+	}
+	return out
 }

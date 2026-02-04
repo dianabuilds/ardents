@@ -2,34 +2,40 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"time"
-
-	quicgo "github.com/quic-go/quic-go"
 
 	"github.com/dianabuilds/ardents/internal/core/app/services/nodefetch"
 	"github.com/dianabuilds/ardents/internal/core/app/services/tasks"
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
+	"github.com/dianabuilds/ardents/internal/core/infra/discoverycache"
+	"github.com/dianabuilds/ardents/internal/core/infra/reseed"
+	"github.com/dianabuilds/ardents/internal/core/transport/cliutil"
 	"github.com/dianabuilds/ardents/internal/core/transport/quic"
-	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 	"github.com/dianabuilds/ardents/internal/shared/codec"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
 	"github.com/dianabuilds/ardents/internal/shared/ids"
+	"github.com/dianabuilds/ardents/internal/shared/netaddr"
 	"github.com/dianabuilds/ardents/internal/shared/pow"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 	"github.com/dianabuilds/ardents/internal/shared/uuidv7"
+	"github.com/dianabuilds/ardents/internal/shared/webtypes"
 )
 
 const (
 	defaultJobType = "web.request.v1"
+)
+
+var (
+	errClientBootstrapRequired    = errors.New("ERR_CLIENT_BOOTSTRAP_REQUIRED")
+	errClientDiscoveryUnavailable = errors.New("ERR_CLIENT_DISCOVERY_UNAVAILABLE")
+	errClientNoGatewayAvailable   = errors.New("ERR_CLIENT_NO_GATEWAY_AVAILABLE")
 )
 
 type headerList []string
@@ -38,14 +44,6 @@ func (h *headerList) String() string { return strings.Join(*h, ",") }
 func (h *headerList) Set(v string) error {
 	*h = append(*h, v)
 	return nil
-}
-
-type webResponseBody struct {
-	V       uint64            `cbor:"v"`
-	TaskID  string            `cbor:"task_id"`
-	Status  uint16            `cbor:"status"`
-	Headers map[string]string `cbor:"headers,omitempty"`
-	Body    []byte            `cbor:"body,omitempty"`
 }
 
 func main() {
@@ -63,11 +61,11 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: webclient request --addr <host:port> --service-id <service_id> [flags]")
+	fmt.Println("usage: webclient request --target <ufa> [flags]")
 	fmt.Println("flags:")
+	fmt.Println("  --addr <host:port>         target quic address (optional; if empty uses client.json)")
 	fmt.Println("  --peer-id <peer_id>        verify remote peer id (optional)")
-	fmt.Println("  --owner-id <identity_id>   compute service_id for web.request.v1")
-	fmt.Println("  --service-id <service_id>  target service id (required unless --owner-id)")
+	fmt.Println("  --target <ufa>             alias|service_id|identity_id (UFA)")
 	fmt.Println("  --job <job_type>           default web.request.v1")
 	fmt.Println("  --method <METHOD>          default GET")
 	fmt.Println("  --path <path>              default /")
@@ -77,12 +75,29 @@ func usage() {
 	fmt.Println("  --fetch-result             fetch result node and print response")
 	fmt.Println("  --home <dir>               portable mode root (also Env: ARDENTS_HOME)")
 	fmt.Println("  --config <path>            config file path")
+	fmt.Println("  --client-config <path>     client config file path (default: XDG/ARDENTS_HOME)")
 }
 
 func requestCmd(args []string) {
 	opts := parseRequestArgs(args)
-	cfg := loadConfig(opts.home, opts.cfgPath)
-	addr, serviceID := resolveTarget(opts)
+	cfg, err := cliutil.LoadConfig(opts.home, opts.cfgPath)
+	if err != nil {
+		fatal(err)
+	}
+	dialer, err := quic.NewDialer(cfg)
+	if err != nil {
+		fatal(err)
+	}
+	book, err := cliutil.LoadAddressBook(opts.home)
+	if err != nil {
+		fatal(err)
+	}
+	serviceID, targetIdentityID, err := cliutil.ResolveServiceID(opts.target, opts.jobType, book, timeutil.NowUnixMs())
+	if err != nil {
+		fatal(err)
+	}
+	addr := opts.addr
+	peerID := opts.peerID
 	input, err := buildWebRequestInput(opts)
 	if err != nil {
 		fatal(err)
@@ -94,15 +109,21 @@ func requestCmd(args []string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(opts.timeoutMs)*time.Millisecond)
 	defer cancel()
-	ack, resultEnv, err := sendAndWait(ctx, cfg, addr, opts.peerID, envBytes)
+	if addr == "" {
+		addr, peerID, err = resolveGatewayAddr(ctx, dialer, opts, targetIdentityID)
+		if err != nil {
+			fatal(err)
+		}
+	}
+	ack, resultEnv, err := sendAndWait(ctx, dialer, cfg, addr, peerID, envBytes)
 	if err != nil {
 		fatal(err)
 	}
 	printAck(ack)
-	handleTaskResult(ctx, cfg, addr, opts.peerID, resultEnv, opts.fetchResult)
+	handleTaskResult(ctx, dialer, cfg, addr, peerID, resultEnv, opts.fetchResult)
 }
 
-func fetchAndPrint(ctx context.Context, cfg config.Config, addr string, peerID string, nodeID string) {
+func fetchAndPrint(ctx context.Context, dialer *quic.Dialer, cfg config.Config, addr string, peerID string, nodeID string) {
 	if peerID == "" {
 		fatal(errors.New("ERR_PEER_ID_REQUIRED"))
 	}
@@ -115,7 +136,7 @@ func fetchAndPrint(ctx context.Context, cfg config.Config, addr string, peerID s
 	if err != nil {
 		fatal(err)
 	}
-	_, respEnv, err := sendAndWait(ctx, cfg, addr, peerID, envBytes)
+	_, respEnv, err := sendAndWait(ctx, dialer, cfg, addr, peerID, envBytes)
 	if err != nil {
 		fatal(err)
 	}
@@ -139,7 +160,7 @@ func fetchAndPrint(ctx context.Context, cfg config.Config, addr string, peerID s
 	if err := contentnode.Decode(respPayload.NodeBytes, &node); err != nil {
 		fatal(err)
 	}
-	var body webResponseBody
+	var body webtypes.ResponseV1
 	bodyBytes, err := codec.Marshal(node.Body)
 	if err != nil {
 		fatal(err)
@@ -162,26 +183,77 @@ type ackStatus struct {
 	ErrorCode string
 }
 
-func sendAndWait(ctx context.Context, cfg config.Config, addr string, peerID string, envBytes []byte) (*ackStatus, *envelope.Envelope, error) {
-	conn, stream, err := dialAndHello(ctx, cfg, addr, peerID)
+func sendAndWait(ctx context.Context, dialer *quic.Dialer, cfg config.Config, addr string, peerID string, envBytes []byte) (*ackStatus, *envelope.Envelope, error) {
+	dl := time.Duration(0)
+	if deadline, ok := ctx.Deadline(); ok {
+		dl = time.Until(deadline)
+		if dl < 0 {
+			dl = 0
+		}
+	}
+	ackBytes, replyBytes, err := dialer.SendEnvelopeWithReplyUntil(
+		ctx,
+		addr,
+		peerID,
+		envBytes,
+		cfg.Limits.MaxMsgBytes,
+		nil,
+		dl,
+		func(frame []byte) bool {
+			env, err := envelope.DecodeEnvelope(frame)
+			if err != nil {
+				return true
+			}
+			if env.Type == tasks.AcceptType || env.Type == tasks.ProgressType {
+				return true
+			}
+			return false
+		},
+	)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() {
-		_ = stream.Close()
-		_ = conn.CloseWithError(0, "")
-	}()
-	if err := quic.WriteFrame(stream, envBytes); err != nil {
-		return nil, nil, err
+	ack := decodeAckStatus(ackBytes)
+	if len(replyBytes) == 0 {
+		return ack, nil, nil
 	}
-	return readAckAndResult(stream, cfg, ctx)
+	env, err := envelope.DecodeEnvelope(replyBytes)
+	if err != nil {
+		return ack, nil, err
+	}
+	// Only return terminal / expected replies to keep behavior stable.
+	switch env.Type {
+	case tasks.ResultType, tasks.FailType, nodefetch.ResponseType:
+		return ack, env, nil
+	default:
+		return ack, nil, errors.New("ERR_TASK_UNEXPECTED_REPLY")
+	}
+}
+
+func decodeAckStatus(ackBytes []byte) *ackStatus {
+	if len(ackBytes) == 0 {
+		return nil
+	}
+	env, err := envelope.DecodeEnvelope(ackBytes)
+	if err != nil || env.Type != "ack.v1" {
+		return nil
+	}
+	ackPayload := struct {
+		V         uint64 `cbor:"v"`
+		MsgID     string `cbor:"msg_id"`
+		Status    string `cbor:"status"`
+		ErrorCode string `cbor:"error_code,omitempty"`
+	}{}
+	if err := codec.Unmarshal(env.Payload, &ackPayload); err != nil {
+		return nil
+	}
+	return &ackStatus{Status: ackPayload.Status, ErrorCode: ackPayload.ErrorCode}
 }
 
 type requestOptions struct {
 	addr        string
 	peerID      string
-	ownerID     string
-	serviceID   string
+	target      string
 	jobType     string
 	method      string
 	path        string
@@ -190,6 +262,7 @@ type requestOptions struct {
 	fetchResult bool
 	home        string
 	cfgPath     string
+	clientPath  string
 	headers     headerList
 }
 
@@ -198,8 +271,7 @@ func parseRequestArgs(args []string) requestOptions {
 	opts := requestOptions{}
 	fs.StringVar(&opts.addr, "addr", "", "target quic address host:port")
 	fs.StringVar(&opts.peerID, "peer-id", "", "expected peer id (optional)")
-	fs.StringVar(&opts.ownerID, "owner-id", "", "owner identity id (optional)")
-	fs.StringVar(&opts.serviceID, "service-id", "", "target service id")
+	fs.StringVar(&opts.target, "target", "", "user-facing address (alias/service_id/identity_id)")
 	fs.StringVar(&opts.jobType, "job", defaultJobType, "job type")
 	fs.StringVar(&opts.method, "method", "GET", "http method")
 	fs.StringVar(&opts.path, "path", "/", "relative path")
@@ -208,53 +280,152 @@ func parseRequestArgs(args []string) requestOptions {
 	fs.BoolVar(&opts.fetchResult, "fetch-result", false, "fetch result node")
 	fs.StringVar(&opts.home, "home", "", "portable mode root (also Env: ARDENTS_HOME)")
 	fs.StringVar(&opts.cfgPath, "config", "", "path to config file (default: XDG/ARDENTS_HOME)")
+	fs.StringVar(&opts.clientPath, "client-config", "", "path to client config file (default: XDG/ARDENTS_HOME)")
 	fs.Var(&opts.headers, "header", "header k=v (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		fatal(err)
 	}
-	if opts.addr == "" {
-		fatal(errors.New("ERR_ADDR_REQUIRED"))
-	}
-	opts.addr = stripScheme(opts.addr)
+	opts.addr = netaddr.StripQUICScheme(opts.addr)
 	if opts.jobType == "" {
 		fatal(errors.New("ERR_JOB_REQUIRED"))
 	}
-	if opts.serviceID == "" && opts.ownerID == "" {
-		fatal(errors.New("ERR_SERVICE_REQUIRED"))
+	if opts.target == "" {
+		fatal(errors.New("ERR_UFA_REQUIRED"))
 	}
 	return opts
 }
 
-func loadConfig(home string, cfgPath string) config.Config {
-	if home != "" {
-		_ = os.Setenv(appdirs.EnvHome, home)
-	}
-	dirs, err := appdirs.Resolve(home)
+func loadClientConfig(home string, clientPath string) (config.ClientConfig, error) {
+	dirs, err := cliutil.ResolveDirs(home)
 	if err != nil {
-		fatal(err)
+		return config.ClientConfig{}, err
 	}
-	if cfgPath == "" {
-		cfgPath = dirs.ConfigPath()
+	if clientPath == "" {
+		clientPath = dirs.ClientConfigPath()
 	}
-	cfg, err := config.LoadOrInit(cfgPath)
+	c, err := config.LoadClient(clientPath)
 	if err != nil {
-		fatal(err)
+		if os.IsNotExist(err) {
+			return config.ClientConfig{}, errClientBootstrapRequired
+		}
+		return config.ClientConfig{}, err
 	}
-	return cfg
+	if len(c.BootstrapPeers) == 0 && !c.Reseed.Enabled {
+		return config.ClientConfig{}, errClientBootstrapRequired
+	}
+	return c, nil
 }
 
-func resolveTarget(opts requestOptions) (string, string) {
-	if opts.serviceID != "" {
-		return opts.addr, opts.serviceID
-	}
-	if err := ids.ValidateIdentityID(opts.ownerID); err != nil {
-		fatal(err)
-	}
-	sid, err := ids.NewServiceID(opts.ownerID, opts.jobType)
+func resolveGatewayAddr(ctx context.Context, dialer *quic.Dialer, opts requestOptions, targetIdentityID string) (string, string, error) {
+	cc, err := loadClientConfig(opts.home, opts.clientPath)
 	if err != nil {
-		fatal(err)
+		return "", "", err
 	}
-	return opts.addr, sid
+
+	dirs, err := cliutil.ResolveDirs(opts.home)
+	if err != nil {
+		return "", "", err
+	}
+	nowMs := timeutil.NowUnixMs()
+
+	cache, err := discoverycache.LoadOrInit(dirs.DiscoveryCachePath())
+	if err != nil {
+		cache = discoverycache.Cache{V: 1, Entries: []discoverycache.Entry{}}
+	}
+	addLimiter := discoverycache.NewAddLimiter(cc.Limits.AddRateLimit, cc.Limits.AddRateWindowMs)
+	bootstrapTTL := int64((10 * time.Minute) / time.Millisecond)
+	if cc.RefreshMs > 0 && cc.RefreshMs*2 > bootstrapTTL {
+		bootstrapTTL = cc.RefreshMs * 2
+	}
+
+	ordered := orderClientPeers(cc.BootstrapPeers, targetIdentityID)
+	cache = cache.UpsertBootstrapPeers(ordered, nowMs, bootstrapTTL, cc.Limits, addLimiter)
+	_ = discoverycache.Save(dirs.DiscoveryCachePath(), cache)
+
+	// If the user targets an explicit identity and that identity is in bootstrap_peers,
+	// prefer dialing it directly. This keeps "target=identity" intuitive (no surprise routing
+	// via some other gateway that happens to be "healthy").
+	if targetIdentityID != "" {
+		for _, p := range ordered {
+			if p.IdentityID != targetIdentityID {
+				continue
+			}
+			for _, addr := range p.Addrs {
+				if err := dialer.DialAndHandshake(ctx, addr, p.PeerID); err != nil {
+					cache = cache.MarkFail(p.PeerID, addr, nowMs, cc.Limits)
+					continue
+				}
+				cache = cache.MarkOK(p.PeerID, addr, nowMs, nowMs+bootstrapTTL, cc.Limits)
+				_ = discoverycache.Save(dirs.DiscoveryCachePath(), cache)
+				return addr, p.PeerID, nil
+			}
+		}
+		_ = discoverycache.Save(dirs.DiscoveryCachePath(), cache)
+	}
+
+	if addr, peerID, updated, ok := tryCacheCandidates(ctx, dialer, cache, nowMs, cc.Limits); ok {
+		_ = discoverycache.Save(dirs.DiscoveryCachePath(), updated)
+		return addr, peerID, nil
+	}
+	_ = discoverycache.Save(dirs.DiscoveryCachePath(), cache)
+
+	if cc.Reseed.Enabled {
+		bundle, err := reseed.FetchAndVerify(ctx, config.Reseed{
+			Enabled:     true,
+			NetworkID:   cc.Reseed.NetworkID,
+			URLs:        append([]string(nil), cc.Reseed.URLs...),
+			Authorities: append([]string(nil), cc.Reseed.Authorities...),
+		})
+		if err != nil {
+			return "", "", errClientDiscoveryUnavailable
+		}
+		seedPeers := bundle.SeedPeers()
+		for _, sp := range seedPeers {
+			for _, addr := range sp.Addrs {
+				cache = cache.UpsertCandidate(sp.PeerID, addr, "reseed", nowMs, nowMs+bootstrapTTL, cc.Limits, addLimiter)
+				if err := dialer.DialAndHandshake(ctx, addr, sp.PeerID); err != nil {
+					cache = cache.MarkFail(sp.PeerID, addr, nowMs, cc.Limits)
+					continue
+				}
+				cache = cache.MarkOK(sp.PeerID, addr, nowMs, nowMs+bootstrapTTL, cc.Limits)
+				_ = discoverycache.Save(dirs.DiscoveryCachePath(), cache)
+				return addr, sp.PeerID, nil
+			}
+		}
+	}
+
+	return "", "", errClientNoGatewayAvailable
+}
+
+func orderClientPeers(peers []config.ClientPeer, targetIdentityID string) []config.ClientPeer {
+	if len(peers) == 0 || targetIdentityID == "" {
+		return peers
+	}
+	out := make([]config.ClientPeer, 0, len(peers))
+	for _, p := range peers {
+		if p.IdentityID == targetIdentityID {
+			out = append(out, p)
+		}
+	}
+	for _, p := range peers {
+		if p.IdentityID != targetIdentityID {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func tryCacheCandidates(ctx context.Context, dialer *quic.Dialer, cache discoverycache.Cache, nowMs int64, lim config.ClientLimits) (string, string, discoverycache.Cache, bool) {
+	cands := cache.Candidates(nowMs)
+	for _, e := range cands {
+		if err := dialer.DialAndHandshake(ctx, e.Addr, e.PeerID); err != nil {
+			cache = cache.MarkFail(e.PeerID, e.Addr, nowMs, lim)
+			continue
+		}
+		cache = cache.MarkOK(e.PeerID, e.Addr, nowMs, e.ExpiresAtMs, lim)
+		return e.Addr, e.PeerID, cache, true
+	}
+	return "", "", cache, false
 }
 
 func buildWebRequestInput(opts requestOptions) (map[string]any, error) {
@@ -306,7 +477,7 @@ func printAck(ack *ackStatus) {
 	}
 }
 
-func handleTaskResult(ctx context.Context, cfg config.Config, addr string, peerID string, resultEnv *envelope.Envelope, fetchResult bool) {
+func handleTaskResult(ctx context.Context, dialer *quic.Dialer, cfg config.Config, addr string, peerID string, resultEnv *envelope.Envelope, fetchResult bool) {
 	if resultEnv == nil {
 		fatal(errors.New("ERR_TASK_NO_RESULT"))
 		return
@@ -320,7 +491,11 @@ func handleTaskResult(ctx context.Context, cfg config.Config, addr string, peerI
 		}
 		fmt.Println("result_node_id:", res.ResultNodeID)
 		if fetchResult {
-			fetchAndPrint(ctx, cfg, addr, peerID, res.ResultNodeID)
+			fetchPeerID := peerID
+			if fetchPeerID == "" {
+				fetchPeerID = result.From.PeerID
+			}
+			fetchAndPrint(ctx, dialer, cfg, addr, fetchPeerID, res.ResultNodeID)
 		}
 	case tasks.FailType:
 		fail, err := tasks.DecodeFail(result.Payload)
@@ -330,138 +505,6 @@ func handleTaskResult(ctx context.Context, cfg config.Config, addr string, peerI
 		fatal(errors.New(fail.ErrorCode))
 	default:
 		fatal(errors.New("ERR_TASK_UNEXPECTED_REPLY"))
-	}
-}
-
-func dialAndHello(ctx context.Context, cfg config.Config, addr string, peerID string) (quicgo.Connection, quicgo.Stream, error) {
-	addr, err := normalizeAddr(addr)
-	if err != nil {
-		return nil, nil, err
-	}
-	keys, tlsConf, quicConf, err := clientConfigs()
-	if err != nil {
-		return nil, nil, err
-	}
-	conn, err := quicgo.DialAddr(ctx, addr, tlsConf, quicConf)
-	if err != nil {
-		return nil, nil, err
-	}
-	stream, err := conn.OpenStreamSync(ctx)
-	if err != nil {
-		_ = conn.CloseWithError(0, "")
-		return nil, nil, err
-	}
-	remoteHello, err := exchangeHello(stream, cfg, keys)
-	if err != nil {
-		return nil, nil, closeConn(conn, stream, err)
-	}
-	if peerID != "" && remoteHello.PeerID != peerID {
-		return nil, nil, closeConn(conn, stream, quic.ErrPeerIDMismatch)
-	}
-	return conn, stream, nil
-}
-
-func normalizeAddr(addr string) (string, error) {
-	addr = stripScheme(addr)
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		return "", quic.ErrAddrInvalid
-	}
-	return addr, nil
-}
-
-func clientConfigs() (quic.KeyMaterial, *tls.Config, *quicgo.Config, error) {
-	keys, err := quic.LoadOrCreateKeyMaterial("")
-	if err != nil {
-		return quic.KeyMaterial{}, nil, nil, err
-	}
-	tlsConf := &tls.Config{
-		Certificates:       []tls.Certificate{keys.TLSCert},
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true, // #nosec G402 -- peer identity is validated at the envelope layer.
-	}
-	quicConf := &quicgo.Config{
-		HandshakeIdleTimeout: 10 * time.Second,
-		MaxIdleTimeout:       30 * time.Second,
-		KeepAlivePeriod:      10 * time.Second,
-	}
-	return keys, tlsConf, quicConf, nil
-}
-
-func closeConn(conn quicgo.Connection, stream quicgo.Stream, err error) error {
-	_ = stream.Close()
-	_ = conn.CloseWithError(0, "")
-	return err
-}
-
-func exchangeHello(stream quicgo.Stream, cfg config.Config, keys quic.KeyMaterial) (quic.Hello, error) {
-	localPeerID, err := ids.NewPeerID(keys.PublicKey)
-	if err != nil {
-		return quic.Hello{}, err
-	}
-	localHello := quic.Hello{
-		V:             quic.HelloVersion,
-		PeerID:        localPeerID,
-		TSMs:          timeutil.NowUnixMs(),
-		Nonce:         make([]byte, 16),
-		PowDifficulty: cfg.Pow.DefaultDifficulty,
-		MaxMsgBytes:   cfg.Limits.MaxMsgBytes,
-	}
-	localBytes, err := quic.EncodeHello(localHello)
-	if err != nil {
-		return quic.Hello{}, err
-	}
-	if err := quic.WriteFrame(stream, localBytes); err != nil {
-		return quic.Hello{}, err
-	}
-	remoteBytes, err := quic.ReadFrame(stream, cfg.Limits.MaxMsgBytes)
-	if err != nil {
-		return quic.Hello{}, err
-	}
-	remoteHello, err := quic.DecodeHello(remoteBytes)
-	if err != nil {
-		return quic.Hello{}, err
-	}
-	if err := quic.ValidateHello(timeutil.NowUnixMs(), remoteHello); err != nil {
-		return quic.Hello{}, err
-	}
-	return remoteHello, nil
-}
-
-func readAckAndResult(stream quicgo.Stream, cfg config.Config, ctx context.Context) (*ackStatus, *envelope.Envelope, error) {
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = stream.SetReadDeadline(deadline)
-	}
-	var ack *ackStatus
-	var result *envelope.Envelope
-	for {
-		frame, err := quic.ReadFrame(stream, cfg.Limits.MaxMsgBytes)
-		if err != nil {
-			return ack, result, err
-		}
-		env, err := envelope.DecodeEnvelope(frame)
-		if err != nil {
-			continue
-		}
-		if env.Type == "ack.v1" {
-			ackPayload := struct {
-				V         uint64 `cbor:"v"`
-				MsgID     string `cbor:"msg_id"`
-				Status    string `cbor:"status"`
-				ErrorCode string `cbor:"error_code,omitempty"`
-			}{}
-			if err := codec.Unmarshal(env.Payload, &ackPayload); err == nil {
-				ack = &ackStatus{Status: ackPayload.Status, ErrorCode: ackPayload.ErrorCode}
-			}
-			continue
-		}
-		if env.Type == tasks.AcceptType || env.Type == tasks.ProgressType {
-			continue
-		}
-		if env.Type == tasks.ResultType || env.Type == tasks.FailType || env.Type == nodefetch.ResponseType {
-			result = env
-			return ack, result, nil
-		}
 	}
 }
 
@@ -527,14 +570,6 @@ func parseHeaders(list []string) map[string]string {
 		return nil
 	}
 	return out
-}
-
-func stripScheme(addr string) string {
-	const prefix = "quic://"
-	if strings.HasPrefix(addr, prefix) {
-		return strings.TrimPrefix(addr, prefix)
-	}
-	return addr
 }
 
 func fatal(err error) {

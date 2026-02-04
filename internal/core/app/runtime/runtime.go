@@ -53,10 +53,14 @@ type Runtime struct {
 	providers         *providers.Registry
 	services          *serviceregistry.Registry
 	tasks             *TaskStore
+	sessionPeers      *sessionPeerStore
 	netdb             *netdb.DB
 	clockSkew         *clockSkewTracker
+	clockLastNowMs    int64
+	clockInvalid      uint32
 	powAbuse          *powAbuseTracker
 	handshakeAbuse    *handshakeAbuseTracker
+	dirQueryLimiter   *rateLimiter
 	localCapabilities []string
 	capsMu            sync.Mutex
 	peerCaps          map[string][]byte
@@ -106,10 +110,12 @@ func New(cfg config.Config) *Runtime {
 		providers:         providers.NewRegistry(),
 		services:          serviceregistry.New(),
 		tasks:             NewTaskStore(24 * time.Hour),
+		sessionPeers:      newSessionPeerStore(24 * time.Hour),
 		netdb:             netdb.New(netdb.DefaultRecordMaxTTLMs, netdb.DefaultK),
 		clockSkew:         newClockSkewTracker(4),
 		powAbuse:          newPowAbuseTracker(5),
 		handshakeAbuse:    newHandshakeAbuseTracker(5),
+		dirQueryLimiter:   newRateLimiter(cfg.Limits.DirQueryRateLimit, cfg.Limits.DirQueryRateWindowMs),
 		localCapabilities: []string{"node.fetch.v1"},
 		peerCaps:          make(map[string][]byte),
 		tunnels:           make(map[string]*tunnelSession),
@@ -172,6 +178,7 @@ func loadIdentityAndBook(dirs appdirs.Dirs) (identity.Identity, addressbook.Book
 			Trust:       "trusted",
 			CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
 		})
+		book.RebuildIndex()
 	}
 	return id, book
 }
@@ -231,7 +238,52 @@ func (r *Runtime) IdentityPrivateKey() ed25519.PrivateKey {
 }
 
 func (r *Runtime) checkClockSkew(nowMs int64) {
-	_ = nowMs
+	if r == nil || r.net == nil {
+		return
+	}
+
+	const (
+		clockMinUnixMs          = int64(1577836800000) // 2020-01-01T00:00:00Z
+		clockMaxUnixMs          = int64(4102444800000) // 2100-01-01T00:00:00Z
+		clockMaxBackwardsJumpMs = int64(10_000)
+	)
+
+	invalid := false
+	if nowMs < clockMinUnixMs || nowMs > clockMaxUnixMs {
+		invalid = true
+	}
+	last := atomic.LoadInt64(&r.clockLastNowMs)
+	if last != 0 && nowMs+clockMaxBackwardsJumpMs < last {
+		invalid = true
+	}
+	atomic.StoreInt64(&r.clockLastNowMs, nowMs)
+
+	prevInvalid := atomic.LoadUint32(&r.clockInvalid) == 1
+	if invalid {
+		// Transition into invalid state (avoid log/metric spam).
+		if !prevInvalid {
+			atomic.StoreUint32(&r.clockInvalid, 1)
+			r.net.AddDegradedReason("clock_invalid")
+			if r.metrics != nil {
+				r.metrics.IncClockInvalid()
+			}
+			if r.log != nil {
+				r.log.Event("warn", "net", "net.clock_invalid", "", "", "clock_invalid")
+				r.log.Event("warn", "net", "net.degraded", "", "", "clock_invalid")
+			}
+		} else {
+			r.net.AddDegradedReason("clock_invalid")
+		}
+		return
+	}
+
+	if prevInvalid {
+		atomic.StoreUint32(&r.clockInvalid, 0)
+		r.net.ClearDegradedReason("clock_invalid")
+		if r.log != nil {
+			r.log.Event("info", "net", "net.clock_ok", "", "", "")
+		}
+	}
 }
 
 func (r *Runtime) checkLowPeers() {
@@ -314,6 +366,27 @@ func (r *Runtime) startRouterInfoTicker(ctx context.Context) {
 				return
 			case <-t.C:
 				r.publishRouterInfo()
+			}
+		}
+	}()
+}
+
+func (r *Runtime) startClockSkewTicker(ctx context.Context) {
+	if r == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				r.checkClockSkew(timeutil.NowUnixMs())
 			}
 		}
 	}()

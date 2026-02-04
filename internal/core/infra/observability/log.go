@@ -39,7 +39,35 @@ func (l *Logger) Event(level, component, event, peerID, msgID, errorCode string)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	line, ok := l.renderLine(level, component, event, peerID, msgID, errorCode)
+	line, ok := l.renderLine(level, component, event, peerID, msgID, errorCode, nil)
+	if !ok {
+		return
+	}
+	_, _ = os.Stdout.Write(append(line, '\n'))
+	if l.filePath == "" {
+		return
+	}
+	if l.file == nil {
+		if err := os.MkdirAll(filepath.Dir(l.filePath), 0o750); err != nil {
+			return
+		}
+		f, err := perm.OpenOwnerOnly(l.filePath)
+		if err != nil {
+			return
+		}
+		l.file = f
+	}
+	_, _ = l.file.Write(append(line, '\n'))
+}
+
+func (l *Logger) EventWithFields(level, component, event, peerID, msgID string, fields map[string]any) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	line, ok := l.renderLine(level, component, event, peerID, msgID, "", fields)
 	if !ok {
 		return
 	}
@@ -79,7 +107,7 @@ func EnforceRetention(path string, maxAge time.Duration, maxSizeBytes int64) {
 	}
 }
 
-func (l *Logger) renderLine(level, component, event, peerID, msgID, errorCode string) ([]byte, bool) {
+func (l *Logger) renderLine(level, component, event, peerID, msgID, errorCode string, fields map[string]any) ([]byte, bool) {
 	nowMs := time.Now().UTC().UnixNano() / int64(time.Millisecond)
 	if l.format == "text" {
 		// v1: текстовый формат допустим только как локальный режим; wire-инварианты не затрагивает.
@@ -105,6 +133,12 @@ func (l *Logger) renderLine(level, component, event, peerID, msgID, errorCode st
 	}
 	if errorCode != "" {
 		obj["error_code"] = errorCode
+	}
+	for k, v := range fields {
+		if k == "" {
+			continue
+		}
+		obj[k] = v
 	}
 	data, err := json.Marshal(obj)
 	if err != nil {

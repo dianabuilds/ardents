@@ -66,6 +66,9 @@ func (r *Runtime) handleEnvelope(fromPeerID string, data []byte) (resps [][]byte
 	if env.Type == tasks.RequestType {
 		return r.handleTaskRequest(fromPeerID, env)
 	}
+	if env.Type == tasks.AcceptType || env.Type == tasks.ProgressType || env.Type == tasks.ResultType || env.Type == tasks.FailType || env.Type == tasks.ReceiptType {
+		return r.handleTaskResponse(fromPeerID, env), nil
+	}
 	if env.Type == nodefetch.RequestType {
 		return r.handleNodeFetch(fromPeerID, env)
 	}

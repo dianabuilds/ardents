@@ -1,42 +1,23 @@
 package runtime
 
-import "sync"
-
 type handshakeAbuseTracker struct {
-	mu        sync.Mutex
-	counts    map[string]int
-	threshold int
+	counter *thresholdCounter
 }
 
 func newHandshakeAbuseTracker(threshold int) *handshakeAbuseTracker {
-	if threshold <= 0 {
-		threshold = 5
-	}
-	return &handshakeAbuseTracker{
-		counts:    make(map[string]int),
-		threshold: threshold,
-	}
+	return &handshakeAbuseTracker{counter: newThresholdCounter(threshold)}
 }
 
 func (t *handshakeAbuseTracker) Inc(peerID string) (count int, reached bool) {
-	if peerID == "" {
+	if t == nil {
 		return 0, false
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.counts[peerID]++
-	count = t.counts[peerID]
-	if count >= t.threshold {
-		return count, true
-	}
-	return count, false
+	return t.counter.Inc(peerID)
 }
 
 func (t *handshakeAbuseTracker) Reset(peerID string) {
-	if peerID == "" {
+	if t == nil {
 		return
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.counts, peerID)
+	t.counter.Reset(peerID)
 }

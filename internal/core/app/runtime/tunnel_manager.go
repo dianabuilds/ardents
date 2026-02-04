@@ -32,11 +32,15 @@ type tunnelPath struct {
 	mu            sync.Mutex
 }
 
-func (p *tunnelPath) nextSeq(idx int) uint64 {
+func (p *tunnelPath) reserveNextSeqs() []uint64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.hops[idx].seq++
-	return p.hops[idx].seq
+	out := make([]uint64, len(p.hops))
+	for i := range p.hops {
+		p.hops[i].seq++
+		out[i] = p.hops[i].seq
+	}
+	return out
 }
 
 func (p *tunnelPath) markUsed(nowMs int64) {
@@ -380,41 +384,62 @@ func (r *Runtime) buildPaddingData(path *tunnelPath) ([]byte, error) {
 		return nil, errors.New("ERR_TUNNEL_PATH_EMPTY")
 	}
 	buckets := []int{512, 1024, 2048, 4096, 8192, 16384, 32768}
-	padding := 0
-	for _, target := range buckets {
-		for padding = 0; padding <= target; padding++ {
-			inner := tunnel.Inner{V: 1, Kind: "padding"}
-			if padding > 0 {
-				inner.Inner = make([]byte, padding)
-				_, _ = rand.Read(inner.Inner)
-			}
-			data, err := r.buildTunnelData(path, inner)
-			if err != nil {
-				return nil, err
-			}
-			if decoded, err := tunnel.DecodeData(data); err == nil && len(decoded.CT) == target {
-				return data, nil
-			}
-			if decoded, err := tunnel.DecodeData(data); err == nil && len(decoded.CT) > target {
-				break
-			}
+	seqs := path.reserveNextSeqs()
+	ctLenForPadding := func(paddingLen int) (int, error) {
+		inner := tunnel.Inner{V: 1, Kind: "padding"}
+		if paddingLen > 0 {
+			inner.Inner = make([]byte, paddingLen)
 		}
+		_, ctLen, err := r.buildTunnelDataWithSeqs(path, inner, seqs, false)
+		if err != nil {
+			return 0, err
+		}
+		return ctLen, nil
+	}
+	for _, target := range buckets {
+		paddingLen, ok, err := findExactPaddingLen(ctLenForPadding, target)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		inner := tunnel.Inner{V: 1, Kind: "padding"}
+		if paddingLen > 0 {
+			inner.Inner = make([]byte, paddingLen)
+			_, _ = rand.Read(inner.Inner)
+		}
+		data, _, err := r.buildTunnelDataWithSeqs(path, inner, seqs, true)
+		return data, err
 	}
 	inner := tunnel.Inner{V: 1, Kind: "padding"}
-	return r.buildTunnelData(path, inner)
+	data, _, err := r.buildTunnelDataWithSeqs(path, inner, seqs, true)
+	return data, err
 }
 
 func (r *Runtime) buildTunnelData(path *tunnelPath, inner tunnel.Inner) ([]byte, error) {
 	if path == nil || len(path.hops) == 0 {
 		return nil, errors.New("ERR_TUNNEL_PATH_EMPTY")
 	}
+	seqs := path.reserveNextSeqs()
+	dataBytes, _, err := r.buildTunnelDataWithSeqs(path, inner, seqs, true)
+	return dataBytes, err
+}
+
+func (r *Runtime) buildTunnelDataWithSeqs(path *tunnelPath, inner tunnel.Inner, seqs []uint64, markUsed bool) ([]byte, int, error) {
+	if path == nil || len(path.hops) == 0 {
+		return nil, 0, errors.New("ERR_TUNNEL_PATH_EMPTY")
+	}
+	if len(seqs) != len(path.hops) {
+		return nil, 0, errors.New("ERR_TUNNEL_SEQ_INVALID")
+	}
 	nextInner := inner
 	for i := len(path.hops) - 1; i >= 0; i-- {
 		hop := &path.hops[i]
-		seq := path.nextSeq(i)
+		seq := seqs[i]
 		ct, err := tunnel.EncryptData(hop.key, nextInner)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		data := tunnel.Data{
 			V:        1,
@@ -424,11 +449,13 @@ func (r *Runtime) buildTunnelData(path *tunnelPath, inner tunnel.Inner) ([]byte,
 		}
 		dataBytes, err := tunnel.EncodeData(data)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if i == 0 {
-			path.markUsed(timeutil.NowUnixMs())
-			return dataBytes, nil
+			if markUsed {
+				path.markUsed(timeutil.NowUnixMs())
+			}
+			return dataBytes, len(ct), nil
 		}
 		nextInner = tunnel.Inner{
 			V:            1,
@@ -437,7 +464,76 @@ func (r *Runtime) buildTunnelData(path *tunnelPath, inner tunnel.Inner) ([]byte,
 			Inner:        dataBytes,
 		}
 	}
-	return nil, errors.New("ERR_TUNNEL_BUILD_FAILED")
+	return nil, 0, errors.New("ERR_TUNNEL_BUILD_FAILED")
+}
+
+func findExactPaddingLen(ctLen func(paddingLen int) (int, error), target int) (int, bool, error) {
+	if target <= 0 {
+		return 0, false, nil
+	}
+	lo := 0
+	loLen, err := ctLen(lo)
+	if err != nil {
+		return 0, false, err
+	}
+	if loLen > target {
+		return 0, false, nil
+	}
+	hi := 1
+	for hi < target {
+		n, err := ctLen(hi)
+		if err != nil {
+			return 0, false, err
+		}
+		if n >= target {
+			break
+		}
+		hi *= 2
+	}
+	if hi > target {
+		hi = target
+	}
+	hiLen, err := ctLen(hi)
+	if err != nil {
+		return 0, false, err
+	}
+	if hiLen < target {
+		return 0, false, nil
+	}
+
+	// Find the smallest paddingLen with ctLen >= target (monotonic non-decreasing).
+	l, r := lo, hi
+	for l < r {
+		m := (l + r) / 2
+		n, err := ctLen(m)
+		if err != nil {
+			return 0, false, err
+		}
+		if n < target {
+			l = m + 1
+		} else {
+			r = m
+		}
+	}
+	// Local scan around the boundary to hit exact size if it exists.
+	start := l - 8
+	if start < 0 {
+		start = 0
+	}
+	end := l + 8
+	if end > hi {
+		end = hi
+	}
+	for pad := start; pad <= end; pad++ {
+		n, err := ctLen(pad)
+		if err != nil {
+			return 0, false, err
+		}
+		if n == target {
+			return pad, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 func newTunnelID() []byte {
