@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -62,7 +63,7 @@ func TestResolveNodeIDTypeMismatch(t *testing.T) {
 		},
 	}
 	_, err := cliutil.ResolveNodeID("svc", book, time.Now().UTC().UnixMilli())
-	if err != ufa.ErrUFATypeMismatch {
+	if !errors.Is(err, ufa.ErrUFATypeMismatch) {
 		t.Fatalf("expected ErrUFATypeMismatch, got %v", err)
 	}
 }
@@ -74,7 +75,7 @@ func TestResolveNodeIDIdentityMismatch(t *testing.T) {
 	}
 	book := addressbook.Book{V: 1, Entries: []addressbook.Entry{}}
 	_, err = cliutil.ResolveNodeID(id.ID, book, time.Now().UTC().UnixMilli())
-	if err != ufa.ErrUFATypeMismatch {
+	if !errors.Is(err, ufa.ErrUFATypeMismatch) {
 		t.Fatalf("expected ErrUFATypeMismatch, got %v", err)
 	}
 }

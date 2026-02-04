@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
@@ -9,7 +10,7 @@ import (
 func TestLoadClientConfigMissingReturnsBootstrapRequired(t *testing.T) {
 	home := t.TempDir()
 	_, err := loadClientConfig(home, "")
-	if err != errClientBootstrapRequired {
+	if !errors.Is(err, errClientBootstrapRequired) {
 		t.Fatalf("expected ERR_CLIENT_BOOTSTRAP_REQUIRED, got %v", err)
 	}
 }

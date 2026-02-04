@@ -11,51 +11,8 @@ import (
 )
 
 func TestFetchNodeFromProvider(t *testing.T) {
-	providerCfg := config.Default()
-	providerCfg.Listen.QUICAddr = "127.0.0.1:0"
-	providerCfg.Observability.HealthAddr = freeAddr(t)
-	providerCfg.Observability.MetricsAddr = freeAddr(t)
-	provider := New(providerCfg)
-	if err := provider.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = provider.Stop(context.Background())
-	})
-
-	node := contentnode.Node{
-		V:           1,
-		Type:        "test.node.v1",
-		CreatedAtMs: time.Now().UTC().UnixNano() / int64(time.Millisecond),
-		Owner:       provider.IdentityID(),
-		Links:       []contentnode.Link{},
-		Body: map[string]any{
-			"v":     uint64(1),
-			"value": "ok",
-		},
-		Policy: map[string]any{
-			"v":          uint64(1),
-			"visibility": "public",
-		},
-	}
-	if err := contentnode.Sign(&node, provider.identity.PrivateKey); err != nil {
-		t.Fatal(err)
-	}
-	nodeBytes, nodeID, err := contentnode.EncodeWithCID(node)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := provider.store.Put(nodeID, nodeBytes); err != nil {
-		t.Fatal(err)
-	}
-
-	clientCfg := config.Default()
-	clientCfg.Observability.HealthAddr = freeAddr(t)
-	clientCfg.Observability.MetricsAddr = freeAddr(t)
-	clientCfg.BootstrapPeers = []config.BootstrapPeer{
-		{PeerID: provider.PeerID(), Addrs: []string{"quic://" + provider.QUICAddr()}},
-	}
-	client := New(clientCfg)
+	provider, nodeBytes, nodeID := startProviderWithNode(t)
+	client := newClientForProvider(t, provider)
 	nowMs := time.Now().UTC().UnixNano() / int64(time.Millisecond)
 	client.providers.Add(providers.ProviderRecord{
 		V:              1,
@@ -78,6 +35,24 @@ func TestFetchNodeFromProvider(t *testing.T) {
 }
 
 func TestFetchNodeFromSessionPeer(t *testing.T) {
+	provider, nodeBytes, nodeID := startProviderWithNode(t)
+	client := newClientForProvider(t, provider)
+	if client.sessionPeers == nil {
+		t.Fatal("expected sessionPeers store")
+	}
+	client.sessionPeers.Remember(nodeID, provider.PeerID())
+
+	got, err := client.FetchNode(context.Background(), nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(nodeBytes) {
+		t.Fatalf("unexpected node bytes")
+	}
+}
+
+func startProviderWithNode(t *testing.T) (*Runtime, []byte, string) {
+	t.Helper()
 	providerCfg := config.Default()
 	providerCfg.Listen.QUICAddr = "127.0.0.1:0"
 	providerCfg.Observability.HealthAddr = freeAddr(t)
@@ -115,24 +90,16 @@ func TestFetchNodeFromSessionPeer(t *testing.T) {
 	if err := provider.store.Put(nodeID, nodeBytes); err != nil {
 		t.Fatal(err)
 	}
+	return provider, nodeBytes, nodeID
+}
 
+func newClientForProvider(t *testing.T, provider *Runtime) *Runtime {
+	t.Helper()
 	clientCfg := config.Default()
 	clientCfg.Observability.HealthAddr = freeAddr(t)
 	clientCfg.Observability.MetricsAddr = freeAddr(t)
 	clientCfg.BootstrapPeers = []config.BootstrapPeer{
 		{PeerID: provider.PeerID(), Addrs: []string{"quic://" + provider.QUICAddr()}},
 	}
-	client := New(clientCfg)
-	if client.sessionPeers == nil {
-		t.Fatal("expected sessionPeers store")
-	}
-	client.sessionPeers.Remember(nodeID, provider.PeerID())
-
-	got, err := client.FetchNode(context.Background(), nodeID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(nodeBytes) {
-		t.Fatalf("unexpected node bytes")
-	}
+	return New(clientCfg)
 }

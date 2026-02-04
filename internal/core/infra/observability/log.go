@@ -33,59 +33,25 @@ func NewWithOptions(format string, filePath string) *Logger {
 }
 
 func (l *Logger) Event(level, component, event, peerID, msgID, errorCode string) {
-	if l == nil {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	line, ok := l.renderLine(level, component, event, peerID, msgID, errorCode, nil)
-	if !ok {
-		return
-	}
-	_, _ = os.Stdout.Write(append(line, '\n'))
-	if l.filePath == "" {
-		return
-	}
-	if l.file == nil {
-		if err := os.MkdirAll(filepath.Dir(l.filePath), 0o750); err != nil {
-			return
-		}
-		f, err := perm.OpenOwnerOnly(l.filePath)
-		if err != nil {
-			return
-		}
-		l.file = f
-	}
-	_, _ = l.file.Write(append(line, '\n'))
+	l.event(level, component, event, peerID, msgID, errorCode, nil)
 }
 
 func (l *Logger) EventWithFields(level, component, event, peerID, msgID string, fields map[string]any) {
+	l.event(level, component, event, peerID, msgID, "", fields)
+}
+
+func (l *Logger) event(level, component, event, peerID, msgID, errorCode string, fields map[string]any) {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	line, ok := l.renderLine(level, component, event, peerID, msgID, "", fields)
+	line, ok := l.renderLine(level, component, event, peerID, msgID, errorCode, fields)
 	if !ok {
 		return
 	}
-	_, _ = os.Stdout.Write(append(line, '\n'))
-	if l.filePath == "" {
-		return
-	}
-	if l.file == nil {
-		if err := os.MkdirAll(filepath.Dir(l.filePath), 0o750); err != nil {
-			return
-		}
-		f, err := perm.OpenOwnerOnly(l.filePath)
-		if err != nil {
-			return
-		}
-		l.file = f
-	}
-	_, _ = l.file.Write(append(line, '\n'))
+	l.writeLine(line)
 }
 
 func EnforceRetention(path string, maxAge time.Duration, maxSizeBytes int64) {
@@ -145,4 +111,22 @@ func (l *Logger) renderLine(level, component, event, peerID, msgID, errorCode st
 		return nil, false
 	}
 	return data, true
+}
+
+func (l *Logger) writeLine(line []byte) {
+	_, _ = os.Stdout.Write(append(line, '\n'))
+	if l.filePath == "" {
+		return
+	}
+	if l.file == nil {
+		if err := os.MkdirAll(filepath.Dir(l.filePath), 0o750); err != nil {
+			return
+		}
+		f, err := perm.OpenOwnerOnly(l.filePath)
+		if err != nil {
+			return
+		}
+		l.file = f
+	}
+	_, _ = l.file.Write(append(line, '\n'))
 }

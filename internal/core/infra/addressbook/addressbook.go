@@ -107,7 +107,7 @@ func Save(path string, b Book) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-func (b Book) IsTrustedIdentity(identityID string, nowMs int64) bool {
+func (b *Book) IsTrustedIdentity(identityID string, nowMs int64) bool {
 	idx := b.index()
 	for _, i := range idx.trustedIdentity[identityID] {
 		e := b.Entries[i]
@@ -119,17 +119,15 @@ func (b Book) IsTrustedIdentity(identityID string, nowMs int64) bool {
 	return false
 }
 
-func (b Book) IsRevokedIdentity(identityID string) bool {
-	idx := b.index()
-	return idx.revoked[identityID]
+func (b *Book) IsRevokedIdentity(identityID string) bool {
+	return b.index().revoked[identityID]
 }
 
-func (b Book) IsDeprecatedIdentity(identityID string) bool {
-	idx := b.index()
-	return idx.deprecated[identityID]
+func (b *Book) IsDeprecatedIdentity(identityID string) bool {
+	return b.index().deprecated[identityID]
 }
 
-func (b Book) TrustedPeers(nowMs int64) map[string]bool {
+func (b *Book) TrustedPeers(nowMs int64) map[string]bool {
 	out := make(map[string]bool)
 	idx := b.index()
 	for peerID, entries := range idx.trustedPeers {
@@ -145,7 +143,7 @@ func (b Book) TrustedPeers(nowMs int64) map[string]bool {
 	return out
 }
 
-func (b Book) ExportBundle(author identity.Identity) (contentnode.Node, error) {
+func (b *Book) ExportBundle(author identity.Identity) (contentnode.Node, error) {
 	body := map[string]any{
 		"entries":                 b.Entries,
 		"revoked_identity_ids":    b.RevokedIDs,
@@ -169,36 +167,40 @@ func (b Book) ExportBundle(author identity.Identity) (contentnode.Node, error) {
 	return n, nil
 }
 
-func (b Book) ImportBundle(node contentnode.Node, nowMs int64) (Book, ImportStats, error) {
+func (b *Book) ImportBundle(node contentnode.Node, nowMs int64) (Book, ImportStats, error) {
+	cur := Book{}
+	if b != nil {
+		cur = *b
+	}
 	if node.Type != "bundle.addressbook.v1" {
-		return b, ImportStats{}, ErrBundleInvalid
+		return cur, ImportStats{}, ErrBundleInvalid
 	}
 	if err := contentnode.Verify(&node); err != nil {
-		return b, ImportStats{}, ErrBundleInvalid
+		return cur, ImportStats{}, ErrBundleInvalid
 	}
-	if !b.IsTrustedIdentity(node.Owner, nowMs) {
-		return b, ImportStats{}, ErrImportUntrusted
+	if !cur.IsTrustedIdentity(node.Owner, nowMs) {
+		return cur, ImportStats{}, ErrImportUntrusted
 	}
 	body := normalizeMap(node.Body)
-	if err := importIDList(body["revoked_identity_ids"], &b.RevokedIDs); err != nil {
-		return b, ImportStats{}, ErrBundleInvalid
+	if err := importIDList(body["revoked_identity_ids"], &cur.RevokedIDs); err != nil {
+		return cur, ImportStats{}, ErrBundleInvalid
 	}
-	if err := importIDList(body["deprecated_identity_ids"], &b.DeprecatedIDs); err != nil {
-		return b, ImportStats{}, ErrBundleInvalid
+	if err := importIDList(body["deprecated_identity_ids"], &cur.DeprecatedIDs); err != nil {
+		return cur, ImportStats{}, ErrBundleInvalid
 	}
 	entries, total, ok := importEntries(body["entries"], nowMs)
 	if !ok {
-		return b, ImportStats{}, ErrBundleInvalid
+		return cur, ImportStats{}, ErrBundleInvalid
 	}
-	b.Entries = append(b.Entries, entries...)
-	b.UpdatedAtMs = nowMs
-	b.idx = buildIndex(b)
+	cur.Entries = append(cur.Entries, entries...)
+	cur.UpdatedAtMs = nowMs
+	cur.idx = buildIndex(cur)
 	stats := ImportStats{
 		Total:   total,
 		Added:   len(entries),
 		Skipped: total - len(entries),
 	}
-	return b, stats, nil
+	return cur, stats, nil
 }
 
 func importIDList(raw any, dst *[]string) error {
@@ -360,7 +362,7 @@ func validateAlias(alias string) error {
 	return nil
 }
 
-func (b Book) ResolveAlias(alias string, nowMs int64) (Entry, bool, error) {
+func (b *Book) ResolveAlias(alias string, nowMs int64) (Entry, bool, error) {
 	if err := validateAlias(alias); err != nil {
 		return Entry{}, false, err
 	}
@@ -392,7 +394,7 @@ func (b Book) ResolveAlias(alias string, nowMs int64) (Entry, bool, error) {
 	return best, true, nil
 }
 
-func (b Book) ResolveDomain(alias string, nowMs int64) (Entry, bool, error) {
+func (b *Book) ResolveDomain(alias string, nowMs int64) (Entry, bool, error) {
 	entry, ok, err := b.ResolveAlias(alias, nowMs)
 	if err != nil {
 		if errors.Is(err, ErrAliasInvalid) {
@@ -447,7 +449,10 @@ type bookIndex struct {
 	deprecated      map[string]bool
 }
 
-func (b Book) index() *bookIndex {
+func (b *Book) index() *bookIndex {
+	if b == nil {
+		return buildIndex(Book{})
+	}
 	if b.idx != nil &&
 		b.idx.updatedAtMs == b.UpdatedAtMs &&
 		b.idx.entriesLen == len(b.Entries) &&
@@ -455,7 +460,9 @@ func (b Book) index() *bookIndex {
 		b.idx.deprecatedLen == len(b.DeprecatedIDs) {
 		return b.idx
 	}
-	return buildIndex(b)
+	// Cache rebuilt index to avoid repeated recomputation on hot paths.
+	b.idx = buildIndex(*b)
+	return b.idx
 }
 
 func buildIndex(b Book) *bookIndex {

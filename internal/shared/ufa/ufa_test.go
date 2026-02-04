@@ -1,6 +1,7 @@
 package ufa
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -86,14 +87,14 @@ func TestResolveIdentityRequiresServiceName(t *testing.T) {
 		t.Fatalf("identity: %v", err)
 	}
 	_, err = Resolve(id.ID, time.Now().UTC().UnixMilli(), nil, "")
-	if err != ErrServiceNameRequired {
+	if !errors.Is(err, ErrServiceNameRequired) {
 		t.Fatalf("expected ErrServiceNameRequired, got %v", err)
 	}
 }
 
 func TestParseRejectsWhitespace(t *testing.T) {
 	_, err := Parse("  a b  ", time.Now().UTC().UnixMilli(), nil)
-	if err != ErrUFAUnsupported {
+	if !errors.Is(err, ErrUFAUnsupported) {
 		t.Fatalf("expected ErrUFAUnsupported, got %v", err)
 	}
 }

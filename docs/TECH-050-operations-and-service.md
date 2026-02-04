@@ -159,17 +159,17 @@ webclient request --target <identity_id> --fetch-result
 
 1) Создать системного пользователя и каталог данных:
 
-```
-sudo useradd -r -m -d /var/lib/ardents -s /usr/sbin/nologin ardents
-sudo mkdir -p /var/lib/ardents
-sudo chown -R ardents:ardents /var/lib/ardents
-```
+    ```
+    sudo useradd -r -m -d /var/lib/ardents -s /usr/sbin/nologin ardents
+    sudo mkdir -p /var/lib/ardents
+    sudo chown -R ardents:ardents /var/lib/ardents
+    ```
 
 2) Открыть UDP порт для QUIC (пример для 3840/udp):
 
-```
-sudo ufw allow 3840/udp
-```
+    ```
+    sudo ufw allow 3840/udp
+    ```
 
 3) Убедиться, что health/metrics доступны только локально
 (по умолчанию `127.0.0.1` в конфиге).

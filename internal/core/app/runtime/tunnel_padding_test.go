@@ -9,14 +9,7 @@ import (
 
 func TestBuildPaddingData_MatchesBucketAndConsumesOneSeq(t *testing.T) {
 	r := &Runtime{}
-	path := &tunnelPath{
-		direction: "outbound",
-		hops: []tunnelHop{
-			{peerID: "peer-a", tunnelID: bytes.Repeat([]byte{0x01}, 16), key: bytes.Repeat([]byte{0x11}, 32)},
-			{peerID: "peer-b", tunnelID: bytes.Repeat([]byte{0x02}, 16), key: bytes.Repeat([]byte{0x22}, 32)},
-			{peerID: "peer-c", tunnelID: bytes.Repeat([]byte{0x03}, 16), key: bytes.Repeat([]byte{0x33}, 32)},
-		},
-	}
+	path := newTestTunnelPath()
 
 	dataBytes, err := r.buildPaddingData(path)
 	if err != nil {
@@ -46,14 +39,7 @@ func TestBuildPaddingData_MatchesBucketAndConsumesOneSeq(t *testing.T) {
 
 func BenchmarkBuildPaddingData(b *testing.B) {
 	r := &Runtime{}
-	path := &tunnelPath{
-		direction: "outbound",
-		hops: []tunnelHop{
-			{peerID: "peer-a", tunnelID: bytes.Repeat([]byte{0x01}, 16), key: bytes.Repeat([]byte{0x11}, 32)},
-			{peerID: "peer-b", tunnelID: bytes.Repeat([]byte{0x02}, 16), key: bytes.Repeat([]byte{0x22}, 32)},
-			{peerID: "peer-c", tunnelID: bytes.Repeat([]byte{0x03}, 16), key: bytes.Repeat([]byte{0x33}, 32)},
-		},
-	}
+	path := newTestTunnelPath()
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -62,5 +48,16 @@ func BenchmarkBuildPaddingData(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func newTestTunnelPath() *tunnelPath {
+	return &tunnelPath{
+		direction: "outbound",
+		hops: []tunnelHop{
+			{peerID: "peer-a", tunnelID: bytes.Repeat([]byte{0x01}, 16), key: bytes.Repeat([]byte{0x11}, 32)},
+			{peerID: "peer-b", tunnelID: bytes.Repeat([]byte{0x02}, 16), key: bytes.Repeat([]byte{0x22}, 32)},
+			{peerID: "peer-c", tunnelID: bytes.Repeat([]byte{0x03}, 16), key: bytes.Repeat([]byte{0x33}, 32)},
+		},
 	}
 }

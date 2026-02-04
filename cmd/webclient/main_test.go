@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -94,7 +95,7 @@ func TestResolveTargetTypeMismatch(t *testing.T) {
 		},
 	}
 	_, _, err := cliutil.ResolveServiceID("node", "web.request.v1", book, time.Now().UTC().UnixMilli())
-	if err != ufa.ErrUFATypeMismatch {
+	if !errors.Is(err, ufa.ErrUFATypeMismatch) {
 		t.Fatalf("expected ErrUFATypeMismatch, got %v", err)
 	}
 }

@@ -60,52 +60,10 @@ func TestDirQueryV2ReturnsResultNode(t *testing.T) {
 	if status, code := rt.netdb.Store(headBytes, nowMs); status != "OK" {
 		t.Fatalf("netdb store head: %s", code)
 	}
-
-	taskID, err := uuidv7.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientReqID, err := uuidv7.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := tasks.Request{
-		V:               tasks.Version,
-		TaskID:          taskID,
-		ClientRequestID: clientReqID,
-		JobType:         dirquery.JobType,
-		Input: map[string]any{
-			"v": uint64(1),
-			"query": map[string]any{
-				"service_name_prefix": "demo.",
-				"requires":            []string{"demo.msg.v1"},
-			},
-			"limit": uint64(10),
-		},
-		TSMs: nowMs,
-	}
-	payload, err := tasks.EncodeRequest(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := &envelopev2.Envelope{
-		V:     envelopev2.Version,
-		MsgID: taskID,
-		Type:  tasks.RequestType,
-		From: envelopev2.From{
-			IdentityID: rt.identity.ID,
-		},
-		To: envelopev2.To{
-			ServiceID: "svc_dummy",
-		},
-		ReplyTo: &envelopev2.Reply{ServiceID: "svc_reply"},
-		TSMs:    nowMs,
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payload,
-	}
-	if err := env.Sign(rt.identity.PrivateKey); err != nil {
-		t.Fatal(err)
-	}
+	env := buildDirQueryRequestEnv(t, rt, nowMs, map[string]any{
+		"service_name_prefix": "demo.",
+		"requires":            []string{"demo.msg.v1"},
+	}, 10)
 
 	resps, err := rt.handleTaskV2(env)
 	if err != nil {
@@ -151,71 +109,18 @@ func TestDirQueryV2RateLimit(t *testing.T) {
 	})
 
 	nowMs := timeutil.NowUnixMs()
-	taskID, err := uuidv7.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientReqID, err := uuidv7.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := tasks.Request{
-		V:               tasks.Version,
-		TaskID:          taskID,
-		ClientRequestID: clientReqID,
-		JobType:         dirquery.JobType,
-		Input: map[string]any{
-			"v": uint64(1),
-			"query": map[string]any{
-				"service_name_prefix": "demo.",
-			},
-			"limit": uint64(1),
-		},
-		TSMs: nowMs,
-	}
-	payload, err := tasks.EncodeRequest(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := &envelopev2.Envelope{
-		V:     envelopev2.Version,
-		MsgID: taskID,
-		Type:  tasks.RequestType,
-		From: envelopev2.From{
-			IdentityID: rt.identity.ID,
-		},
-		To: envelopev2.To{
-			ServiceID: "svc_dummy",
-		},
-		ReplyTo: &envelopev2.Reply{ServiceID: "svc_reply"},
-		TSMs:    nowMs,
-		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
-		Payload: payload,
-	}
-	if err := env.Sign(rt.identity.PrivateKey); err != nil {
-		t.Fatal(err)
-	}
+	env := buildDirQueryRequestEnv(t, rt, nowMs, map[string]any{
+		"service_name_prefix": "demo.",
+	}, 1)
 
 	if _, err := rt.handleTaskV2(env); err != nil {
 		t.Fatal(err)
 	}
-	taskID, err = uuidv7.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientReqID, err = uuidv7.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.TaskID = taskID
-	req.ClientRequestID = clientReqID
-	payload, err = tasks.EncodeRequest(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	env.MsgID = taskID
-	env.Payload = payload
-	resps, err := rt.handleTaskV2(env)
+
+	env2 := buildDirQueryRequestEnv(t, rt, nowMs, map[string]any{
+		"service_name_prefix": "demo.",
+	}, 1)
+	resps, err := rt.handleTaskV2(env2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,4 +141,47 @@ func TestDirQueryV2RateLimit(t *testing.T) {
 	if failPayload.ErrorCode != "ERR_DIR_RATE_LIMITED" {
 		t.Fatalf("expected ERR_DIR_RATE_LIMITED, got %s", failPayload.ErrorCode)
 	}
+}
+
+func buildDirQueryRequestEnv(t *testing.T, rt *Runtime, nowMs int64, query map[string]any, limit uint64) *envelopev2.Envelope {
+	t.Helper()
+	taskID, err := uuidv7.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientReqID, err := uuidv7.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := tasks.Request{
+		V:               tasks.Version,
+		TaskID:          taskID,
+		ClientRequestID: clientReqID,
+		JobType:         dirquery.JobType,
+		Input: map[string]any{
+			"v":     uint64(1),
+			"query": query,
+			"limit": limit,
+		},
+		TSMs: nowMs,
+	}
+	payload, err := tasks.EncodeRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &envelopev2.Envelope{
+		V:       envelopev2.Version,
+		MsgID:   taskID,
+		Type:    tasks.RequestType,
+		From:    envelopev2.From{IdentityID: rt.identity.ID},
+		To:      envelopev2.To{ServiceID: "svc_dummy"},
+		ReplyTo: &envelopev2.Reply{ServiceID: "svc_reply"},
+		TSMs:    nowMs,
+		TTLMs:   int64((1 * time.Minute) / time.Millisecond),
+		Payload: payload,
+	}
+	if err := env.Sign(rt.identity.PrivateKey); err != nil {
+		t.Fatal(err)
+	}
+	return env
 }

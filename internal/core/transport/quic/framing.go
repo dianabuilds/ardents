@@ -39,13 +39,3 @@ func readFrame(r io.Reader, maxBytes uint64) ([]byte, error) {
 	}
 	return buf, nil
 }
-
-// WriteFrame is exported for CLI tools that reuse the QUIC framing format.
-func WriteFrame(w io.Writer, payload []byte) error {
-	return writeFrame(w, payload)
-}
-
-// ReadFrame is exported for CLI tools that reuse the QUIC framing format.
-func ReadFrame(r io.Reader, maxBytes uint64) ([]byte, error) {
-	return readFrame(r, maxBytes)
-}

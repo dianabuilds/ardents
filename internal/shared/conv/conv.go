@@ -3,8 +3,8 @@ package conv
 const (
 	maxInt   = int(^uint(0) >> 1)
 	maxInt64 = int64(^uint64(0) >> 1)
-	maxU16   = uint16(^uint16(0))
-	maxU32   = uint32(^uint32(0))
+	maxU16   = ^uint16(0)
+	maxU32   = ^uint32(0)
 )
 
 func ClampUint64ToInt(v uint64) int {

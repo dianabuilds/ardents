@@ -148,57 +148,27 @@ func Save(path string, c Config) error {
 
 func ApplyDefaults(c *Config) {
 	def := Default()
-	if c.NodeName == "" {
-		c.NodeName = def.NodeName
-	}
-	if c.Listen.QUICAddr == "" {
-		c.Listen.QUICAddr = def.Listen.QUICAddr
-	}
-	if c.Limits.MaxMsgBytes == 0 {
-		c.Limits.MaxMsgBytes = def.Limits.MaxMsgBytes
-	}
-	if c.Limits.MaxPayloadBytes == 0 {
-		c.Limits.MaxPayloadBytes = def.Limits.MaxPayloadBytes
-	}
-	if c.Limits.MaxInflightMsgs == 0 {
-		c.Limits.MaxInflightMsgs = def.Limits.MaxInflightMsgs
-	}
-	if c.Limits.MaxInboundConns == 0 {
-		c.Limits.MaxInboundConns = def.Limits.MaxInboundConns
-	}
-	if c.Limits.MaxOutboundConns == 0 {
-		c.Limits.MaxOutboundConns = def.Limits.MaxOutboundConns
-	}
-	if c.Limits.BanWindowMs == 0 {
-		c.Limits.BanWindowMs = def.Limits.BanWindowMs
-	}
-	if c.Limits.HandshakeRateLimit == 0 {
-		c.Limits.HandshakeRateLimit = def.Limits.HandshakeRateLimit
-	}
-	if c.Limits.HandshakeRateWindowMs == 0 {
-		c.Limits.HandshakeRateWindowMs = def.Limits.HandshakeRateWindowMs
-	}
-	if c.Limits.DirQueryRateLimit == 0 {
-		c.Limits.DirQueryRateLimit = def.Limits.DirQueryRateLimit
-	}
-	if c.Limits.DirQueryRateWindowMs == 0 {
-		c.Limits.DirQueryRateWindowMs = def.Limits.DirQueryRateWindowMs
-	}
-	if c.Pow.DefaultDifficulty == 0 {
-		c.Pow.DefaultDifficulty = def.Pow.DefaultDifficulty
-	}
-	if c.Observability.HealthAddr == "" {
-		c.Observability.HealthAddr = def.Observability.HealthAddr
-	}
-	if c.Observability.MetricsAddr == "" {
-		c.Observability.MetricsAddr = def.Observability.MetricsAddr
-	}
-	if c.Observability.LogFormat == "" {
-		c.Observability.LogFormat = def.Observability.LogFormat
-	}
-	if c.Reseed.NetworkID == "" {
-		c.Reseed.NetworkID = def.Reseed.NetworkID
-	}
+	setIfZero(&c.NodeName, def.NodeName)
+	setIfZero(&c.Listen.QUICAddr, def.Listen.QUICAddr)
+
+	setIfZero(&c.Limits.MaxMsgBytes, def.Limits.MaxMsgBytes)
+	setIfZero(&c.Limits.MaxPayloadBytes, def.Limits.MaxPayloadBytes)
+	setIfZero(&c.Limits.MaxInflightMsgs, def.Limits.MaxInflightMsgs)
+	setIfZero(&c.Limits.MaxInboundConns, def.Limits.MaxInboundConns)
+	setIfZero(&c.Limits.MaxOutboundConns, def.Limits.MaxOutboundConns)
+	setIfZero(&c.Limits.BanWindowMs, def.Limits.BanWindowMs)
+	setIfZero(&c.Limits.HandshakeRateLimit, def.Limits.HandshakeRateLimit)
+	setIfZero(&c.Limits.HandshakeRateWindowMs, def.Limits.HandshakeRateWindowMs)
+	setIfZero(&c.Limits.DirQueryRateLimit, def.Limits.DirQueryRateLimit)
+	setIfZero(&c.Limits.DirQueryRateWindowMs, def.Limits.DirQueryRateWindowMs)
+
+	setIfZero(&c.Pow.DefaultDifficulty, def.Pow.DefaultDifficulty)
+
+	setIfZero(&c.Observability.HealthAddr, def.Observability.HealthAddr)
+	setIfZero(&c.Observability.MetricsAddr, def.Observability.MetricsAddr)
+	setIfZero(&c.Observability.LogFormat, def.Observability.LogFormat)
+
+	setIfZero(&c.Reseed.NetworkID, def.Reseed.NetworkID)
 }
 
 func LoadOrInit(path string) (Config, error) {

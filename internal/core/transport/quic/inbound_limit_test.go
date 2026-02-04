@@ -3,7 +3,6 @@ package quic
 import (
 	"context"
 	"crypto/tls"
-	"os"
 	"testing"
 	"time"
 
@@ -13,14 +12,7 @@ import (
 )
 
 func TestServerInboundLimit(t *testing.T) {
-	tmp := t.TempDir()
-	prevHome := os.Getenv("ARDENTS_HOME")
-	if err := os.Setenv("ARDENTS_HOME", tmp); err != nil {
-		t.Fatalf("set env: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Setenv("ARDENTS_HOME", prevHome)
-	})
+	_ = withTempHome(t)
 
 	cfg := config.Default()
 	cfg.Listen.QUICAddr = "127.0.0.1:0"

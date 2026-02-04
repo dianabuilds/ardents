@@ -103,9 +103,9 @@ func (c Cache) Prune(nowMs int64) Cache {
 }
 
 func (c Cache) Candidates(nowMs int64) []Entry {
-	c = c.Prune(nowMs)
-	out := make([]Entry, 0, len(c.Entries))
-	for _, e := range c.Entries {
+	pruned := c.Prune(nowMs)
+	out := make([]Entry, 0, len(pruned.Entries))
+	for _, e := range pruned.Entries {
 		if e.CooldownUntilMs != 0 && nowMs < e.CooldownUntilMs {
 			continue
 		}
@@ -130,13 +130,13 @@ func (c Cache) Candidates(nowMs int64) []Entry {
 }
 
 func (c Cache) UpsertBootstrapPeers(peers []config.ClientPeer, nowMs int64, ttlMs int64, lim config.ClientLimits, addLimiter *AddLimiter) Cache {
-	c = c.Prune(nowMs)
+	out := c.Prune(nowMs)
 	for _, p := range peers {
 		for _, addr := range p.Addrs {
-			c = c.UpsertCandidate(p.PeerID, addr, "bootstrap", nowMs, nowMs+ttlMs, lim, addLimiter)
+			out = out.UpsertCandidate(p.PeerID, addr, "bootstrap", nowMs, nowMs+ttlMs, lim, addLimiter)
 		}
 	}
-	return c
+	return out
 }
 
 func (c Cache) MarkOK(peerID string, addr string, nowMs int64, expiresAtMs int64, lim config.ClientLimits) Cache {
@@ -190,10 +190,10 @@ func (c Cache) has(peerID string, addr string) bool {
 }
 
 func (c Cache) upsertAt(peerID string, addr string, nowMs int64, update func(Entry) Entry, lim config.ClientLimits) Cache {
-	c = c.Prune(nowMs)
-	entries := make([]Entry, 0, len(c.Entries)+1)
+	pruned := c.Prune(nowMs)
+	entries := make([]Entry, 0, len(pruned.Entries)+1)
 	updated := false
-	for _, e := range c.Entries {
+	for _, e := range pruned.Entries {
 		if e.PeerID == peerID && e.Addr == addr {
 			entries = append(entries, update(e))
 			updated = true

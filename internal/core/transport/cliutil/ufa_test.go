@@ -62,18 +62,7 @@ func TestResolveNodeID_TypeMismatch(t *testing.T) {
 
 func TestResolveServiceID_FromIdentity(t *testing.T) {
 	nowMs := time.Now().UTC().UnixMilli()
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	identityID, err := ids.NewIdentityID(pub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := ids.NewServiceID(identityID, "web.request.v1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	identityID, want := mustIdentityAndServiceID(t, "web.request.v1")
 	book := addressbook.Book{V: 1, UpdatedAtMs: nowMs, Entries: []addressbook.Entry{}}
 	got, targetID, err := ResolveServiceID(identityID, "web.request.v1", book, nowMs)
 	if err != nil {
@@ -89,18 +78,7 @@ func TestResolveServiceID_FromIdentity(t *testing.T) {
 
 func TestResolveServiceID_AliasToServiceID(t *testing.T) {
 	nowMs := time.Now().UTC().UnixMilli()
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	identityID, err := ids.NewIdentityID(pub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	serviceID, err := ids.NewServiceID(identityID, "web.request.v1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, serviceID := mustIdentityAndServiceID(t, "web.request.v1")
 	book := addressbook.Book{
 		V:           1,
 		UpdatedAtMs: nowMs,
@@ -126,4 +104,21 @@ func TestResolveServiceID_AliasToServiceID(t *testing.T) {
 	if targetID != "" {
 		t.Fatalf("expected empty target identity id for alias, got=%q", targetID)
 	}
+}
+
+func mustIdentityAndServiceID(t *testing.T, serviceName string) (identityID string, serviceID string) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityID, err = ids.NewIdentityID(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceID, err = ids.NewServiceID(identityID, serviceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identityID, serviceID
 }

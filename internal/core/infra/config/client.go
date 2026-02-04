@@ -96,33 +96,16 @@ func LoadClient(path string) (ClientConfig, error) {
 
 func ApplyClientDefaults(c *ClientConfig) {
 	def := DefaultClient()
-	if c.V == 0 {
-		c.V = def.V
-	}
-	if c.RefreshMs == 0 {
-		c.RefreshMs = def.RefreshMs
-	}
-	if c.Reseed.NetworkID == "" {
-		c.Reseed.NetworkID = def.Reseed.NetworkID
-	}
-	if c.Limits.MaxPeers == 0 {
-		c.Limits.MaxPeers = def.Limits.MaxPeers
-	}
-	if c.Limits.AddRateLimit == 0 {
-		c.Limits.AddRateLimit = def.Limits.AddRateLimit
-	}
-	if c.Limits.AddRateWindowMs == 0 {
-		c.Limits.AddRateWindowMs = def.Limits.AddRateWindowMs
-	}
-	if c.Limits.CooldownBaseMs == 0 {
-		c.Limits.CooldownBaseMs = def.Limits.CooldownBaseMs
-	}
-	if c.Limits.CooldownMaxMs == 0 {
-		c.Limits.CooldownMaxMs = def.Limits.CooldownMaxMs
-	}
-	if c.Limits.HandshakeHintTTLMs == 0 {
-		c.Limits.HandshakeHintTTLMs = def.Limits.HandshakeHintTTLMs
-	}
+	setIfZero(&c.V, def.V)
+	setIfZero(&c.RefreshMs, def.RefreshMs)
+	setIfZero(&c.Reseed.NetworkID, def.Reseed.NetworkID)
+
+	setIfZero(&c.Limits.MaxPeers, def.Limits.MaxPeers)
+	setIfZero(&c.Limits.AddRateLimit, def.Limits.AddRateLimit)
+	setIfZero(&c.Limits.AddRateWindowMs, def.Limits.AddRateWindowMs)
+	setIfZero(&c.Limits.CooldownBaseMs, def.Limits.CooldownBaseMs)
+	setIfZero(&c.Limits.CooldownMaxMs, def.Limits.CooldownMaxMs)
+	setIfZero(&c.Limits.HandshakeHintTTLMs, def.Limits.HandshakeHintTTLMs)
 }
 
 func validateClientConfig(c ClientConfig) error {

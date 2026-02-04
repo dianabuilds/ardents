@@ -149,72 +149,19 @@ func (d *Dialer) SendEnvelope(ctx context.Context, addr string, expectedPeerID s
 }
 
 func (d *Dialer) SendEnvelopeWithReply(ctx context.Context, addr string, expectedPeerID string, envelopeBytes []byte, maxBytes uint64, shouldRead func([]byte) bool, replyTimeout time.Duration) ([]byte, []byte, error) {
-	if err := d.acquireOutbound(); err != nil {
-		return nil, nil, err
-	}
-	defer d.releaseOutbound()
-	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() {
-		_ = stream.Close()
-		_ = conn.CloseWithError(0, "")
-	}()
-	if err := writeFrame(stream, envelopeBytes); err != nil {
-		return nil, nil, err
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = stream.SetReadDeadline(deadline)
-	}
-	ackBytes, err := readFrame(stream, maxBytes)
-	_ = stream.SetReadDeadline(time.Time{})
-	if err != nil {
-		return nil, nil, err
-	}
-	if shouldRead != nil && !shouldRead(ackBytes) {
-		return ackBytes, nil, nil
-	}
-	if replyTimeout > 0 {
-		_ = stream.SetReadDeadline(time.Now().Add(replyTimeout))
-	}
-	respBytes, err := readFrame(stream, maxBytes)
-	if replyTimeout > 0 {
-		_ = stream.SetReadDeadline(time.Time{})
-	}
-	if err != nil {
-		return ackBytes, nil, err
-	}
-	return ackBytes, respBytes, nil
+	// Reuse the general "read until terminal reply" helper for the simple 1-reply case.
+	return d.SendEnvelopeWithReplyUntil(ctx, addr, expectedPeerID, envelopeBytes, maxBytes, shouldRead, replyTimeout, nil)
 }
 
 // SendEnvelopeWithReplyUntil is like SendEnvelopeWithReply, but keeps reading reply frames
 // while shouldContinue returns true. This is needed for protocols where the peer may
 // send intermediate frames (e.g. accept/progress) before the terminal reply.
 func (d *Dialer) SendEnvelopeWithReplyUntil(ctx context.Context, addr string, expectedPeerID string, envelopeBytes []byte, maxBytes uint64, shouldRead func([]byte) bool, replyTimeout time.Duration, shouldContinue func([]byte) bool) ([]byte, []byte, error) {
-	if err := d.acquireOutbound(); err != nil {
-		return nil, nil, err
-	}
-	defer d.releaseOutbound()
-	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
+	ackBytes, _, stream, cleanup, err := d.sendEnvelopeAndReadAck(ctx, addr, expectedPeerID, envelopeBytes, maxBytes)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() {
-		_ = stream.Close()
-		_ = conn.CloseWithError(0, "")
-	}()
-	if err := writeFrame(stream, envelopeBytes); err != nil {
-		return nil, nil, err
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = stream.SetReadDeadline(deadline)
-	}
-	ackBytes, err := readFrame(stream, maxBytes)
-	_ = stream.SetReadDeadline(time.Time{})
-	if err != nil {
-		return nil, nil, err
-	}
+	defer cleanup()
 	if shouldRead != nil && !shouldRead(ackBytes) {
 		return ackBytes, nil, nil
 	}
@@ -242,6 +189,44 @@ func (d *Dialer) SendEnvelopeWithReplyUntil(ctx context.Context, addr string, ex
 		_ = stream.SetReadDeadline(time.Time{})
 	}
 	return ackBytes, nil, errors.New("ERR_QUIC_TOO_MANY_REPLIES")
+}
+
+func (d *Dialer) sendEnvelopeAndReadAck(ctx context.Context, addr string, expectedPeerID string, envelopeBytes []byte, maxBytes uint64) ([]byte, *quicgo.Conn, *quicgo.Stream, func(), error) {
+	if err := d.acquireOutbound(); err != nil {
+		return nil, nil, nil, func() {}, err
+	}
+	released := false
+	release := func() {
+		if released {
+			return
+		}
+		released = true
+		d.releaseOutbound()
+	}
+	conn, stream, err := d.dialAndHandshakeStream(ctx, addr, expectedPeerID)
+	if err != nil {
+		release()
+		return nil, nil, nil, func() {}, err
+	}
+	cleanup := func() {
+		_ = stream.Close()
+		_ = conn.CloseWithError(0, "")
+		release()
+	}
+	if err := writeFrame(stream, envelopeBytes); err != nil {
+		cleanup()
+		return nil, nil, nil, func() {}, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = stream.SetReadDeadline(deadline)
+	}
+	ackBytes, err := readFrame(stream, maxBytes)
+	_ = stream.SetReadDeadline(time.Time{})
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, func() {}, err
+	}
+	return ackBytes, conn, stream, cleanup, nil
 }
 
 func (d *Dialer) dialAndHandshakeStream(ctx context.Context, addr string, expectedPeerID string) (*quicgo.Conn, *quicgo.Stream, error) {
