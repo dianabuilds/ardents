@@ -3,8 +3,12 @@ package runtime
 import (
 	"context"
 	"crypto/ed25519"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +29,7 @@ import (
 	"github.com/dianabuilds/ardents/internal/core/transport/quic"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
 	"github.com/dianabuilds/ardents/internal/shared/capabilities"
+	"github.com/dianabuilds/ardents/internal/shared/codec"
 	"github.com/dianabuilds/ardents/internal/shared/conv"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/onionkey"
@@ -32,52 +37,53 @@ import (
 )
 
 type Runtime struct {
-	cfg               config.Config
-	net               *netmgr.Manager
-	dedup             *netpkg.Dedup
-	bans              *netpkg.BanList
-	quic              *quic.Server
-	dial              *quic.Dialer
-	peerID            string
-	store             *storage.NodeStore
-	identity          identity.Identity
-	book              addressbook.Book
-	log               *observability.Logger
-	pcap              *observability.PcapWriter
-	pcapPath          string
-	tracker           *delivery.Tracker
-	health            *health.Server
-	peersConnected    uint64
-	metrics           *metrics.Registry
-	metricsServer     *metrics.Server
-	providers         *providers.Registry
-	services          *serviceregistry.Registry
-	tasks             *TaskStore
-	sessionPeers      *sessionPeerStore
-	netdb             *netdb.DB
-	clockSkew         *clockSkewTracker
-	clockLastNowMs    int64
-	clockInvalid      uint32
-	powAbuse          *powAbuseTracker
-	handshakeAbuse    *handshakeAbuseTracker
-	dirQueryLimiter   *rateLimiter
-	localCapabilities []string
-	capsMu            sync.Mutex
-	peerCaps          map[string][]byte
-	tunnelMu          sync.Mutex
-	tunnels           map[string]*tunnelSession
-	tunnelMgrMu       sync.Mutex
-	outboundTunnels   []*tunnelPath
-	inboundTunnels    []*tunnelPath
-	tunnelMgrCancel   context.CancelFunc
-	localSvcMu        sync.Mutex
-	localServices     map[string]localServiceInfo
-	transportKeys     quic.KeyMaterial
-	onionKey          onionkey.Keypair
-	relayForward      func(peerID string, envBytes []byte) error
-	bootstrapPeers    []config.BootstrapPeer
-	reseedParams      reseed.Params
-	ipc               *ipcServer
+	cfg                 config.Config
+	net                 *netmgr.Manager
+	dedup               *netpkg.Dedup
+	bans                *netpkg.BanList
+	quic                *quic.Server
+	dial                *quic.Dialer
+	peerID              string
+	store               *storage.NodeStore
+	identity            identity.Identity
+	book                addressbook.Book
+	log                 *observability.Logger
+	pcap                *observability.PcapWriter
+	pcapPath            string
+	tracker             *delivery.Tracker
+	health              *health.Server
+	peersConnected      uint64
+	metrics             *metrics.Registry
+	metricsServer       *metrics.Server
+	providers           *providers.Registry
+	services            *serviceregistry.Registry
+	tasks               *TaskStore
+	sessionPeers        *sessionPeerStore
+	netdb               *netdb.DB
+	clockSkew           *clockSkewTracker
+	clockLastNowMs      int64
+	clockInvalid        uint32
+	handshakeHintsSetMs int64
+	powAbuse            *powAbuseTracker
+	handshakeAbuse      *handshakeAbuseTracker
+	dirQueryLimiter     *rateLimiter
+	localCapabilities   []string
+	capsMu              sync.Mutex
+	peerCaps            map[string][]byte
+	tunnelMu            sync.Mutex
+	tunnels             map[string]*tunnelSession
+	tunnelMgrMu         sync.Mutex
+	outboundTunnels     []*tunnelPath
+	inboundTunnels      []*tunnelPath
+	tunnelMgrCancel     context.CancelFunc
+	localSvcMu          sync.Mutex
+	localServices       map[string]localServiceInfo
+	transportKeys       quic.KeyMaterial
+	onionKey            onionkey.Keypair
+	relayForward        func(peerID string, envBytes []byte) error
+	bootstrapPeers      []config.BootstrapPeer
+	reseedParams        reseed.Params
+	ipc                 *ipcServer
 }
 
 func New(cfg config.Config) *Runtime {
@@ -311,12 +317,8 @@ func (r *Runtime) publishRouterInfo() {
 	if len(r.transportKeys.PublicKey) == 0 || len(r.onionKey.Public) == 0 {
 		return
 	}
-	addr := r.quic.Addr()
-	if addr == "" {
-		return
-	}
-	quicAddr, err := quic.ParseQUICAddr(addr)
-	if err != nil {
+	addrs := r.routerInfoAddrs()
+	if len(addrs) == 0 {
 		return
 	}
 	nowMs := timeutil.NowUnixMs()
@@ -326,7 +328,7 @@ func (r *Runtime) publishRouterInfo() {
 		PeerID:        r.peerID,
 		TransportPub:  r.transportKeys.PublicKey,
 		OnionPub:      r.onionKey.Public,
-		Addrs:         []string{quicAddr},
+		Addrs:         addrs,
 		Caps:          netdb.RouterCaps{Relay: true, NetDB: true},
 		PublishedAtMs: nowMs,
 		ExpiresAtMs:   expires,
@@ -339,11 +341,127 @@ func (r *Runtime) publishRouterInfo() {
 	if err != nil {
 		return
 	}
+	// Also advertise router.info hints as part of the handshake (SPEC-460).
+	// We include "self" plus a small bounded subset of other routers from our netdb snapshot.
+	hints := r.buildHandshakeRouterInfoHints(b, nowMs)
+	r.quic.SetRouterInfoHints(hints)
+	if r.dial != nil {
+		r.dial.SetRouterInfoHints(hints)
+	}
+	atomic.StoreInt64(&r.handshakeHintsSetMs, nowMs)
 	if status, code := r.netdb.Store(b, nowMs); status == "OK" {
 		r.log.Event("info", "netdb", "netdb.routerinfo.published", r.peerID, "", "")
 	} else {
 		r.log.Event("warn", "netdb", "netdb.routerinfo.rejected", r.peerID, "", code)
 	}
+}
+
+func (r *Runtime) refreshHandshakeRouterInfoHints(nowMs int64) {
+	if r == nil || r.netdb == nil || r.quic == nil {
+		return
+	}
+
+	self, ok := r.netdb.Router(r.peerID, nowMs)
+	var selfBytes []byte
+	if ok {
+		if b, err := netdb.EncodeRouterInfo(self); err == nil {
+			selfBytes = b
+		}
+	}
+	hints := r.buildHandshakeRouterInfoHints(selfBytes, nowMs)
+	r.quic.SetRouterInfoHints(hints)
+	if r.dial != nil {
+		r.dial.SetRouterInfoHints(hints)
+	}
+	r.log.Event("info", "netdb", "netdb.routerinfo.hints.updated", r.peerID, "", "count="+strconv.Itoa(len(hints)))
+	atomic.StoreInt64(&r.handshakeHintsSetMs, nowMs)
+}
+
+func (r *Runtime) buildHandshakeRouterInfoHints(selfRouterInfoBytes []byte, nowMs int64) [][]byte {
+	const maxHints = 8
+	out := make([][]byte, 0, maxHints)
+	if len(selfRouterInfoBytes) > 0 {
+		out = append(out, append([]byte(nil), selfRouterInfoBytes...))
+	}
+	if r == nil || r.netdb == nil {
+		return out
+	}
+	routers := r.netdb.RoutersSnapshot(nowMs)
+	sort.Slice(routers, func(i, j int) bool {
+		return routers[i].PeerID < routers[j].PeerID
+	})
+	for _, ri := range routers {
+		if len(out) >= maxHints {
+			break
+		}
+		if ri.PeerID == "" || ri.PeerID == r.peerID {
+			continue
+		}
+		if len(ri.Addrs) == 0 {
+			continue
+		}
+		b, err := netdb.EncodeRouterInfo(ri)
+		if err != nil {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+func (r *Runtime) routerInfoAddrs() []string {
+	// Operator-configured advertised addresses take precedence.
+	if r != nil && len(r.cfg.Advertise.QUICAddrs) > 0 {
+		out := make([]string, 0, len(r.cfg.Advertise.QUICAddrs))
+		seen := make(map[string]bool, len(r.cfg.Advertise.QUICAddrs))
+		for _, a := range r.cfg.Advertise.QUICAddrs {
+			a = strings.TrimSpace(a)
+			if a == "" {
+				continue
+			}
+			hostport := a
+			hostport = strings.TrimPrefix(hostport, "quic://")
+			host, _, err := net.SplitHostPort(hostport)
+			if err != nil {
+				continue
+			}
+			// Wildcards are not dialable; the operator must publish a concrete host.
+			if host == "0.0.0.0" || host == "::" {
+				continue
+			}
+			norm := "quic://" + hostport
+			if seen[norm] {
+				continue
+			}
+			seen[norm] = true
+			out = append(out, norm)
+			if len(out) >= netdb.MaxAddrsPerRouter {
+				break
+			}
+		}
+		return out
+	}
+
+	if r == nil || r.quic == nil {
+		return nil
+	}
+	addr := r.quic.Addr()
+	if addr == "" {
+		return nil
+	}
+	quicAddr, err := quic.ParseQUICAddr(addr)
+	if err != nil {
+		return nil
+	}
+	hostport := strings.TrimPrefix(quicAddr, "quic://")
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return nil
+	}
+	if host == "0.0.0.0" || host == "::" {
+		return nil
+	}
+	return []string{quicAddr}
 }
 
 func (r *Runtime) startRouterInfoTicker(ctx context.Context) {
@@ -501,6 +619,34 @@ func (r *Runtime) observeHello(peerID string, remoteTSMs int64, digest []byte) {
 			r.log.Event("info", "service", "service.descriptors.purged", peerID, "", "")
 		}
 	}
+}
+
+func (r *Runtime) observeHandshakeHint(peerID string, routerInfoBytes []byte) {
+	if r == nil || r.netdb == nil || peerID == "" || len(routerInfoBytes) == 0 {
+		return
+	}
+	// Basic anti-abuse bound: router.info records are expected to be small.
+	if len(routerInfoBytes) > 16*1024 {
+		return
+	}
+	var ri netdb.RouterInfo
+	if err := codec.Unmarshal(routerInfoBytes, &ri); err != nil {
+		return
+	}
+	if ri.PeerID == "" {
+		return
+	}
+	nowMs := timeutil.NowUnixMs()
+	status, code := r.netdb.Store(routerInfoBytes, nowMs)
+	if status != "OK" {
+		// Don't spam logs: handshake hints are opportunistic and may fail validation.
+		_ = code
+		return
+	}
+	// Useful for ops: allows us to confirm that netdb is being populated via handshake hints.
+	// Kept at "info" but bounded by per-hello hint limits + debounce in refresh.
+	r.log.Event("info", "netdb", "netdb.routerinfo.hint.stored", ri.PeerID, "", "from="+peerID)
+	r.refreshHandshakeRouterInfoHints(nowMs)
 }
 
 func (r *Runtime) observePeerConnected(peerID string) {

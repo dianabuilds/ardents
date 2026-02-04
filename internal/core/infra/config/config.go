@@ -12,6 +12,7 @@ import (
 type Config struct {
 	NodeName       string          `json:"node_name"`
 	Listen         Listen          `json:"listen"`
+	Advertise      Advertise       `json:"advertise"`
 	BootstrapPeers []BootstrapPeer `json:"bootstrap_peers"`
 	Limits         Limits          `json:"limits"`
 	Pow            Pow             `json:"pow"`
@@ -23,6 +24,13 @@ type Config struct {
 type Listen struct {
 	QUIC     bool   `json:"quic"`
 	QUICAddr string `json:"quic_addr"`
+}
+
+// Advertise configures what addresses this node publishes in NetDB (router.info.v1).
+// This is an operator-controlled "public" view and may differ from listen addresses
+// (e.g. NAT, Docker port mapping).
+type Advertise struct {
+	QUICAddrs []string `json:"quic_addrs"`
 }
 
 type BootstrapPeer struct {

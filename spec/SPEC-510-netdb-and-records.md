@@ -70,6 +70,8 @@ CBOR map:
 * `transport_pub` (bytes) — Ed25519 public key транспорта (32 bytes)
 * `onion_pub` (bytes) — X25519 public key для туннельного рукопожатия (32 bytes)
 * `addrs` (array[string]) — список адресов (например `quic://host:port`)
+  * addrs are advertised dialable addresses (operator-controlled) and may differ from listen addresses (NAT / port mapping).
+  * addrs MUST NOT include wildcard hosts like 0.0.0.0 or [::] (not dialable).
 * `caps` (map):
   * `relay` (bool) — участвует ли узел в маршрутизации (для v2: **true**)
   * `netdb` (bool) — обслуживает ли DHT-запросы (для v2: **true**)

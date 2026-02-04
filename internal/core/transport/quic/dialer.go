@@ -1,6 +1,7 @@
 package quic
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
@@ -23,14 +24,18 @@ var (
 )
 
 type Dialer struct {
-	cfg         config.Config
-	keys        KeyMaterial
-	peerID      string
-	onHello     func(peerID string, remoteTSMs int64, capabilitiesDigest []byte)
-	capDigest   []byte
-	mu          sync.RWMutex
-	peerPubs    map[string]ed25519.PublicKey
-	outboundSem chan struct{}
+	cfg             config.Config
+	keys            KeyMaterial
+	peerID          string
+	onHello         func(peerID string, remoteTSMs int64, capabilitiesDigest []byte)
+	onHint          func(peerID string, routerInfoBytes []byte)
+	capDigest       []byte
+	hintMu          sync.RWMutex
+	routerInfoHint  []byte
+	routerInfoHints [][]byte
+	mu              sync.RWMutex
+	peerPubs        map[string]ed25519.PublicKey
+	outboundSem     chan struct{}
 }
 
 func NewDialer(cfg config.Config) (*Dialer, error) {
@@ -61,6 +66,46 @@ func (d *Dialer) SetHelloObserverWithDigest(fn func(peerID string, remoteTSMs in
 
 func (d *Dialer) SetCapabilitiesDigest(digest []byte) {
 	d.capDigest = digest
+}
+
+// SetHandshakeHintObserver observes router_info hints received in hello messages.
+// The hint MUST be validated by the receiver (signature/TTL) before use.
+func (d *Dialer) SetHandshakeHintObserver(fn func(peerID string, routerInfoBytes []byte)) {
+	d.onHint = fn
+}
+
+// SetRouterInfoHint configures router_info bytes that this dialer will include in its hello.
+// Caller is responsible for providing canonical CBOR bytes of router.info.v1 (including signature).
+func (d *Dialer) SetRouterInfoHint(routerInfoBytes []byte) {
+	d.hintMu.Lock()
+	d.routerInfoHint = append([]byte(nil), routerInfoBytes...)
+	// Keep legacy single-hint field and list in sync (list always contains at least self hint if set).
+	if len(routerInfoBytes) == 0 {
+		d.routerInfoHints = nil
+	} else {
+		d.routerInfoHints = [][]byte{append([]byte(nil), routerInfoBytes...)}
+	}
+	d.hintMu.Unlock()
+}
+
+// SetRouterInfoHints configures router_infos bytes that this dialer will include in its hello.
+// Caller is responsible for providing canonical CBOR bytes of router.info.v1 records (including signatures).
+func (d *Dialer) SetRouterInfoHints(routerInfos [][]byte) {
+	d.hintMu.Lock()
+	d.routerInfoHints = make([][]byte, 0, len(routerInfos))
+	for _, b := range routerInfos {
+		if len(b) == 0 {
+			continue
+		}
+		d.routerInfoHints = append(d.routerInfoHints, append([]byte(nil), b...))
+	}
+	// Preserve legacy single field as "self" hint if present.
+	if len(d.routerInfoHints) > 0 {
+		d.routerInfoHint = append([]byte(nil), d.routerInfoHints[0]...)
+	} else {
+		d.routerInfoHint = nil
+	}
+	d.hintMu.Unlock()
 }
 
 func (d *Dialer) PeerPublicKey(peerID string) (ed25519.PublicKey, bool) {
@@ -310,6 +355,16 @@ func (d *Dialer) storePeerCert(conn *quicgo.Conn, expectedPeerID string) (string
 }
 
 func (d *Dialer) exchangeHello(stream *quicgo.Stream, peerIDFromCert string, expectedPeerID string) error {
+	d.hintMu.RLock()
+	routerInfoHint := append([]byte(nil), d.routerInfoHint...)
+	routerInfoHints := make([][]byte, 0, len(d.routerInfoHints))
+	for _, b := range d.routerInfoHints {
+		if len(b) == 0 {
+			continue
+		}
+		routerInfoHints = append(routerInfoHints, append([]byte(nil), b...))
+	}
+	d.hintMu.RUnlock()
 	localHello := Hello{
 		V:                  HelloVersion,
 		PeerID:             d.peerID,
@@ -318,6 +373,8 @@ func (d *Dialer) exchangeHello(stream *quicgo.Stream, peerIDFromCert string, exp
 		PowDifficulty:      d.cfg.Pow.DefaultDifficulty,
 		MaxMsgBytes:        d.cfg.Limits.MaxMsgBytes,
 		CapabilitiesDigest: d.capDigest,
+		RouterInfo:         routerInfoHint,
+		RouterInfos:        routerInfoHints,
 	}
 	localBytes, err := EncodeHello(localHello)
 	if err != nil {
@@ -336,6 +393,27 @@ func (d *Dialer) exchangeHello(stream *quicgo.Stream, peerIDFromCert string, exp
 	}
 	if d.onHello != nil {
 		d.onHello(remoteHello.PeerID, remoteHello.TSMs, remoteHello.CapabilitiesDigest)
+	}
+	if d.onHint != nil && len(remoteHello.RouterInfo) > 0 {
+		d.onHint(remoteHello.PeerID, remoteHello.RouterInfo)
+	}
+	if d.onHint != nil && len(remoteHello.RouterInfos) > 0 {
+		const maxHintsPerHello = 16
+		seen := 0
+		for _, b := range remoteHello.RouterInfos {
+			if seen >= maxHintsPerHello {
+				break
+			}
+			if len(b) == 0 {
+				continue
+			}
+			// Avoid duplicating the legacy single-hint field when both are populated.
+			if len(remoteHello.RouterInfo) > 0 && bytes.Equal(b, remoteHello.RouterInfo) {
+				continue
+			}
+			d.onHint(remoteHello.PeerID, b)
+			seen++
+		}
 	}
 	if err := ValidateHello(timeutil.NowUnixMs(), remoteHello); err != nil {
 		return err

@@ -128,15 +128,15 @@ webclient request --target <identity_id> --fetch-result
 1) **Bootstrap/Reseed (SPEC-500)**  
    Узел получает начальные адреса через reseed‑bundle от доверенных DA. Это старт сети без ручного ввода списка пиров.
 
-2) **NetDB (SPEC-510)**  
+1) **NetDB (SPEC-510)**  
    После входа узлы публикуют `router.info` и сервисные записи (`service.head.v1`, `service.lease_set.v1`).  
    Дальше доступность строится на TTL/обновлениях, без статических IP.
 
-3) **Directory Service (SPEC-530)**  
+1) **Directory Service (SPEC-530)**  
    Поиск сервисов по возможностям/capabilities через `dir.query.v1`.  
    **По умолчанию внешние каталоги отключены** и используются только при явном включении локальной конфигурацией.
 
-4) **Address Book bundles (SPEC-125/120)**  
+1) **Address Book bundles (SPEC-125/120)**  
    Локальные доверенные списки alias → target.  
    Не являются глобальным поиском; это trust‑политика и удобство.
 
@@ -165,13 +165,13 @@ webclient request --target <identity_id> --fetch-result
     sudo chown -R ardents:ardents /var/lib/ardents
     ```
 
-2) Открыть UDP порт для QUIC (пример для 3840/udp):
+1) Открыть UDP порт для QUIC (пример для 3840/udp):
 
     ```
     sudo ufw allow 3840/udp
     ```
 
-3) Убедиться, что health/metrics доступны только локально
+1) Убедиться, что health/metrics доступны только локально
 (по умолчанию `127.0.0.1` в конфиге).
 
 ### 4.2 Инициализация данных
@@ -194,6 +194,8 @@ sudo -u ardents peer init --home /var/lib/ardents
 Минимально проверить/настроить:
 
 * `listen.quic_addr` — адрес/порт для входящих QUIC (например `"0.0.0.0:3840"`).
+* `advertise.quic_addrs` — **публичные** адреса, которые peer публикует в NetDB (`router.info.v1`).
+  Может отличаться от `listen.quic_addr` (NAT, Docker port mapping).
 * `limits.*` — лимиты входящих/исходящих соединений, размер сообщений.
 * `limits.handshake_rate_limit` и `limits.handshake_rate_window_ms` — ограничение частоты handshake (защита от всплесков).
 * `observability.health_addr` и `observability.metrics_addr` — оставить `127.0.0.1:*`
@@ -285,17 +287,17 @@ exec /usr/local/bin/peer start --home "$ARDENTS_HOME"
 ### 8.1 Обновление
 
 1) Остановить сервис.
-2) Сделать backup (см. раздел 9).
-3) Обновить бинарник `peer` и связанные утилиты.
-4) Запустить сервис.
-5) Проверить `peer status` и `/healthz`.
+1) Сделать backup (см. раздел 9).
+1) Обновить бинарник `peer` и связанные утилиты.
+1) Запустить сервис.
+1) Проверить `peer status` и `/healthz`.
 
 ### 8.2 Откат
 
 1) Остановить сервис.
-2) Восстановить предыдущий бинарник `peer`.
-3) Восстановить backup (если менялись данные).
-4) Запустить сервис и проверить `/healthz`.
+1) Восстановить предыдущий бинарник `peer`.
+1) Восстановить backup (если менялись данные).
+1) Запустить сервис и проверить `/healthz`.
 
 ---
 
@@ -312,8 +314,8 @@ exec /usr/local/bin/peer start --home "$ARDENTS_HOME"
 ### 9.2 Восстановление
 
 1) Восстановить те же пути под `ARDENTS_HOME` или XDG.
-2) Вернуть файлы из backup.
-3) Запустить `peer` и проверить `/healthz`.
+1) Вернуть файлы из backup.
+1) Запустить `peer` и проверить `/healthz`.
 
 ---
 

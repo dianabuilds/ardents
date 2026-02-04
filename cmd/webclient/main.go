@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dianabuilds/ardents/internal/core/app/netdb"
 	"github.com/dianabuilds/ardents/internal/core/app/services/nodefetch"
 	"github.com/dianabuilds/ardents/internal/core/app/services/tasks"
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
@@ -339,6 +340,35 @@ func resolveGatewayAddr(ctx context.Context, dialer *quic.Dialer, opts requestOp
 		bootstrapTTL = cc.RefreshMs * 2
 	}
 
+	// Handshake hint (router.info) is allowed as a short-lived discovery source (SPEC-460).
+	tmpNetDB := netdb.New(netdb.DefaultRecordMaxTTLMs, netdb.DefaultK)
+	dialer.SetHandshakeHintObserver(func(peerID string, routerInfoBytes []byte) {
+		if peerID == "" || len(routerInfoBytes) == 0 {
+			return
+		}
+		// Basic anti-abuse bound: router.info records are expected to be small.
+		if len(routerInfoBytes) > 16*1024 {
+			return
+		}
+		now := timeutil.NowUnixMs()
+		var ri netdb.RouterInfo
+		if err := codec.Unmarshal(routerInfoBytes, &ri); err != nil {
+			return
+		}
+		if ri.PeerID == "" {
+			return
+		}
+		status, _ := tmpNetDB.Store(routerInfoBytes, now)
+		if status != "OK" {
+			return
+		}
+		expires := now + cc.Limits.HandshakeHintTTLMs
+		for _, a := range ri.Addrs {
+			cache = cache.UpsertCandidate(ri.PeerID, a, "handshake_hint", now, expires, cc.Limits, addLimiter)
+		}
+	})
+	defer dialer.SetHandshakeHintObserver(nil)
+
 	ordered := orderClientPeers(cc.BootstrapPeers, targetIdentityID)
 	cache = cache.UpsertBootstrapPeers(ordered, nowMs, bootstrapTTL, cc.Limits, addLimiter)
 	_ = discoverycache.Save(cachePath, cache)
@@ -352,19 +382,19 @@ func resolveGatewayAddr(ctx context.Context, dialer *quic.Dialer, opts requestOp
 				continue
 			}
 			for _, addr := range p.Addrs {
-				var ok bool
-				cache, ok = tryDialGateway(ctx, dialer, cache, p.PeerID, addr, nowMs, nowMs+bootstrapTTL, cc.Limits, cachePath)
-				if !ok {
+				if !tryDialGateway(ctx, dialer, &cache, p.PeerID, addr, nowMs, nowMs+bootstrapTTL, cc.Limits) {
+					_ = discoverycache.Save(cachePath, cache)
 					continue
 				}
+				_ = discoverycache.Save(cachePath, cache)
 				return addr, p.PeerID, nil
 			}
 		}
 		_ = discoverycache.Save(cachePath, cache)
 	}
 
-	if addr, peerID, updated, ok := tryCacheCandidates(ctx, dialer, cache, nowMs, cc.Limits); ok {
-		_ = discoverycache.Save(cachePath, updated)
+	if addr, peerID, ok := tryCacheCandidates(ctx, dialer, &cache, nowMs, cc.Limits); ok {
+		_ = discoverycache.Save(cachePath, cache)
 		return addr, peerID, nil
 	}
 	_ = discoverycache.Save(cachePath, cache)
@@ -383,11 +413,11 @@ func resolveGatewayAddr(ctx context.Context, dialer *quic.Dialer, opts requestOp
 		for _, sp := range seedPeers {
 			for _, addr := range sp.Addrs {
 				cache = cache.UpsertCandidate(sp.PeerID, addr, "reseed", nowMs, nowMs+bootstrapTTL, cc.Limits, addLimiter)
-				var ok bool
-				cache, ok = tryDialGateway(ctx, dialer, cache, sp.PeerID, addr, nowMs, nowMs+bootstrapTTL, cc.Limits, cachePath)
-				if !ok {
+				if !tryDialGateway(ctx, dialer, &cache, sp.PeerID, addr, nowMs, nowMs+bootstrapTTL, cc.Limits) {
+					_ = discoverycache.Save(cachePath, cache)
 					continue
 				}
+				_ = discoverycache.Save(cachePath, cache)
 				return addr, sp.PeerID, nil
 			}
 		}
@@ -414,27 +444,32 @@ func orderClientPeers(peers []config.ClientPeer, targetIdentityID string) []conf
 	return out
 }
 
-func tryCacheCandidates(ctx context.Context, dialer *quic.Dialer, cache discoverycache.Cache, nowMs int64, lim config.ClientLimits) (string, string, discoverycache.Cache, bool) {
+func tryCacheCandidates(ctx context.Context, dialer *quic.Dialer, cache *discoverycache.Cache, nowMs int64, lim config.ClientLimits) (string, string, bool) {
+	if cache == nil {
+		return "", "", false
+	}
 	cands := cache.Candidates(nowMs)
 	for _, e := range cands {
 		if err := dialer.DialAndHandshake(ctx, e.Addr, e.PeerID); err != nil {
-			cache = cache.MarkFail(e.PeerID, e.Addr, nowMs, lim)
+			*cache = cache.MarkFail(e.PeerID, e.Addr, nowMs, lim)
 			continue
 		}
-		cache = cache.MarkOK(e.PeerID, e.Addr, nowMs, e.ExpiresAtMs, lim)
-		return e.Addr, e.PeerID, cache, true
+		*cache = cache.MarkOK(e.PeerID, e.Addr, nowMs, e.ExpiresAtMs, lim)
+		return e.Addr, e.PeerID, true
 	}
-	return "", "", cache, false
+	return "", "", false
 }
 
-func tryDialGateway(ctx context.Context, dialer *quic.Dialer, cache discoverycache.Cache, peerID, addr string, nowMs, expiresAtMs int64, lim config.ClientLimits, cachePath string) (discoverycache.Cache, bool) {
-	if err := dialer.DialAndHandshake(ctx, addr, peerID); err != nil {
-		cache = cache.MarkFail(peerID, addr, nowMs, lim)
-		return cache, false
+func tryDialGateway(ctx context.Context, dialer *quic.Dialer, cache *discoverycache.Cache, peerID, addr string, nowMs, expiresAtMs int64, lim config.ClientLimits) bool {
+	if cache == nil {
+		return false
 	}
-	cache = cache.MarkOK(peerID, addr, nowMs, expiresAtMs, lim)
-	_ = discoverycache.Save(cachePath, cache)
-	return cache, true
+	if err := dialer.DialAndHandshake(ctx, addr, peerID); err != nil {
+		*cache = cache.MarkFail(peerID, addr, nowMs, lim)
+		return false
+	}
+	*cache = cache.MarkOK(peerID, addr, nowMs, expiresAtMs, lim)
+	return true
 }
 
 func buildWebRequestInput(opts requestOptions) (map[string]any, error) {

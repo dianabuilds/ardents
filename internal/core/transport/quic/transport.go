@@ -1,6 +1,7 @@
 package quic
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
@@ -32,7 +33,10 @@ type Server struct {
 	wg                 sync.WaitGroup
 	onEnvelope         func(fromPeerID string, data []byte) ([][]byte, error)
 	onHello            func(peerID string, remoteTSMs int64, capabilitiesDigest []byte)
+	onHint             func(peerID string, routerInfoBytes []byte)
 	capDigest          []byte
+	routerInfoHint     []byte
+	routerInfoHints    [][]byte
 	onPeerConnected    func(peerID string)
 	onPeerDisconnected func(peerID string)
 	onHandshakeError   func(peerID string, remoteAddr string, err error)
@@ -161,6 +165,46 @@ func (s *Server) SetHelloObserverWithDigest(fn func(peerID string, remoteTSMs in
 
 func (s *Server) SetCapabilitiesDigest(digest []byte) {
 	s.capDigest = digest
+}
+
+// SetHandshakeHintObserver observes router_info hints received in hello messages.
+// The hint MUST be validated by the receiver (signature/TTL) before use.
+func (s *Server) SetHandshakeHintObserver(fn func(peerID string, routerInfoBytes []byte)) {
+	s.onHint = fn
+}
+
+// SetRouterInfoHint configures router_info bytes that this server will include in its hello.
+// Caller is responsible for providing canonical CBOR bytes of router.info.v1 (including signature).
+func (s *Server) SetRouterInfoHint(routerInfoBytes []byte) {
+	s.mu.Lock()
+	s.routerInfoHint = append([]byte(nil), routerInfoBytes...)
+	// Keep legacy single-hint field and list in sync (list always contains at least self hint if set).
+	if len(routerInfoBytes) == 0 {
+		s.routerInfoHints = nil
+	} else {
+		s.routerInfoHints = [][]byte{append([]byte(nil), routerInfoBytes...)}
+	}
+	s.mu.Unlock()
+}
+
+// SetRouterInfoHints configures router_infos bytes that this server will include in its hello.
+// Caller is responsible for providing canonical CBOR bytes of router.info.v1 records (including signatures).
+func (s *Server) SetRouterInfoHints(routerInfos [][]byte) {
+	s.mu.Lock()
+	s.routerInfoHints = make([][]byte, 0, len(routerInfos))
+	for _, b := range routerInfos {
+		if len(b) == 0 {
+			continue
+		}
+		s.routerInfoHints = append(s.routerInfoHints, append([]byte(nil), b...))
+	}
+	// Preserve legacy single field as "self" hint if present.
+	if len(s.routerInfoHints) > 0 {
+		s.routerInfoHint = append([]byte(nil), s.routerInfoHints[0]...)
+	} else {
+		s.routerInfoHint = nil
+	}
+	s.mu.Unlock()
 }
 
 func (s *Server) SetPeerObserver(connected func(peerID string), disconnected func(peerID string)) {
@@ -301,6 +345,16 @@ func (s *Server) peerIDFromConn(conn *quicgo.Conn) (string, ed25519.PublicKey, e
 }
 
 func (s *Server) exchangeHello(stream *quicgo.Stream) (Hello, error) {
+	s.mu.RLock()
+	routerInfoHint := append([]byte(nil), s.routerInfoHint...)
+	routerInfoHints := make([][]byte, 0, len(s.routerInfoHints))
+	for _, b := range s.routerInfoHints {
+		if len(b) == 0 {
+			continue
+		}
+		routerInfoHints = append(routerInfoHints, append([]byte(nil), b...))
+	}
+	s.mu.RUnlock()
 	localHello := Hello{
 		V:                  HelloVersion,
 		PeerID:             s.peerID,
@@ -309,6 +363,8 @@ func (s *Server) exchangeHello(stream *quicgo.Stream) (Hello, error) {
 		PowDifficulty:      s.cfg.Pow.DefaultDifficulty,
 		MaxMsgBytes:        s.cfg.Limits.MaxMsgBytes,
 		CapabilitiesDigest: s.capDigest,
+		RouterInfo:         routerInfoHint,
+		RouterInfos:        routerInfoHints,
 	}
 	localBytes, err := EncodeHello(localHello)
 	if err != nil {
@@ -327,6 +383,27 @@ func (s *Server) exchangeHello(stream *quicgo.Stream) (Hello, error) {
 	}
 	if s.onHello != nil {
 		s.onHello(remoteHello.PeerID, remoteHello.TSMs, remoteHello.CapabilitiesDigest)
+	}
+	if s.onHint != nil && len(remoteHello.RouterInfo) > 0 {
+		s.onHint(remoteHello.PeerID, remoteHello.RouterInfo)
+	}
+	if s.onHint != nil && len(remoteHello.RouterInfos) > 0 {
+		const maxHintsPerHello = 16
+		seen := 0
+		for _, b := range remoteHello.RouterInfos {
+			if seen >= maxHintsPerHello {
+				break
+			}
+			if len(b) == 0 {
+				continue
+			}
+			// Avoid duplicating the legacy single-hint field when both are populated.
+			if len(remoteHello.RouterInfo) > 0 && bytes.Equal(b, remoteHello.RouterInfo) {
+				continue
+			}
+			s.onHint(remoteHello.PeerID, b)
+			seen++
+		}
 	}
 	if err := ValidateHello(timeutil.NowUnixMs(), remoteHello); err != nil {
 		return Hello{}, err

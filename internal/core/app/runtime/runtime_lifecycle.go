@@ -125,6 +125,7 @@ func (r *Runtime) startQUIC(ctx context.Context) {
 	}
 	r.quic.SetCapabilitiesDigest(r.capabilitiesDigest())
 	r.quic.SetHelloObserverWithDigest(r.observeHello)
+	r.quic.SetHandshakeHintObserver(r.observeHandshakeHint)
 	r.quic.SetPeerObserver(r.observePeerConnected, r.observePeerDisconnected)
 	r.quic.SetHandshakeErrorObserver(r.observeHandshakeError)
 	r.quic.SetConnErrorObserver(r.observeConnError)
@@ -176,4 +177,5 @@ func (r *Runtime) initDialer() {
 	}
 	r.dial.SetCapabilitiesDigest(r.capabilitiesDigest())
 	r.dial.SetHelloObserverWithDigest(r.observeHello)
+	r.dial.SetHandshakeHintObserver(r.observeHandshakeHint)
 }

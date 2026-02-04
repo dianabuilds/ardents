@@ -23,6 +23,11 @@ type Hello struct {
 	PowDifficulty      uint64 `cbor:"pow_difficulty"`
 	MaxMsgBytes        uint64 `cbor:"max_msg_bytes"`
 	CapabilitiesDigest []byte `cbor:"capabilities_digest"`
+	// Optional handshake hint for faster discovery/bootstrap.
+	// Must be validated by receiver (see SPEC-110/SPEC-460) and treated as short-lived.
+	RouterInfo []byte `cbor:"router_info,omitempty"`
+	// Optional list of additional router.info hints (each is a standalone signed record).
+	RouterInfos [][]byte `cbor:"router_infos,omitempty"`
 }
 
 func EncodeHello(h Hello) ([]byte, error) {
