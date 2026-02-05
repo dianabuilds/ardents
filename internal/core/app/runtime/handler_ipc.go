@@ -3,6 +3,8 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"net"
+	"os"
 
 	"github.com/dianabuilds/ardents/internal/core/app/services/tasks"
 	"github.com/dianabuilds/ardents/internal/core/domain/contentnode"
@@ -37,6 +39,12 @@ func (r *Runtime) handleTaskIPC(req tasks.Request, env *envelope.Envelope, fromP
 		if errors.Is(err, errIPCBadResponse) {
 			code = errIPCBadResponse.Error()
 		}
+		if r.metrics != nil {
+			r.metrics.IncIPCErr(code)
+			if isIPCTimeout(err) {
+				r.metrics.IncIPCTimeout()
+			}
+		}
 		return r.buildIPCFailResps(env, req, fromPeerID, code, "", false), true
 	}
 	if result.errorCode != "" {
@@ -60,6 +68,17 @@ func (r *Runtime) buildIPCFailResps(env *envelope.Envelope, req tasks.Request, f
 		r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, fail)
 	}
 	return resps
+}
+
+func isIPCTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func (r *Runtime) decodeIPCNode(nodeBytes []byte) (string, []byte, error) {

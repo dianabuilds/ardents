@@ -274,18 +274,12 @@ func (r *Runtime) handleProviderAnnounce(fromPeerID string, env *envelope.Envelo
 }
 
 func (r *Runtime) handleTaskRequest(fromPeerID string, env *envelope.Envelope) ([][]byte, error) {
-	req, err := tasks.DecodeRequest(env.Payload)
+	req, err := decodeTaskRequestPayload(env.Payload)
 	if err != nil {
 		return [][]byte{r.buildAck(env.MsgID, "REJECTED", "ERR_PAYLOAD_DECODE", fromPeerID)}, nil
 	}
-	if req.V != tasks.Version || req.TaskID == "" || req.ClientRequestID == "" || req.JobType == "" || req.TSMs <= 0 {
-		return [][]byte{r.buildAck(env.MsgID, "REJECTED", "ERR_PAYLOAD_DECODE", fromPeerID)}, nil
-	}
-	if err := uuidv7.Validate(req.TaskID); err != nil {
-		return [][]byte{r.buildAck(env.MsgID, "REJECTED", "ERR_PAYLOAD_DECODE", fromPeerID)}, nil
-	}
-	if err := uuidv7.Validate(req.ClientRequestID); err != nil {
-		return [][]byte{r.buildAck(env.MsgID, "REJECTED", "ERR_PAYLOAD_DECODE", fromPeerID)}, nil
+	if r.metrics != nil {
+		r.metrics.IncTaskRequested(req.JobType)
 	}
 	if r.tasks != nil {
 		if dup, errCode := r.tasks.Check(req.TaskID, req.ClientRequestID, env.Payload); errCode != "" {

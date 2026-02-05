@@ -43,6 +43,9 @@ func (r *Runtime) handleDirQueryV2(req tasks.Request, env *envelopev2.Envelope) 
 	}
 	accept := r.buildTaskAcceptV2(req.TaskID, env)
 	result := r.buildTaskResultV2(req.TaskID, nodeID, env)
+	if r.metrics != nil {
+		r.metrics.IncTaskResult(req.JobType)
+	}
 	return append(accept, result...), nil
 }
 
@@ -103,29 +106,29 @@ func (r *Runtime) dirQueryResultFromHead(head netdb.ServiceHead, input dirquery.
 	}, true
 }
 
-func (r *Runtime) loadDirQueryDescriptor(head netdb.ServiceHead) (servicedesc.DescriptorBodyV2, bool) {
+func (r *Runtime) loadDirQueryDescriptor(head netdb.ServiceHead) (servicedesc.Descriptor, bool) {
 	descBytes, err := r.FetchNode(context.Background(), head.DescriptorCID)
 	if err != nil {
-		return servicedesc.DescriptorBodyV2{}, false
+		return servicedesc.Descriptor{}, false
 	}
 	if err := contentnode.VerifyBytes(descBytes, head.DescriptorCID); err != nil {
-		return servicedesc.DescriptorBodyV2{}, false
+		return servicedesc.Descriptor{}, false
 	}
 	var node contentnode.Node
 	if err := contentnode.Decode(descBytes, &node); err != nil {
-		return servicedesc.DescriptorBodyV2{}, false
+		return servicedesc.Descriptor{}, false
 	}
 	body, err := servicedesc.ValidateV2(node)
 	if err != nil {
-		return servicedesc.DescriptorBodyV2{}, false
+		return servicedesc.Descriptor{}, false
 	}
 	if body.ServiceID != head.ServiceID || body.OwnerIdentityID != head.OwnerIdentityID || body.ServiceName != head.ServiceName {
-		return servicedesc.DescriptorBodyV2{}, false
+		return servicedesc.Descriptor{}, false
 	}
 	return body, true
 }
 
-func dirQueryMatches(body servicedesc.DescriptorBodyV2, jobTypes []string, input dirquery.Input) bool {
+func dirQueryMatches(body servicedesc.Descriptor, jobTypes []string, input dirquery.Input) bool {
 	if prefix := strings.TrimSpace(input.Query.ServiceNamePrefix); prefix != "" {
 		if !strings.HasPrefix(body.ServiceName, prefix) {
 			return false
@@ -142,7 +145,7 @@ func dirQueryMatches(body servicedesc.DescriptorBodyV2, jobTypes []string, input
 	return true
 }
 
-func (r *Runtime) dirQueryScore(body servicedesc.DescriptorBodyV2, jobTypes []string, input dirquery.Input, nowMs int64) int64 {
+func (r *Runtime) dirQueryScore(body servicedesc.Descriptor, jobTypes []string, input dirquery.Input, nowMs int64) int64 {
 	score := int64(0)
 	if r.book.IsTrustedIdentity(body.OwnerIdentityID, nowMs) {
 		score += 100

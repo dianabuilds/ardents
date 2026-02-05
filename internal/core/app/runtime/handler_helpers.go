@@ -16,6 +16,12 @@ const (
 )
 
 func (r *Runtime) buildTaskFail(taskID string, code string, message string, toPeerID string) [][]byte {
+	if r.metrics != nil {
+		r.metrics.IncTaskFail(code)
+		if code == tasks.ErrTaskTimeout.Error() {
+			r.metrics.IncTaskTimeout()
+		}
+	}
 	payload := tasks.Fail{
 		V:            tasks.Version,
 		TaskID:       taskID,

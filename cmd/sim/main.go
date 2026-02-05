@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -63,21 +62,11 @@ func main() {
 		fatal(err)
 	}
 	rng := rand.New(rand.NewSource(opts.seed)) // #nosec G404 -- simulation RNG, not for security.
-	if opts.profile == "v2" {
-		if err := runV2(opts.nPeers, rng); err != nil {
-			fatal(err)
-		}
-		return
-	}
-	cfg := config.Default()
-	cfg.Pow.DefaultDifficulty = opts.powDifficulty
-	peers, err := initSimPeers(opts.nPeers, cfg)
+	report, err := runProfile(opts, rng)
 	if err != nil {
 		fatal(err)
 	}
-	st := newStats()
-	runSim(peers, opts, rng, &st)
-	printStats(st)
+	printReport(report)
 }
 
 func parseSimOptions(args []string) (simOptions, error) {
@@ -109,7 +98,38 @@ func parseSimOptions(args []string) (simOptions, error) {
 	if opts.dropRate < 0 || opts.dropRate > 1 || opts.powInvalidRate < 0 || opts.powInvalidRate > 1 {
 		return simOptions{}, errors.New("ERR_CLI_INVALID_ARGS")
 	}
+	if opts.profile != "v1" && opts.profile != "v2" {
+		return simOptions{}, errors.New("ERR_CLI_INVALID_ARGS")
+	}
 	return opts, nil
+}
+
+func runProfile(opts simOptions, rng *rand.Rand) (simReport, error) {
+	start := time.Now()
+	switch opts.profile {
+	case "v2":
+		report, err := runV2Checks(opts.nPeers, rng)
+		if err != nil {
+			return simReport{DurationMs: time.Since(start).Milliseconds()}, err
+		}
+		report.DurationMs = time.Since(start).Milliseconds()
+		return report, nil
+	default:
+		cfg := config.Default()
+		cfg.Pow.DefaultDifficulty = opts.powDifficulty
+		peers, err := initSimPeers(opts.nPeers, cfg)
+		if err != nil {
+			return simReport{DurationMs: time.Since(start).Milliseconds()}, err
+		}
+		st := newStats()
+		runSim(peers, opts, rng, &st)
+		traffic, p95 := buildTrafficReport(st)
+		return simReport{
+			Traffic:      traffic,
+			LatencyP95Ms: p95,
+			DurationMs:   time.Since(start).Milliseconds(),
+		}, nil
+	}
 }
 
 func initSimPeers(n int, cfg config.Config) ([]simPeer, error) {
@@ -377,7 +397,7 @@ func buildSampleNode(id identity.Identity) ([]byte, string, error) {
 	return contentnode.EncodeWithCID(node)
 }
 
-func printStats(st stats) {
+func buildTrafficReport(st stats) (map[string]any, int64) {
 	avg, p95 := latencyStats(st.LatencyMillis)
 	out := map[string]any{
 		"sent":            st.Sent,
@@ -394,8 +414,7 @@ func printStats(st stats) {
 		"latency_p95_ms":  p95,
 		"traffic_by_type": st.ByType,
 	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Println(string(b))
+	return out, p95
 }
 
 func latencyStats(samples []int64) (avg int64, p95 int64) {

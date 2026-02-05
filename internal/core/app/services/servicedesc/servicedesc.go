@@ -22,7 +22,19 @@ var _ = []any{
 	Validate,
 }
 
-type DescriptorBody struct {
+// Descriptor is the unified service descriptor model; version-specific payloads map into this.
+type Descriptor struct {
+	V               uint64
+	OwnerIdentityID string
+	ServiceName     string
+	ServiceID       string
+	Endpoints       []Endpoint
+	Capabilities    []Capability
+	Limits          map[string]uint64
+	Resources       map[string]uint64
+}
+
+type descriptorBodyV1 struct {
 	V            uint64            `cbor:"v"`
 	ServiceName  string            `cbor:"service_name"`
 	ServiceID    string            `cbor:"service_id"`
@@ -31,7 +43,7 @@ type DescriptorBody struct {
 	Limits       map[string]uint64 `cbor:"limits"`
 }
 
-type DescriptorBodyV2 struct {
+type descriptorBodyV2 struct {
 	V               uint64            `cbor:"v"`
 	OwnerIdentityID string            `cbor:"owner_identity_id"`
 	ServiceName     string            `cbor:"service_name"`
@@ -59,7 +71,7 @@ func BuildDescriptorNode(ownerID string, ownerPrivKey ed25519.PrivateKey, servic
 	if err != nil {
 		return contentnode.Node{}, "", err
 	}
-	body := DescriptorBody{
+	body := descriptorBodyV1{
 		V:            1,
 		ServiceName:  serviceName,
 		ServiceID:    serviceID,
@@ -88,7 +100,7 @@ func BuildDescriptorNodeV2(ownerID string, ownerPrivKey ed25519.PrivateKey, serv
 	if _, ok := resources["ram_mb"]; !ok {
 		resources["ram_mb"] = 0
 	}
-	body := DescriptorBodyV2{
+	body := descriptorBodyV2{
 		V:               2,
 		OwnerIdentityID: ownerID,
 		ServiceName:     serviceName,
@@ -101,78 +113,109 @@ func BuildDescriptorNodeV2(ownerID string, ownerPrivKey ed25519.PrivateKey, serv
 	return encodeDescriptorNode(n, ownerPrivKey)
 }
 
-func DecodeBody(node contentnode.Node) (DescriptorBody, error) {
-	if node.Type != "service.descriptor.v1" {
-		return DescriptorBody{}, ErrDescriptorInvalid
+// Decode maps a service.descriptor node into the unified Descriptor model.
+func Decode(node contentnode.Node) (Descriptor, error) {
+	switch node.Type {
+	case "service.descriptor.v1":
+		return decodeV1(node)
+	case "service.descriptor.v2":
+		return decodeV2(node)
+	default:
+		return Descriptor{}, ErrDescriptorInvalid
 	}
-	var body DescriptorBody
-	b, err := codec.Marshal(node.Body)
-	if err != nil {
-		return DescriptorBody{}, ErrDescriptorInvalid
-	}
-	if err := codec.Unmarshal(b, &body); err != nil {
-		return DescriptorBody{}, ErrDescriptorInvalid
-	}
-	return body, nil
 }
 
-func DecodeBodyV2(node contentnode.Node) (DescriptorBodyV2, error) {
-	if node.Type != "service.descriptor.v2" {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
-	}
-	var body DescriptorBodyV2
-	b, err := codec.Marshal(node.Body)
+// Validate validates the descriptor according to its version and returns the unified model.
+func Validate(node contentnode.Node) (Descriptor, error) {
+	body, err := Decode(node)
 	if err != nil {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
+		return Descriptor{}, err
 	}
-	if err := codec.Unmarshal(b, &body); err != nil {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
+	switch body.V {
+	case 1:
+		if err := validateServiceIDs(node.Owner, body.ServiceName, body.ServiceID, false); err != nil {
+			return Descriptor{}, err
+		}
+		if err := validateEndpoints(body.Endpoints); err != nil {
+			return Descriptor{}, ErrDescriptorInvalid
+		}
+		return body, nil
+	case 2:
+		if body.OwnerIdentityID == "" || body.OwnerIdentityID != node.Owner {
+			return Descriptor{}, ErrDescriptorInvalid
+		}
+		if err := validateServiceIDs(body.OwnerIdentityID, body.ServiceName, body.ServiceID, true); err != nil {
+			return Descriptor{}, err
+		}
+		if body.Resources == nil {
+			return Descriptor{}, ErrDescriptorInvalid
+		}
+		if _, ok := body.Resources["cpu_cores"]; !ok {
+			return Descriptor{}, ErrDescriptorInvalid
+		}
+		if _, ok := body.Resources["ram_mb"]; !ok {
+			return Descriptor{}, ErrDescriptorInvalid
+		}
+		if len(body.Endpoints) > 0 {
+			return Descriptor{}, ErrDescriptorInvalid
+		}
+		return body, nil
+	default:
+		return Descriptor{}, ErrDescriptorInvalid
 	}
-	return body, nil
 }
 
-//nolint:unused // v1 direct-mode descriptor validator retained for compatibility
-func Validate(node contentnode.Node) (DescriptorBody, error) {
-	body, err := DecodeBody(node)
+// ValidateV2 is a compatibility helper that enforces v2 payload rules.
+func ValidateV2(node contentnode.Node) (Descriptor, error) {
+	body, err := Validate(node)
 	if err != nil {
-		return DescriptorBody{}, err
-	}
-	if body.V != 1 {
-		return DescriptorBody{}, ErrDescriptorInvalid
-	}
-	if err := validateServiceIDs(node.Owner, body.ServiceName, body.ServiceID, false); err != nil {
-		return DescriptorBody{}, err
-	}
-	if err := validateEndpoints(body.Endpoints); err != nil {
-		return DescriptorBody{}, ErrDescriptorInvalid
-	}
-	return body, nil
-}
-
-func ValidateV2(node contentnode.Node) (DescriptorBodyV2, error) {
-	body, err := DecodeBodyV2(node)
-	if err != nil {
-		return DescriptorBodyV2{}, err
+		return Descriptor{}, err
 	}
 	if body.V != 2 {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
-	}
-	if body.OwnerIdentityID == "" || body.OwnerIdentityID != node.Owner {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
-	}
-	if err := validateServiceIDs(body.OwnerIdentityID, body.ServiceName, body.ServiceID, false); err != nil {
-		return DescriptorBodyV2{}, err
-	}
-	if body.Resources == nil {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
-	}
-	if _, ok := body.Resources["cpu_cores"]; !ok {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
-	}
-	if _, ok := body.Resources["ram_mb"]; !ok {
-		return DescriptorBodyV2{}, ErrDescriptorInvalid
+		return Descriptor{}, ErrDescriptorInvalid
 	}
 	return body, nil
+}
+
+func decodeV1(node contentnode.Node) (Descriptor, error) {
+	var body descriptorBodyV1
+	b, err := codec.Marshal(node.Body)
+	if err != nil {
+		return Descriptor{}, ErrDescriptorInvalid
+	}
+	if err := codec.Unmarshal(b, &body); err != nil {
+		return Descriptor{}, ErrDescriptorInvalid
+	}
+	return Descriptor{
+		V:            body.V,
+		ServiceName:  body.ServiceName,
+		ServiceID:    body.ServiceID,
+		Endpoints:    body.Endpoints,
+		Capabilities: body.Capabilities,
+		Limits:       body.Limits,
+		// v1 uses node.Owner as the identity owner; there is no body field.
+		OwnerIdentityID: node.Owner,
+	}, nil
+}
+
+func decodeV2(node contentnode.Node) (Descriptor, error) {
+	var body descriptorBodyV2
+	b, err := codec.Marshal(node.Body)
+	if err != nil {
+		return Descriptor{}, ErrDescriptorInvalid
+	}
+	if err := codec.Unmarshal(b, &body); err != nil {
+		return Descriptor{}, ErrDescriptorInvalid
+	}
+	return Descriptor{
+		V:               body.V,
+		OwnerIdentityID: body.OwnerIdentityID,
+		ServiceName:     body.ServiceName,
+		ServiceID:       body.ServiceID,
+		Capabilities:    body.Capabilities,
+		Limits:          body.Limits,
+		Resources:       body.Resources,
+	}, nil
 }
 
 func validateEndpoints(endpoints []Endpoint) error {

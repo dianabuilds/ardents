@@ -51,10 +51,14 @@
 
 Минимальные метрики:
 
-* `net_inbound_conns`, `net_outbound_conns`
+* `net_inbound_conns`, `net_outbound_conns`, `peers_connected`
 * `msg_received_total{type}`, `msg_rejected_total{reason}`
 * `ack_latency_ms_bucket`
 * `pow_required_total`, `pow_invalid_total`
+* `clock_invalid_total`
+* `task_request_total{job_type}`, `task_result_total{job_type}`
+* `task_fail_total{code}`, `task_timeout_total`
+* `ipc_errors_total{code}`, `ipc_timeout_total`
 
 ---
 

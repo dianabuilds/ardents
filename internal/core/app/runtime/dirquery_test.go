@@ -39,10 +39,14 @@ func TestDirQueryV2ReturnsResultNode(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	desc, err := servicedesc.Decode(node)
+	if err != nil {
+		t.Fatal(err)
+	}
 	nowMs := timeutil.NowUnixMs()
 	head := netdb.ServiceHead{
 		V:               1,
-		ServiceID:       node.Body.(servicedesc.DescriptorBodyV2).ServiceID,
+		ServiceID:       desc.ServiceID,
 		OwnerIdentityID: rt.identity.ID,
 		ServiceName:     serviceName,
 		DescriptorCID:   nodeID,

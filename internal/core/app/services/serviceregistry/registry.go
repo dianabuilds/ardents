@@ -9,7 +9,7 @@ import (
 type Descriptor struct {
 	NodeID       string
 	CreatedAtMs  int64
-	Body         servicedesc.DescriptorBody
+	Body         servicedesc.Descriptor
 	SourcePeerID string
 }
 
@@ -22,7 +22,7 @@ func New() *Registry {
 	return &Registry{byID: make(map[string]Descriptor)}
 }
 
-func (r *Registry) UpdateIfNewer(serviceID string, nodeID string, createdAtMs int64, body servicedesc.DescriptorBody, sourcePeerID string) bool {
+func (r *Registry) UpdateIfNewer(serviceID string, nodeID string, createdAtMs int64, body servicedesc.Descriptor, sourcePeerID string) bool {
 	if serviceID == "" || nodeID == "" {
 		return false
 	}

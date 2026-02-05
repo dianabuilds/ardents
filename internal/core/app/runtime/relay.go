@@ -7,10 +7,12 @@ import (
 
 	"crypto/ed25519"
 
+	"github.com/dianabuilds/ardents/internal/core/app/discovery"
 	"github.com/dianabuilds/ardents/internal/core/domain/relay"
+	"github.com/dianabuilds/ardents/internal/core/infra/config"
 	"github.com/dianabuilds/ardents/internal/shared/ack"
 	"github.com/dianabuilds/ardents/internal/shared/envelope"
-	"github.com/dianabuilds/ardents/internal/shared/netaddr"
+	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
 const relayType = "relay.packet.v1"
@@ -99,6 +101,10 @@ func (r *Runtime) buildRelayEnvelope(nextPeerID string, payload []byte) ([]byte,
 }
 
 func (r *Runtime) forwardEnvelope(peerID string, envBytes []byte) ([]byte, error) {
+	return r.deliverDirect(context.Background(), peerID, envBytes)
+}
+
+func (r *Runtime) deliverDirect(ctx context.Context, peerID string, envBytes []byte) ([]byte, error) {
 	if r.relayForward != nil {
 		if err := r.relayForward(peerID, envBytes); err != nil {
 			return nil, err
@@ -109,7 +115,7 @@ func (r *Runtime) forwardEnvelope(peerID string, envBytes []byte) ([]byte, error
 	if !ok || r.dial == nil {
 		return nil, errors.New("ERR_RELAY_NEXT_HOP_UNREACHABLE")
 	}
-	ackBytes, err := r.sendEnvelopeWithRetry(context.Background(), addr, peerID, envBytes, 1500*time.Millisecond, 3)
+	ackBytes, err := r.sendEnvelopeWithRetry(ctx, addr, peerID, envBytes, 1500*time.Millisecond, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -134,21 +140,30 @@ func (r *Runtime) forwardEnvelope(peerID string, envBytes []byte) ([]byte, error
 }
 
 func (r *Runtime) resolvePeerAddr(peerID string) (string, bool) {
-	for _, bp := range r.cfg.BootstrapPeers {
-		if bp.PeerID != peerID {
-			continue
-		}
-		if len(bp.Addrs) == 0 {
-			return "", false
-		}
-		return netaddr.StripQUICScheme(bp.Addrs[0]), true
+	if r == nil {
+		return "", false
 	}
-	if r.quic != nil {
-		if addr, ok := r.quic.PeerAddr(peerID); ok {
-			return addr, true
-		}
+	nowMs := timeutil.NowUnixMs()
+	peers := make([]config.BootstrapPeer, 0)
+	if len(r.bootstrapPeers) > 0 {
+		peers = append(peers, r.bootstrapPeers...)
+	} else {
+		peers = append(peers, r.cfg.BootstrapPeers...)
 	}
-	return "", false
+	if !r.cfg.Reseed.Enabled {
+		peers = discovery.MergeBootstrapPeers(peers, r.addressBookBootstrapPeers(nowMs))
+	}
+	resolver := discovery.Resolver{
+		Bootstrap: peers,
+		NetDB:     r.netdb,
+		SessionAddr: func(id string) (string, bool) {
+			if r.quic == nil {
+				return "", false
+			}
+			return r.quic.PeerAddr(id)
+		},
+	}
+	return resolver.ResolvePeerAddr(peerID, nowMs)
 }
 
 func (r *Runtime) SetRelayForwarder(fn func(peerID string, envBytes []byte) error) {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -99,7 +100,7 @@ func addLogTail(zw *zip.Writer, path string, lines int) {
 		return
 	}
 	if tail, err := tailFile(path, lines); err == nil && len(tail) > 0 {
-		_ = addBytes(zw, "logs/tail.log", tail)
+		_ = addBytes(zw, "logs/tail.log", redactLogTail(tail))
 	}
 }
 
@@ -319,7 +320,7 @@ func redactConfigJSON(b []byte) ([]byte, error) {
 	if err := json.Unmarshal(b, &obj); err != nil {
 		return b, err
 	}
-	// config v1: нет явных секретов, но на будущее оставляем место для редактирования
+	redactSensitiveMap(obj)
 	return json.MarshalIndent(obj, "", "  ")
 }
 
@@ -342,6 +343,81 @@ func redactAddressBookJSON(b []byte) ([]byte, error) {
 	}
 	obj["entries"] = entries
 	return json.MarshalIndent(obj, "", "  ")
+}
+
+func redactLogTail(b []byte) []byte {
+	lines := bytes.Split(bytes.TrimSpace(b), []byte{'\n'})
+	if len(lines) == 0 {
+		return b
+	}
+	out := make([][]byte, 0, len(lines))
+	for _, line := range lines {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var obj map[string]any
+		if err := json.Unmarshal(line, &obj); err != nil {
+			out = append(out, line)
+			continue
+		}
+		redactSensitiveMap(obj)
+		red, err := json.Marshal(obj)
+		if err != nil {
+			out = append(out, line)
+			continue
+		}
+		out = append(out, red)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	outBytes := bytes.Join(out, []byte{'\n'})
+	return append(outBytes, '\n')
+}
+
+func redactSensitiveMap(obj map[string]any) {
+	for k, v := range obj {
+		key := strings.ToLower(k)
+		if isSensitiveKey(key) {
+			obj[k] = "[redacted]"
+			continue
+		}
+		switch vv := v.(type) {
+		case map[string]any:
+			redactSensitiveMap(vv)
+		case []any:
+			for i := range vv {
+				if m, ok := vv[i].(map[string]any); ok {
+					redactSensitiveMap(m)
+				}
+			}
+		}
+	}
+}
+
+func isSensitiveKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	if strings.Contains(key, "token") {
+		return true
+	}
+	if strings.Contains(key, "secret") {
+		return true
+	}
+	if strings.Contains(key, "password") {
+		return true
+	}
+	if strings.Contains(key, "privkey") || strings.Contains(key, "private_key") {
+		return true
+	}
+	if strings.Contains(key, "seed") {
+		return true
+	}
+	if strings.Contains(key, "api_key") {
+		return true
+	}
+	return false
 }
 
 func addressBookMeta(b []byte) any {

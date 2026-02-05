@@ -106,6 +106,10 @@ func (d Dirs) AddressBookPath() string {
 	return filepath.Join(d.DataDir, "addressbook.json")
 }
 
+func (d Dirs) VersionPath() string {
+	return filepath.Join(d.DataDir, "version.json")
+}
+
 func (d Dirs) DiscoveryCachePath() string {
 	return filepath.Join(d.DataDir, "discovery_cache.json")
 }

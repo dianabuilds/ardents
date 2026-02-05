@@ -138,18 +138,18 @@ func (r *Runtime) startQUIC(ctx context.Context) {
 }
 
 func (r *Runtime) afterTransportStart(ctx context.Context) {
-	r.publishRouterInfo()
-	r.startRouterInfoTicker(ctx)
 	r.checkClockSkew(timeutil.NowUnixMs())
 	r.startClockSkewTicker(ctx)
 	r.checkLowPeers()
 	r.startHealth(ctx)
 	r.startMetrics()
 	r.initDialer()
+	r.publishRouterInfo()
+	r.startRouterInfoTicker(ctx)
 	r.applyReseed(ctx)
-	r.dialBootstrap(ctx)
 	r.startTunnelManager(ctx)
 	r.startServicePublishTicker(ctx)
+	r.dialBootstrap(ctx)
 }
 
 func (r *Runtime) startHealth(ctx context.Context) {

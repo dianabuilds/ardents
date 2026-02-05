@@ -13,6 +13,7 @@ import (
 	runtimepkg "github.com/dianabuilds/ardents/internal/core/app/runtime"
 	"github.com/dianabuilds/ardents/internal/core/infra/addressbook"
 	"github.com/dianabuilds/ardents/internal/core/infra/config"
+	"github.com/dianabuilds/ardents/internal/core/infra/migrations"
 	"github.com/dianabuilds/ardents/internal/core/transport/quic"
 	"github.com/dianabuilds/ardents/internal/shared/identity"
 	"github.com/dianabuilds/ardents/internal/shared/timeutil"
@@ -36,6 +37,8 @@ func main() {
 		initCmd(os.Args[2:])
 	case "start":
 		startCmd(os.Args[2:])
+	case "migrate":
+		migrateCmd(os.Args[2:])
 	case "status":
 		statusCmd(os.Args[2:])
 	case "service":
@@ -55,7 +58,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: peer <init|start|status> [flags]")
+	fmt.Println("usage: peer <init|start|migrate|status> [flags]")
 	fmt.Println("       peer service key <ensure|rotate> [flags]")
 	fmt.Println("       peer addressbook <list|add> [flags]")
 	fmt.Println("       peer systemd <unit> [flags]")
@@ -78,6 +81,13 @@ func startCmd(args []string) {
 	}
 
 	dirs := mustDirs(*home)
+	if err := ensureVersionCompatible(dirs); err != nil {
+		fatal(err)
+	}
+	version, err := loadVersionOrZero(dirs)
+	if err != nil {
+		fatal(err)
+	}
 	if *cfgPath == "" {
 		*cfgPath = dirs.ConfigPath()
 	}
@@ -107,6 +117,9 @@ func startCmd(args []string) {
 	fmt.Println("  config:", dirs.ConfigDir)
 	fmt.Println("  data:  ", dirs.DataDir)
 	fmt.Println("  run:   ", dirs.RunDir)
+	if version.SchemaVersion > 0 {
+		fmt.Println("schema_version:", version.SchemaVersion)
+	}
 	if cfg.Observability.LogFile != "" {
 		fmt.Println("  log file:", cfg.Observability.LogFile)
 	}
@@ -144,6 +157,11 @@ func statusCmd(args []string) {
 	fmt.Println("  run:   ", dirs.RunDir)
 	fmt.Println("  addressbook:", dirs.AddressBookPath())
 	fmt.Println("  pcap:", dirs.PcapPath())
+	if v, err := migrations.Load(dirs.VersionPath()); err == nil {
+		fmt.Println("schema_version:", v.SchemaVersion)
+	} else {
+		fmt.Println("schema_version:", err)
+	}
 
 	cfg, err := config.LoadOrInit(*cfgPath)
 	if err != nil {
@@ -210,6 +228,9 @@ func initCmd(args []string) {
 		fatal(err)
 	}
 	if _, err := addressbook.LoadOrInit(dirs.AddressBookPath()); err != nil {
+		fatal(err)
+	}
+	if err := ensureVersionFile(dirs); err != nil {
 		fatal(err)
 	}
 	fmt.Println("initialized:")

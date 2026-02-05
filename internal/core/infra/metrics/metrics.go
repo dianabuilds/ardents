@@ -14,11 +14,18 @@ type Registry struct {
 
 	netInboundConns  uint64
 	netOutboundConns uint64
+	peersConnected   uint64
 	msgReceived      map[string]uint64
 	msgRejected      map[string]uint64
 	powRequired      uint64
 	powInvalid       uint64
 	clockInvalid     uint64
+	taskRequested    map[string]uint64
+	taskResult       map[string]uint64
+	taskFail         map[string]uint64
+	taskTimeout      uint64
+	ipcErrors        map[string]uint64
+	ipcTimeout       uint64
 	ackLatencyCount  uint64
 	ackLatencySumMs  uint64
 	ackLatencyBucket []uint64
@@ -28,6 +35,10 @@ func New() *Registry {
 	return &Registry{
 		msgReceived:      make(map[string]uint64),
 		msgRejected:      make(map[string]uint64),
+		taskRequested:    make(map[string]uint64),
+		taskResult:       make(map[string]uint64),
+		taskFail:         make(map[string]uint64),
+		ipcErrors:        make(map[string]uint64),
 		ackLatencyBucket: make([]uint64, len(ackLatencyBucketBounds)),
 	}
 }
@@ -90,6 +101,60 @@ func (r *Registry) DecNetOutbound() {
 	}
 }
 
+func (r *Registry) SetPeersConnected(count uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.peersConnected = count
+}
+
+func (r *Registry) IncTaskRequested(jobType string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if jobType == "" {
+		jobType = "unknown"
+	}
+	r.taskRequested[jobType]++
+}
+
+func (r *Registry) IncTaskResult(jobType string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if jobType == "" {
+		jobType = "unknown"
+	}
+	r.taskResult[jobType]++
+}
+
+func (r *Registry) IncTaskFail(code string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if code == "" {
+		code = "ERR_TASK_FAILED"
+	}
+	r.taskFail[code]++
+}
+
+func (r *Registry) IncTaskTimeout() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.taskTimeout++
+}
+
+func (r *Registry) IncIPCErr(code string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if code == "" {
+		code = "ERR_IPC"
+	}
+	r.ipcErrors[code]++
+}
+
+func (r *Registry) IncIPCTimeout() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ipcTimeout++
+}
+
 func (r *Registry) ObserveAckLatency(ms uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -115,6 +180,9 @@ func (r *Registry) Handler() http.Handler {
 		if _, err := fmt.Fprintf(&buf, "net_outbound_conns %d\n", r.netOutboundConns); err != nil {
 			return
 		}
+		if _, err := fmt.Fprintf(&buf, "peers_connected %d\n", r.peersConnected); err != nil {
+			return
+		}
 		for k, v := range r.msgReceived {
 			if _, err := fmt.Fprintf(&buf, "msg_received_total{type=\"%s\"} %d\n", k, v); err != nil {
 				return
@@ -132,6 +200,32 @@ func (r *Registry) Handler() http.Handler {
 			return
 		}
 		if _, err := fmt.Fprintf(&buf, "clock_invalid_total %d\n", r.clockInvalid); err != nil {
+			return
+		}
+		for k, v := range r.taskRequested {
+			if _, err := fmt.Fprintf(&buf, "task_request_total{job_type=\"%s\"} %d\n", k, v); err != nil {
+				return
+			}
+		}
+		for k, v := range r.taskResult {
+			if _, err := fmt.Fprintf(&buf, "task_result_total{job_type=\"%s\"} %d\n", k, v); err != nil {
+				return
+			}
+		}
+		for k, v := range r.taskFail {
+			if _, err := fmt.Fprintf(&buf, "task_fail_total{code=\"%s\"} %d\n", k, v); err != nil {
+				return
+			}
+		}
+		if _, err := fmt.Fprintf(&buf, "task_timeout_total %d\n", r.taskTimeout); err != nil {
+			return
+		}
+		for k, v := range r.ipcErrors {
+			if _, err := fmt.Fprintf(&buf, "ipc_errors_total{code=\"%s\"} %d\n", k, v); err != nil {
+				return
+			}
+		}
+		if _, err := fmt.Fprintf(&buf, "ipc_timeout_total %d\n", r.ipcTimeout); err != nil {
 			return
 		}
 		var cum uint64

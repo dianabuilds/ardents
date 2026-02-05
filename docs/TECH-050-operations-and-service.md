@@ -1,11 +1,11 @@
-﻿# TECH-050: Эксплуатация, директории и запуск (v1)
+# TECH-050: Эксплуатация, директории и запуск (актуальная реализация)
 
 **Статус:** Draft (2026-02-02)  
 **Назначение:** инструкция по запуску и эксплуатации узла (headless-first).
-
+\nПримечание: версии протокола (v1/v2) — это wire-форматы, а не фазы продукта.\n
 ---
 
-## 1) Целевой режим v1
+## 1) Целевой режим
 
 * Основной режим: **сервер/узел (headless-first)**.
 * Основной интерфейс: CLI + конфиги, минимум интерактива.
@@ -32,14 +32,17 @@
 * `<home>/data/`
 * `<home>/run/`
 
-### 2.3 Файлы v1
+### 2.3 Файлы узла
 
 * config: `config/node.json`
 * client config: `config/client.json`
 * address book: `data/addressbook.json`
 * identity: `data/identity/identity.key`
 * transport keys: `data/keys/peer.key`, `data/keys/peer.crt`
+* data version: `data/version.json`
 * status: `run/status.json`
+* migrations log: `run/migrations.jsonl`
+* migration backups: `run/backup-<ts_ms>/`
 * gateway token: `run/peer.token`
 * packet capture: `run/pcap.jsonl`
 
@@ -123,10 +126,10 @@ webclient request --target <identity_id> --fetch-result
 
 ## 3.5 Обнаружение узлов и сервисов: как сейчас и чего нет
 
-### Что есть сейчас (v1)
+### Что есть сейчас (актуальная реализация)
 
 1) **Bootstrap/Reseed (SPEC-500)**  
-   Узел получает начальные адреса через reseed‑bundle от доверенных DA. Это старт сети без ручного ввода списка пиров.
+   Узел получает начальные адреса через reseed?bundle от доверенных DA. Это старт сети без ручного ввода списка пиров.
 
 1) **NetDB (SPEC-510)**  
    После входа узлы публикуют `router.info` и сервисные записи (`service.head.v1`, `service.lease_set.v1`).  
@@ -137,19 +140,19 @@ webclient request --target <identity_id> --fetch-result
    **По умолчанию внешние каталоги отключены** и используются только при явном включении локальной конфигурацией.
 
 1) **Address Book bundles (SPEC-125/120)**  
-   Локальные доверенные списки alias → target.  
-   Не являются глобальным поиском; это trust‑политика и удобство.
+   Локальные доверенные списки alias > target.  
+   Не являются глобальным поиском; это trust?политика и удобство.
 
 ### Чего нет (осознанно)
 
 * **Глобального регистра доменных имён** с уникальностью “по всей сети”.  
-* **Автоматического пополнения address book** из сети без trust‑политики.  
+* **Автоматического пополнения address book** из сети без trust?политики.  
 * **Поиска по узлам “вслепую”** без service_id/descriptor/NetDB.
 
 ### Практика в проде
 
 * Ручной IP нужен только для старта (reseed).  
-* Дальше сеть работает через NetDB/Directory и TTL‑обновления.
+* Дальше сеть работает через NetDB/Directory и TTL?обновления.
 
 ---
 
@@ -289,6 +292,13 @@ exec /usr/local/bin/peer start --home "$ARDENTS_HOME"
 1) Остановить сервис.
 1) Сделать backup (см. раздел 9).
 1) Обновить бинарник `peer` и связанные утилиты.
+1) Выполнить миграции (если требуется):
+
+```
+peer migrate --home /var/lib/ardents
+```
+
+Если миграции не требуются, команда завершится сообщением `already up to date`.
 1) Запустить сервис.
 1) Проверить `peer status` и `/healthz`.
 
@@ -298,6 +308,15 @@ exec /usr/local/bin/peer start --home "$ARDENTS_HOME"
 1) Восстановить предыдущий бинарник `peer`.
 1) Восстановить backup (если менялись данные).
 1) Запустить сервис и проверить `/healthz`.
+
+---
+
+## 9) Backup / Restore
+
+### 8.3 Типовые ошибки миграций
+
+* `ERR_MIGRATION_REQUIRED` — требуется выполнить `peer migrate`.
+* `ERR_MIGRATION_UNSUPPORTED` — версия данных выше поддерживаемой этим бинарником.
 
 ---
 
@@ -329,10 +348,13 @@ exec /usr/local/bin/peer start --home "$ARDENTS_HOME"
 
 ### 10.2 Метрики (минимум)
 
-* Состояние сети: `net_inbound_conns`, `net_outbound_conns`, `peers_connected`.
-* Ошибки IPC/Tasks: `ipc_errors_total`, `task_fail_total{code}`.
-* Таймауты: `task_timeout_total`, `ipc_timeout_total`.
-* Латентность: `ack_latency_ms_bucket` (p50/p95 считаются мониторингом).
+* ????????? ????: `net_inbound_conns`, `net_outbound_conns`, `peers_connected`.
+* ?????????: `msg_received_total{type}`, `msg_rejected_total{reason}`.
+* PoW/Clock: `pow_required_total`, `pow_invalid_total`, `clock_invalid_total`.
+* ??????: `task_request_total{job_type}`, `task_result_total{job_type}`, `task_fail_total{code}`.
+* ????????: `task_timeout_total`, `ipc_timeout_total`.
+* IPC: `ipc_errors_total{code}`.
+* ???????????: `ack_latency_ms_bucket` (p50/p95 ????????? ????????????).
 
 ---
 
@@ -401,10 +423,12 @@ docker compose run --rm webclient request \
   --fetch-result
 ```
 
-Ожидаемо: вывод `web.response.v1` с HTML‑текстом страницы.
+Ожидаемо: вывод `web.response.v1` с HTML?текстом страницы.
 
 ### 12.4 Остановка
 
 ```
 docker compose down
 ```
+
+

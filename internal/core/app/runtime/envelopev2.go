@@ -1,7 +1,7 @@
 package runtime
 
 import (
-	"errors"
+	"context"
 	"time"
 
 	"github.com/dianabuilds/ardents/internal/core/app/services/aichat"
@@ -27,7 +27,9 @@ func (r *Runtime) handleEnvelopeV2(env *envelopev2.Envelope) ([][]byte, error) {
 			return nil, err
 		}
 		for _, b := range resps {
-			_ = r.deliverEnvelopeV2(env.ReplyTo, b)
+			if env.ReplyTo != nil {
+				_, _ = r.deliverEnvelope(context.Background(), DeliveryTarget{ServiceID: env.ReplyTo.ServiceID}, b)
+			}
 		}
 		return resps, nil
 	case tasks.AcceptType:
@@ -61,9 +63,12 @@ func (r *Runtime) handleEnvelopeV2(env *envelopev2.Envelope) ([][]byte, error) {
 }
 
 func (r *Runtime) handleTaskV2(env *envelopev2.Envelope) ([][]byte, error) {
-	req, err := r.decodeTaskRequestV2(env)
+	req, err := decodeTaskRequestPayload(env.Payload)
 	if err != nil {
 		return nil, err
+	}
+	if r.metrics != nil {
+		r.metrics.IncTaskRequested(req.JobType)
 	}
 	if dup, ok := r.handleTaskDedupV2(req, env); ok {
 		return dup, nil
@@ -72,7 +77,7 @@ func (r *Runtime) handleTaskV2(env *envelopev2.Envelope) ([][]byte, error) {
 }
 
 func (r *Runtime) handleTaskResponseV2(env *envelopev2.Envelope, kind string) error {
-	taskID, err := validateTaskResponseV2(env)
+	taskID, _, err := decodeTaskResponsePayload(env.Type, env.Payload, 0)
 	if err != nil {
 		return err
 	}
@@ -85,23 +90,6 @@ func (r *Runtime) handleTaskResponseV2(env *envelopev2.Envelope, kind string) er
 		r.log.Event("info", "task", "task.response."+kind, "", env.MsgID, "")
 	}
 	return nil
-}
-
-func (r *Runtime) decodeTaskRequestV2(env *envelopev2.Envelope) (tasks.Request, error) {
-	req, err := tasks.DecodeRequest(env.Payload)
-	if err != nil {
-		return tasks.Request{}, err
-	}
-	if req.V != tasks.Version || req.TaskID == "" || req.ClientRequestID == "" || req.JobType == "" || req.TSMs <= 0 {
-		return tasks.Request{}, errors.New("ERR_PAYLOAD_DECODE")
-	}
-	if err := uuidv7.Validate(req.TaskID); err != nil {
-		return tasks.Request{}, errors.New("ERR_PAYLOAD_DECODE")
-	}
-	if err := uuidv7.Validate(req.ClientRequestID); err != nil {
-		return tasks.Request{}, errors.New("ERR_PAYLOAD_DECODE")
-	}
-	return req, nil
 }
 
 func (r *Runtime) handleTaskDedupV2(req tasks.Request, env *envelopev2.Envelope) ([][]byte, bool) {
@@ -149,6 +137,9 @@ func (r *Runtime) handleAIChatTaskV2(req tasks.Request, env *envelopev2.Envelope
 	}
 	accept := r.buildTaskAcceptV2(req.TaskID, env)
 	result := r.buildTaskResultV2(req.TaskID, nodeID, env)
+	if r.metrics != nil {
+		r.metrics.IncTaskResult(req.JobType)
+	}
 	out := append(accept, result...)
 	r.storeTaskV2(req, env, out)
 	return out
@@ -165,83 +156,6 @@ func (r *Runtime) storeTaskV2(req tasks.Request, env *envelopev2.Envelope, resps
 		return
 	}
 	r.tasks.Store(req.TaskID, req.ClientRequestID, env.Payload, resps)
-}
-
-func validateTaskResponseV2(env *envelopev2.Envelope) (string, error) {
-	if env == nil {
-		return "", nil
-	}
-	switch env.Type {
-	case tasks.AcceptType:
-		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
-			acc, err := tasks.DecodeAccept(payload)
-			if err != nil {
-				return 0, "", 0, err
-			}
-			return acc.V, acc.TaskID, acc.TSMs, nil
-		})
-	case tasks.ProgressType:
-		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
-			p, err := tasks.DecodeProgress(payload)
-			if err != nil {
-				return 0, "", 0, err
-			}
-			return p.V, p.TaskID, p.TSMs, nil
-		})
-	case tasks.ResultType:
-		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
-			res, err := tasks.DecodeResult(payload)
-			if err != nil {
-				return 0, "", 0, err
-			}
-			if res.ResultNodeID == "" {
-				return 0, "", 0, errors.New("ERR_PAYLOAD_DECODE")
-			}
-			return res.V, res.TaskID, res.TSMs, nil
-		})
-	case tasks.FailType:
-		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
-			f, err := tasks.DecodeFail(payload)
-			if err != nil {
-				return 0, "", 0, err
-			}
-			if f.ErrorCode == "" {
-				return 0, "", 0, errors.New("ERR_PAYLOAD_DECODE")
-			}
-			return f.V, f.TaskID, f.TSMs, nil
-		})
-	case tasks.ReceiptType:
-		return decodeTaskResponse(env.Payload, func(payload []byte) (uint64, string, int64, error) {
-			rc, err := tasks.DecodeReceipt(payload)
-			if err != nil {
-				return 0, "", 0, err
-			}
-			return rc.V, rc.TaskID, rc.TSMs, nil
-		})
-	default:
-		return "", nil
-	}
-}
-
-func decodeTaskResponse(payload []byte, decode func([]byte) (uint64, string, int64, error)) (string, error) {
-	version, taskID, tsMs, err := decode(payload)
-	if err != nil {
-		return "", errors.New("ERR_PAYLOAD_DECODE")
-	}
-	if err := validateTaskResponseMeta(version, taskID, tsMs); err != nil {
-		return "", errors.New("ERR_PAYLOAD_DECODE")
-	}
-	return taskID, nil
-}
-
-func validateTaskResponseMeta(version uint64, taskID string, tsMs int64) error {
-	if version != tasks.Version || taskID == "" || tsMs <= 0 {
-		return errors.New("ERR_PAYLOAD_DECODE")
-	}
-	if err := uuidv7.Validate(taskID); err != nil {
-		return errors.New("ERR_PAYLOAD_DECODE")
-	}
-	return nil
 }
 
 func (r *Runtime) buildTaskAcceptV2(taskID string, env *envelopev2.Envelope) [][]byte {
@@ -268,6 +182,12 @@ func (r *Runtime) buildTaskResultV2(taskID string, nodeID string, env *envelopev
 }
 
 func (r *Runtime) buildTaskFailV2(taskID string, code string, message string, env *envelopev2.Envelope) [][]byte {
+	if r.metrics != nil {
+		r.metrics.IncTaskFail(code)
+		if code == tasks.ErrTaskTimeout.Error() {
+			r.metrics.IncTaskTimeout()
+		}
+	}
 	return r.buildTaskResponseV2(tasks.FailType, env, func() ([]byte, error) {
 		payload := tasks.Fail{
 			V:            tasks.Version,

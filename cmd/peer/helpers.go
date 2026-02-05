@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 
+	"github.com/dianabuilds/ardents/internal/core/infra/migrations"
 	"github.com/dianabuilds/ardents/internal/shared/appdirs"
+	"github.com/dianabuilds/ardents/internal/shared/timeutil"
 )
 
 func writeStatus(dirs appdirs.Dirs, st Status) error {
@@ -54,9 +57,38 @@ func mustDirs(home string) appdirs.Dirs {
 	return dirs
 }
 
+func resolveDirs(home string) (appdirs.Dirs, error) {
+	if home != "" {
+		_ = os.Setenv(appdirs.EnvHome, home)
+	}
+	return appdirs.Resolve(home)
+}
+
 func homeFlagHint(home string) string {
 	if home == "" {
 		return ""
 	}
 	return "--home " + home
+}
+
+func ensureVersionFile(dirs appdirs.Dirs) error {
+	path := dirs.VersionPath()
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	v := migrations.NewVersion(migrations.SupportedMinVersion, timeutil.NowUnixMs())
+	return migrations.Save(path, v)
+}
+
+func ensureVersionCompatible(dirs appdirs.Dirs) error {
+	v, err := migrations.Load(dirs.VersionPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return migrations.ErrMigrationRequired
+		}
+		return migrations.ErrMigrationRequired
+	}
+	return migrations.CheckCompatibility(v)
 }

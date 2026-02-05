@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dianabuilds/ardents/internal/core/app/discovery"
 	"github.com/dianabuilds/ardents/internal/core/app/netdb"
 	"github.com/dianabuilds/ardents/internal/core/app/netmgr"
 	"github.com/dianabuilds/ardents/internal/core/app/services/serviceregistry"
@@ -580,7 +581,7 @@ func (r *Runtime) dialBootstrap(ctx context.Context) {
 		peers = append(peers, r.cfg.BootstrapPeers...)
 	}
 	if !r.cfg.Reseed.Enabled {
-		peers = mergeBootstrapPeers(peers, r.addressBookBootstrapPeers(timeutil.NowUnixMs()))
+		peers = discovery.MergeBootstrapPeers(peers, r.addressBookBootstrapPeers(timeutil.NowUnixMs()))
 	}
 	if len(peers) == 0 {
 		return
@@ -653,6 +654,7 @@ func (r *Runtime) observePeerConnected(peerID string) {
 	atomic.AddUint64(&r.peersConnected, 1)
 	if r.metrics != nil {
 		r.metrics.IncNetInbound()
+		r.metrics.SetPeersConnected(atomic.LoadUint64(&r.peersConnected))
 	}
 	if r.handshakeAbuse != nil {
 		r.handshakeAbuse.Reset(peerID)
@@ -667,6 +669,7 @@ func (r *Runtime) observePeerDisconnected(peerID string) {
 	}
 	if r.metrics != nil {
 		r.metrics.DecNetInbound()
+		r.metrics.SetPeersConnected(atomic.LoadUint64(&r.peersConnected))
 	}
 	r.log.Event("info", "net", "peer.disconnected", peerID, "", "")
 	r.checkLowPeers()
