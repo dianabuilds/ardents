@@ -1,0 +1,34 @@
+# IDE/editor
+.idea/
+.vscode/
+
+# Go build/test artifacts
+bin/
+build/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+coverage.out
+coverage.txt
+cover.out
+
+# Go workspace/local env
+go.work
+go.work.sum
+.env
+.env.*
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# Daemon local runtime data
+data/
+go-backend/data/

@@ -1,0 +1,22 @@
+network:
+  transport: mock
+  port: 60000
+  advertiseAddress: ""
+  enableRelay: true
+  enableStore: true
+  enableFilter: true
+  enableLightPush: true
+  bootstrapNodes: []
+  failoverV1: true
+  minPeers: 2
+  storeQueryFanout: 3
+  reconnectInterval: 1s
+  reconnectBackoffMax: 30s
+
+storage:
+  driver: badger
+  path: ./data/chat.db
+
+logging:
+  level: info
+  output: stdout
