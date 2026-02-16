@@ -24,6 +24,7 @@ func main() {
 	configPath := flag.String("config", "", "Path to config.yaml (optional)")
 	dataDir := flag.String("data-dir", "", "Directory for daemon local data (optional)")
 	rpcToken := flag.String("rpc-token", "", "RPC token for Authorization/X-AIM-RPC-Token (optional)")
+	transport := flag.String("transport", "", "Network transport override: go-waku | mock")
 	flag.Parse()
 	if *showVersion {
 		fmt.Printf("chat-daemon version=%s commit=%s build_date=%s\n", version, commit, buildDate)
@@ -34,6 +35,9 @@ func main() {
 	defer stop()
 	if *rpcToken != "" {
 		_ = os.Setenv("AIM_RPC_TOKEN", *rpcToken)
+	}
+	if *transport != "" {
+		_ = os.Setenv("AIM_NETWORK_TRANSPORT", *transport)
 	}
 
 	srv, err := daemonserver.NewRPCServerWithOptions(*rpcAddr, *configPath, *dataDir)

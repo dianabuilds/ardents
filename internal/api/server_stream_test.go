@@ -88,6 +88,60 @@ func TestRPCStreamReplaysFromCursor(t *testing.T) {
 	}
 }
 
+func TestRPCStreamPerClientLimit(t *testing.T) {
+	t.Setenv("AIM_ENV", "test")
+	t.Setenv("AIM_RPC_STREAM_MAX_GLOBAL", "10")
+	t.Setenv("AIM_RPC_STREAM_MAX_PER_CLIENT", "1")
+	svc, err := NewService()
+	if err != nil {
+		t.Fatalf("new service failed: %v", err)
+	}
+	s := &Server{service: svc}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/rpc/stream", s.HandleRPCStream)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	first := openRPCStreamWithHeaders(t, ts.URL, 0, map[string]string{"X-AIM-RPC-Token": "client-a"})
+	defer closeResponseBody(t, first)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("expected first stream status 200, got %d", first.StatusCode)
+	}
+
+	second := openRPCStreamWithHeaders(t, ts.URL, 0, map[string]string{"X-AIM-RPC-Token": "client-a"})
+	defer closeResponseBody(t, second)
+	if second.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for second stream with same client, got %d", second.StatusCode)
+	}
+}
+
+func TestRPCStreamGlobalLimit(t *testing.T) {
+	t.Setenv("AIM_ENV", "test")
+	t.Setenv("AIM_RPC_STREAM_MAX_GLOBAL", "1")
+	t.Setenv("AIM_RPC_STREAM_MAX_PER_CLIENT", "10")
+	svc, err := NewService()
+	if err != nil {
+		t.Fatalf("new service failed: %v", err)
+	}
+	s := &Server{service: svc}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/rpc/stream", s.HandleRPCStream)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	first := openRPCStreamWithHeaders(t, ts.URL, 0, map[string]string{"X-AIM-RPC-Token": "client-a"})
+	defer closeResponseBody(t, first)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("expected first stream status 200, got %d", first.StatusCode)
+	}
+
+	second := openRPCStreamWithHeaders(t, ts.URL, 0, map[string]string{"X-AIM-RPC-Token": "client-b"})
+	defer closeResponseBody(t, second)
+	if second.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for second stream when global limit exceeded, got %d", second.StatusCode)
+	}
+}
+
 func openRPCStream(t *testing.T, baseURL string, cursor int64) *http.Response {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -95,6 +149,24 @@ func openRPCStream(t *testing.T, baseURL string, cursor int64) *http.Response {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/rpc/stream?cursor="+strconv.FormatInt(cursor, 10), nil)
 	if err != nil {
 		t.Fatalf("new request failed: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stream request failed: %v", err)
+	}
+	return resp
+}
+
+func openRPCStreamWithHeaders(t *testing.T, baseURL string, cursor int64, headers map[string]string) *http.Response {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/rpc/stream?cursor="+strconv.FormatInt(cursor, 10), nil)
+	if err != nil {
+		t.Fatalf("new request failed: %v", err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

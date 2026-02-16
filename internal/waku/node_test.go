@@ -2,6 +2,7 @@ package waku
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -35,8 +36,11 @@ func TestNodeLifecycle(t *testing.T) {
 }
 
 func TestNodeLifecycleGoWaku(t *testing.T) {
+	if os.Getenv("AIM_RUN_REAL_WAKU_TESTS") != "true" {
+		t.Skip("set AIM_RUN_REAL_WAKU_TESTS=true to run go-waku lifecycle test")
+	}
 	if newGoWakuBackend() == nil {
-		t.Skip("go-waku backend is not enabled in this build (use -tags \"real_waku gowaku_no_rln\")")
+		t.Skip("go-waku backend is not enabled in this build")
 	}
 
 	cfg := DefaultConfig()

@@ -116,3 +116,24 @@ type AttachmentMeta struct {
 	Size      int64     `json:"size"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+type MessageRequest struct {
+	SenderID        string    `json:"sender_id"`
+	FirstMessageAt  time.Time `json:"first_message_at"`
+	LastMessageAt   time.Time `json:"last_message_at"`
+	MessageCount    int       `json:"message_count"`
+	LastMessageID   string    `json:"last_message_id"`
+	LastContentType string    `json:"last_content_type"`
+	LastPreview     string    `json:"last_preview"`
+}
+
+type MessageRequestThread struct {
+	Request  MessageRequest `json:"request"`
+	Messages []Message      `json:"messages"`
+}
+
+type BlockSenderResult struct {
+	Blocked        []string `json:"blocked"`
+	RequestRemoved bool     `json:"request_removed"`
+	ContactExists  bool     `json:"contact_exists"`
+}

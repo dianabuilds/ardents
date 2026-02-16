@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -140,5 +141,72 @@ func TestMessageStoreUpdateStatusRollbackOnPersistError(t *testing.T) {
 	}
 	if got.Status != "pending" {
 		t.Fatalf("status changed in memory on persist failure: %s", got.Status)
+	}
+}
+
+func TestMessageStoreDeleteAndClearMessages(t *testing.T) {
+	s := NewMessageStore()
+	now := time.Now().UTC()
+	items := []models.Message{
+		{ID: "m1", ContactID: "c1", Timestamp: now},
+		{ID: "m2", ContactID: "c1", Timestamp: now.Add(time.Second)},
+		{ID: "m3", ContactID: "c2", Timestamp: now.Add(2 * time.Second)},
+	}
+	for _, msg := range items {
+		if err := s.SaveMessage(msg); err != nil {
+			t.Fatalf("save message failed: %v", err)
+		}
+	}
+
+	deleted, err := s.DeleteMessage("c1", "m1")
+	if err != nil {
+		t.Fatalf("delete message failed: %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected message to be deleted")
+	}
+	if _, ok := s.GetMessage("m1"); ok {
+		t.Fatal("message m1 should be deleted")
+	}
+
+	cleared, err := s.ClearMessages("c1")
+	if err != nil {
+		t.Fatalf("clear messages failed: %v", err)
+	}
+	if cleared != 1 {
+		t.Fatalf("expected cleared=1, got %d", cleared)
+	}
+	msgsC1 := s.ListMessages("c1", 10, 0)
+	if len(msgsC1) != 0 {
+		t.Fatalf("expected c1 history empty, got %d", len(msgsC1))
+	}
+	msgsC2 := s.ListMessages("c2", 10, 0)
+	if len(msgsC2) != 1 {
+		t.Fatalf("expected c2 history preserved, got %d", len(msgsC2))
+	}
+}
+
+func TestEncryptedPersistentMessageStoreCreatesPrivateDir(t *testing.T) {
+	baseDir := t.TempDir()
+	path := filepath.Join(baseDir, "secure", "messages.enc")
+	store, err := NewEncryptedPersistentMessageStore(path, "pass")
+	if err != nil {
+		t.Fatalf("new store failed: %v", err)
+	}
+	if err := store.SaveMessage(models.Message{
+		ID:        "m-private-dir",
+		ContactID: "c-private",
+		Status:    "pending",
+		Timestamp: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("save message failed: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("stat dir failed: %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("expected dir perm 0700, got %04o", info.Mode().Perm())
 	}
 }

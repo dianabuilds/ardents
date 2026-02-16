@@ -58,7 +58,7 @@ func (s *AttachmentStore) Put(name, mimeType string, data []byte) (models.Attach
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.dir != "" {
-		if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		if err := os.MkdirAll(s.dir, 0o700); err != nil {
 			return models.AttachmentMeta{}, err
 		}
 		filePath := s.filePath(id)

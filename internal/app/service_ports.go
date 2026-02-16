@@ -54,6 +54,8 @@ type MessageRepository interface {
 	UpdateMessageStatus(messageID, status string) (bool, error)
 	GetMessage(messageID string) (models.Message, bool)
 	UpdateMessageContent(messageID string, content []byte, contentType string) (models.Message, bool, error)
+	DeleteMessage(contactID, messageID string) (bool, error)
+	ClearMessages(contactID string) (int, error)
 	ListMessages(contactID string, limit, offset int) []models.Message
 	PendingCount() int
 	DuePending(now time.Time) []storage.PendingMessage

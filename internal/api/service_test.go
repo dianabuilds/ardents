@@ -15,6 +15,7 @@ import (
 
 	"aim-chat/go-backend/internal/app"
 	"aim-chat/go-backend/internal/app/contracts"
+	daemoncomposition "aim-chat/go-backend/internal/composition/daemon"
 	"aim-chat/go-backend/internal/crypto"
 	"aim-chat/go-backend/internal/identity"
 	"aim-chat/go-backend/internal/storage"
@@ -121,6 +122,385 @@ func TestServiceDaemonIdentityPersistsAcrossRestart(t *testing.T) {
 	}
 	if id1.ID != id2.ID {
 		t.Fatalf("identity must persist across restart: %s != %s", id1.ID, id2.ID)
+	}
+}
+
+func TestServiceDaemonPrivacySettingsPersistAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	cfg := waku.DefaultConfig()
+
+	svc1, err := NewServiceForDaemonWithDataDir(cfg, dir)
+	if err != nil {
+		t.Fatalf("new daemon service #1 failed: %v", err)
+	}
+	if err := svc1.privacyState.Persist(app.PrivacySettings{MessagePrivacyMode: app.MessagePrivacyEveryone}); err != nil {
+		t.Fatalf("persist privacy settings failed: %v", err)
+	}
+
+	svc2, err := NewServiceForDaemonWithDataDir(cfg, dir)
+	if err != nil {
+		t.Fatalf("new daemon service #2 failed: %v", err)
+	}
+	if svc2.privacySettings.MessagePrivacyMode != app.MessagePrivacyEveryone {
+		t.Fatalf("privacy settings must persist across restart: got=%q want=%q", svc2.privacySettings.MessagePrivacyMode, app.MessagePrivacyEveryone)
+	}
+}
+
+func TestServiceDaemonPrivacyBootstrapIOErrorDoesNotCrash(t *testing.T) {
+	cfg := waku.DefaultConfig()
+	dataDir := t.TempDir()
+	_, secret, bundle, err := daemoncomposition.ResolveStorage(dataDir)
+	if err != nil {
+		t.Fatalf("resolve storage failed: %v", err)
+	}
+	bundle.PrivacyPath = t.TempDir() // directory path forces io error inside Bootstrap
+
+	svc, err := newServiceForDaemonWithBundle(cfg, bundle, secret)
+	if err != nil {
+		t.Fatalf("service must not fail on privacy io bootstrap error: %v", err)
+	}
+	if svc.privacySettings.MessagePrivacyMode != app.DefaultMessagePrivacyMode {
+		t.Fatalf("expected default privacy mode on bootstrap error: got=%q want=%q", svc.privacySettings.MessagePrivacyMode, app.DefaultMessagePrivacyMode)
+	}
+}
+
+func TestServicePrivacySettingsGetAndUpdate(t *testing.T) {
+	svc, err := NewServiceForDaemonWithDataDir(waku.DefaultConfig(), t.TempDir())
+	if err != nil {
+		t.Fatalf("new daemon service failed: %v", err)
+	}
+
+	initial, err := svc.GetPrivacySettings()
+	if err != nil {
+		t.Fatalf("get privacy settings failed: %v", err)
+	}
+	if initial.MessagePrivacyMode != app.DefaultMessagePrivacyMode {
+		t.Fatalf("unexpected initial privacy mode: got=%q want=%q", initial.MessagePrivacyMode, app.DefaultMessagePrivacyMode)
+	}
+
+	updated, err := svc.UpdatePrivacySettings(string(app.MessagePrivacyEveryone))
+	if err != nil {
+		t.Fatalf("update privacy settings failed: %v", err)
+	}
+	if updated.MessagePrivacyMode != app.MessagePrivacyEveryone {
+		t.Fatalf("unexpected updated mode: got=%q want=%q", updated.MessagePrivacyMode, app.MessagePrivacyEveryone)
+	}
+
+	got, err := svc.GetPrivacySettings()
+	if err != nil {
+		t.Fatalf("get privacy settings after update failed: %v", err)
+	}
+	if got.MessagePrivacyMode != app.MessagePrivacyEveryone {
+		t.Fatalf("unexpected persisted mode in memory: got=%q want=%q", got.MessagePrivacyMode, app.MessagePrivacyEveryone)
+	}
+}
+
+func TestServicePrivacySettingsUpdateRejectsInvalidMode(t *testing.T) {
+	svc, err := NewServiceForDaemonWithDataDir(waku.DefaultConfig(), t.TempDir())
+	if err != nil {
+		t.Fatalf("new daemon service failed: %v", err)
+	}
+
+	_, err = svc.UpdatePrivacySettings("invalid")
+	if err == nil {
+		t.Fatal("expected invalid privacy mode error")
+	}
+	if !errors.Is(err, app.ErrInvalidMessagePrivacyMode) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestServiceDaemonPrivacySettingsUpdatedValuePersistsAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	cfg := waku.DefaultConfig()
+
+	svc1, err := NewServiceForDaemonWithDataDir(cfg, dir)
+	if err != nil {
+		t.Fatalf("new daemon service #1 failed: %v", err)
+	}
+	if _, err := svc1.UpdatePrivacySettings(string(app.MessagePrivacyRequests)); err != nil {
+		t.Fatalf("update privacy settings failed: %v", err)
+	}
+
+	svc2, err := NewServiceForDaemonWithDataDir(cfg, dir)
+	if err != nil {
+		t.Fatalf("new daemon service #2 failed: %v", err)
+	}
+	got, err := svc2.GetPrivacySettings()
+	if err != nil {
+		t.Fatalf("get privacy settings failed: %v", err)
+	}
+	if got.MessagePrivacyMode != app.MessagePrivacyRequests {
+		t.Fatalf("privacy settings must persist across restart: got=%q want=%q", got.MessagePrivacyMode, app.MessagePrivacyRequests)
+	}
+}
+
+func TestServiceDaemonBlocklistPersistsAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	cfg := waku.DefaultConfig()
+	blockedID := "aim1UUMgCUXE93BxtwVDUivN2q3eYPKwaPkqjnNp9QVV9pF"
+
+	svc1, err := NewServiceForDaemonWithDataDir(cfg, dir)
+	if err != nil {
+		t.Fatalf("new daemon service #1 failed: %v", err)
+	}
+	if err := svc1.blocklist.Add(blockedID); err != nil {
+		t.Fatalf("blocklist add failed: %v", err)
+	}
+	if err := svc1.blocklistState.Persist(svc1.blocklist); err != nil {
+		t.Fatalf("persist blocklist failed: %v", err)
+	}
+
+	svc2, err := NewServiceForDaemonWithDataDir(cfg, dir)
+	if err != nil {
+		t.Fatalf("new daemon service #2 failed: %v", err)
+	}
+	if !svc2.blocklist.Contains(blockedID) {
+		t.Fatal("blocklist must persist across restart")
+	}
+}
+
+func TestServiceDaemonMessageRequestInboxPersistsAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	cfg := waku.DefaultConfig()
+
+	alice1, err := NewServiceForDaemonWithDataDir(cfg, dir)
+	if err != nil {
+		t.Fatalf("new daemon service #1 failed: %v", err)
+	}
+	if _, err := alice1.UpdatePrivacySettings(string(app.MessagePrivacyRequests)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	aliceID, _ := alice1.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+
+	wireData, err := signedPlainWire(bob, "msg-requests-persist-1", "persist me", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire failed: %v", err)
+	}
+	alice1.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-requests-persist-1",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+
+	requestsBefore, err := alice1.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests before restart failed: %v", err)
+	}
+	if len(requestsBefore) != 1 {
+		t.Fatalf("expected one request before restart, got %d", len(requestsBefore))
+	}
+
+	alice2, err := NewServiceForDaemonWithDataDir(cfg, dir)
+	if err != nil {
+		t.Fatalf("new daemon service #2 failed: %v", err)
+	}
+	requestsAfter, err := alice2.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests after restart failed: %v", err)
+	}
+	if len(requestsAfter) != 1 {
+		t.Fatalf("expected one request after restart, got %d", len(requestsAfter))
+	}
+	if requestsAfter[0].SenderID != bobID.ID {
+		t.Fatalf("unexpected sender after restart: got=%s want=%s", requestsAfter[0].SenderID, bobID.ID)
+	}
+	thread, err := alice2.GetMessageRequest(bobID.ID)
+	if err != nil {
+		t.Fatalf("get request thread failed: %v", err)
+	}
+	if len(thread.Messages) != 1 {
+		t.Fatalf("expected one message in restored thread, got %d", len(thread.Messages))
+	}
+	if string(thread.Messages[0].Content) != "persist me" {
+		t.Fatalf("unexpected restored message content: got=%q", string(thread.Messages[0].Content))
+	}
+}
+
+func TestServiceDaemonMessageRequestActionsPersistAcrossRestart(t *testing.T) {
+	tcs := []struct {
+		name string
+		run  func(*Service, string) error
+	}{
+		{
+			name: "accept",
+			run: func(svc *Service, senderID string) error {
+				_, err := svc.AcceptMessageRequest(senderID)
+				return err
+			},
+		},
+		{
+			name: "decline",
+			run: func(svc *Service, senderID string) error {
+				_, err := svc.DeclineMessageRequest(senderID)
+				return err
+			},
+		},
+		{
+			name: "block",
+			run: func(svc *Service, senderID string) error {
+				_, err := svc.BlockSender(senderID)
+				return err
+			},
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := waku.DefaultConfig()
+
+			alice1, err := NewServiceForDaemonWithDataDir(cfg, dir)
+			if err != nil {
+				t.Fatalf("new daemon service #1 failed: %v", err)
+			}
+			if _, err := alice1.UpdatePrivacySettings(string(app.MessagePrivacyRequests)); err != nil {
+				t.Fatalf("update privacy mode failed: %v", err)
+			}
+			bob, err := NewService()
+			if err != nil {
+				t.Fatalf("new bob service failed: %v", err)
+			}
+			aliceID, _ := alice1.GetIdentity()
+			bobID, _ := bob.GetIdentity()
+
+			wireData, err := signedPlainWire(bob, "msg-requests-action-"+tc.name, "pending", bobID.ID, aliceID.ID)
+			if err != nil {
+				t.Fatalf("build wire failed: %v", err)
+			}
+			alice1.handleIncomingPrivateMessage(waku.PrivateMessage{
+				ID:        "msg-requests-action-" + tc.name,
+				SenderID:  bobID.ID,
+				Recipient: aliceID.ID,
+				Payload:   wireData,
+			})
+
+			alice2, err := NewServiceForDaemonWithDataDir(cfg, dir)
+			if err != nil {
+				t.Fatalf("new daemon service #2 failed: %v", err)
+			}
+			if err := tc.run(alice2, bobID.ID); err != nil {
+				t.Fatalf("apply %s failed: %v", tc.name, err)
+			}
+
+			alice3, err := NewServiceForDaemonWithDataDir(cfg, dir)
+			if err != nil {
+				t.Fatalf("new daemon service #3 failed: %v", err)
+			}
+			requestsAfter, err := alice3.ListMessageRequests()
+			if err != nil {
+				t.Fatalf("list requests after %s and restart failed: %v", tc.name, err)
+			}
+			if len(requestsAfter) != 0 {
+				t.Fatalf("%s must persist request inbox cleanup, got %d pending requests", tc.name, len(requestsAfter))
+			}
+
+			switch tc.name {
+			case "block":
+				blocked, err := alice3.GetBlocklist()
+				if err != nil {
+					t.Fatalf("get blocklist failed: %v", err)
+				}
+				found := false
+				for _, id := range blocked {
+					if id == bobID.ID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("block must persist sender in blocklist: %s", bobID.ID)
+				}
+			}
+		})
+	}
+}
+
+func TestServiceBlocklistAddRemoveAndListDeterministic(t *testing.T) {
+	svc, err := NewServiceForDaemonWithDataDir(waku.DefaultConfig(), t.TempDir())
+	if err != nil {
+		t.Fatalf("new daemon service failed: %v", err)
+	}
+	first := "aim1UUMgCUXE93BxtwVDUivN2q3eYPKwaPkqjnNp9QVV9pF"
+	second := "aim1fve68neM6h8bGBw6QWB5h58SdzD6XraY7fJfxfdnRSe"
+
+	blocked, err := svc.AddToBlocklist(second)
+	if err != nil {
+		t.Fatalf("add second to blocklist failed: %v", err)
+	}
+	if len(blocked) != 1 || blocked[0] != second {
+		t.Fatalf("unexpected blocked list after first add: %#v", blocked)
+	}
+
+	blocked, err = svc.AddToBlocklist(first)
+	if err != nil {
+		t.Fatalf("add first to blocklist failed: %v", err)
+	}
+	if len(blocked) != 2 || blocked[0] != first || blocked[1] != second {
+		t.Fatalf("blocked list must be deterministic and sorted: %#v", blocked)
+	}
+
+	got, err := svc.GetBlocklist()
+	if err != nil {
+		t.Fatalf("get blocklist failed: %v", err)
+	}
+	if len(got) != 2 || got[0] != first || got[1] != second {
+		t.Fatalf("unexpected blocklist: %#v", got)
+	}
+
+	blocked, err = svc.RemoveFromBlocklist(first)
+	if err != nil {
+		t.Fatalf("remove first from blocklist failed: %v", err)
+	}
+	if len(blocked) != 1 || blocked[0] != second {
+		t.Fatalf("unexpected blocklist after remove: %#v", blocked)
+	}
+}
+
+func TestServiceBlocklistRejectsInvalidIdentityID(t *testing.T) {
+	svc, err := NewServiceForDaemonWithDataDir(waku.DefaultConfig(), t.TempDir())
+	if err != nil {
+		t.Fatalf("new daemon service failed: %v", err)
+	}
+
+	_, err = svc.AddToBlocklist("invalid")
+	if err == nil {
+		t.Fatal("expected invalid identity id error")
+	}
+	if !errors.Is(err, app.ErrInvalidIdentityID) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_, err = svc.RemoveFromBlocklist("invalid")
+	if err == nil {
+		t.Fatal("expected invalid identity id error on remove")
+	}
+	if !errors.Is(err, app.ErrInvalidIdentityID) {
+		t.Fatalf("unexpected remove error: %v", err)
+	}
+}
+
+func TestServiceDaemonBlocklistBootstrapIOErrorDoesNotCrash(t *testing.T) {
+	cfg := waku.DefaultConfig()
+	dataDir := t.TempDir()
+	_, secret, bundle, err := daemoncomposition.ResolveStorage(dataDir)
+	if err != nil {
+		t.Fatalf("resolve storage failed: %v", err)
+	}
+	bundle.BlocklistPath = t.TempDir() // directory path forces io error inside Bootstrap
+
+	svc, err := newServiceForDaemonWithBundle(cfg, bundle, secret)
+	if err != nil {
+		t.Fatalf("service must not fail on blocklist io bootstrap error: %v", err)
+	}
+	if len(svc.blocklist.List()) != 0 {
+		t.Fatalf("expected empty blocklist on bootstrap error, got %d", len(svc.blocklist.List()))
 	}
 }
 
@@ -393,6 +773,55 @@ func TestServiceSendMessageCreatesPendingWhenDisconnected(t *testing.T) {
 	}
 	if len(msgs) != 1 || msgs[0].ID != msgID || msgs[0].Status != "pending" {
 		t.Fatal("expected pending message metadata when network is disconnected")
+	}
+}
+
+func TestServiceSendMessagePublishesNewMessageNotification(t *testing.T) {
+	svc, err := NewService()
+	if err != nil {
+		t.Fatalf("new service failed: %v", err)
+	}
+	contactID := "aim1_notify_contact_01"
+	if err := svc.AddContact(contactID, "notify-contact"); err != nil {
+		t.Fatalf("add contact failed: %v", err)
+	}
+
+	_, ch, cancel := svc.SubscribeNotifications(0)
+	defer cancel()
+
+	msgID, err := svc.SendMessage(contactID, "hello from cli")
+	if err != nil {
+		t.Fatalf("send message failed: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case evt := <-ch:
+			if evt.Method != "notify.message.new" {
+				continue
+			}
+			payload, ok := evt.Payload.(map[string]any)
+			if !ok {
+				t.Fatalf("unexpected payload type: %T", evt.Payload)
+			}
+			if gotContact, _ := payload["contact_id"].(string); gotContact != contactID {
+				t.Fatalf("unexpected contact_id: %q", gotContact)
+			}
+			msgPayload, ok := payload["message"].(models.Message)
+			if !ok {
+				t.Fatalf("unexpected message payload type: %T", payload["message"])
+			}
+			if msgPayload.ID != msgID {
+				t.Fatalf("unexpected message id in notification: %q", msgPayload.ID)
+			}
+			if msgPayload.Direction != "out" {
+				t.Fatalf("unexpected direction: %q", msgPayload.Direction)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for notify.message.new event")
+		}
 	}
 }
 
@@ -852,6 +1281,9 @@ func TestServiceRejectsInboundFromUnverifiedContact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new bob service failed: %v", err)
 	}
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyContactsOnly)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
 	aliceID, _ := alice.GetIdentity()
 	bobID, _ := bob.GetIdentity()
 
@@ -880,6 +1312,630 @@ func TestServiceRejectsInboundFromUnverifiedContact(t *testing.T) {
 	}
 	if len(msgs) != 0 {
 		t.Fatalf("expected no saved messages from unverified sender, got %d", len(msgs))
+	}
+}
+
+func TestServiceBlocklistOverridesEveryoneModeForUnknownSender(t *testing.T) {
+	alice, err := NewService()
+	if err != nil {
+		t.Fatalf("new alice service failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyEveryone)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+	if _, err := alice.AddToBlocklist(bobID.ID); err != nil {
+		t.Fatalf("add to blocklist failed: %v", err)
+	}
+
+	wireID := "msg-blocked-everyone"
+	wireData, err := signedPlainWire(bob, wireID, "blocked in everyone mode", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        wireID,
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+
+	msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no saved messages from blocked sender in everyone mode, got %d", len(msgs))
+	}
+}
+
+func TestServiceRejectsInboundFromBlockedSender(t *testing.T) {
+	alice, bob, _, bobCard := newServicePairWithMutualContacts(t)
+
+	if _, err := alice.AddToBlocklist(bobCard.IdentityID); err != nil {
+		t.Fatalf("add to blocklist failed: %v", err)
+	}
+
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+
+	wireID := "msg-blocked"
+	wireData, err := signedPlainWire(bob, wireID, "should be blocked", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        wireID,
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+
+	msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no saved messages from blocked sender, got %d", len(msgs))
+	}
+}
+
+func TestServiceRequestsModeQueuesUnknownSender(t *testing.T) {
+	alice, err := NewService()
+	if err != nil {
+		t.Fatalf("new alice service failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyRequests)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+	wireID := "msg-requests-mode"
+	wireData, err := signedPlainWire(bob, wireID, "hello", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        wireID,
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+
+	msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no saved messages in requests mode until inbox flow, got %d", len(msgs))
+	}
+
+	requests, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list message requests failed: %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("expected one message request, got %d", len(requests))
+	}
+	if requests[0].SenderID != bobID.ID {
+		t.Fatalf("unexpected request sender: got=%s want=%s", requests[0].SenderID, bobID.ID)
+	}
+	if requests[0].MessageCount != 1 {
+		t.Fatalf("unexpected request message count: got=%d want=1", requests[0].MessageCount)
+	}
+
+	thread, err := alice.GetMessageRequest(bobID.ID)
+	if err != nil {
+		t.Fatalf("get message request failed: %v", err)
+	}
+	if thread.Request.SenderID != bobID.ID {
+		t.Fatalf("unexpected thread sender: got=%s want=%s", thread.Request.SenderID, bobID.ID)
+	}
+	if len(thread.Messages) != 1 {
+		t.Fatalf("expected one message in request thread, got %d", len(thread.Messages))
+	}
+	if string(thread.Messages[0].Content) != "hello" {
+		t.Fatalf("unexpected request message content: got=%q want=%q", string(thread.Messages[0].Content), "hello")
+	}
+}
+
+func TestServiceAcceptMessageRequestMovesThreadToMainChatAndIsIdempotent(t *testing.T) {
+	alice, err := NewService()
+	if err != nil {
+		t.Fatalf("new alice service failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyRequests)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+	wireData, err := signedPlainWire(bob, "msg-requests-accept-1", "first", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire #1 failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-requests-accept-1",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+	wireData2, err := signedPlainWire(bob, "msg-requests-accept-2", "second", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire #2 failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-requests-accept-2",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData2,
+	})
+
+	requestsBefore, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests before accept failed: %v", err)
+	}
+	if len(requestsBefore) != 1 {
+		t.Fatalf("expected one request before accept, got %d", len(requestsBefore))
+	}
+
+	accepted, err := alice.AcceptMessageRequest(bobID.ID)
+	if err != nil {
+		t.Fatalf("accept request failed: %v", err)
+	}
+	if !accepted {
+		t.Fatal("expected accepted=true")
+	}
+
+	contacts, err := alice.GetContacts()
+	if err != nil {
+		t.Fatalf("get contacts failed: %v", err)
+	}
+	found := false
+	for _, c := range contacts {
+		if c.ID == bobID.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("accepted sender must be auto-added to contacts: %s", bobID.ID)
+	}
+
+	requestsAfter, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests after accept failed: %v", err)
+	}
+	if len(requestsAfter) != 0 {
+		t.Fatalf("expected empty requests inbox after accept, got %d", len(requestsAfter))
+	}
+
+	msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected two moved messages in main chat, got %d", len(msgs))
+	}
+
+	acceptedAgain, err := alice.AcceptMessageRequest(bobID.ID)
+	if err != nil {
+		t.Fatalf("idempotent accept failed: %v", err)
+	}
+	if !acceptedAgain {
+		t.Fatal("expected accepted=true on idempotent repeat")
+	}
+
+	msgsAfterRepeat, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages after repeat failed: %v", err)
+	}
+	if len(msgsAfterRepeat) != 2 {
+		t.Fatalf("idempotent accept must not duplicate moved history, got %d", len(msgsAfterRepeat))
+	}
+}
+
+func TestServiceDeclineMessageRequestRemovesInboxWithoutAddingContact(t *testing.T) {
+	alice, err := NewService()
+	if err != nil {
+		t.Fatalf("new alice service failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyRequests)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+	wireData, err := signedPlainWire(bob, "msg-requests-decline-1", "first", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-requests-decline-1",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+
+	requestsBefore, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests before decline failed: %v", err)
+	}
+	if len(requestsBefore) != 1 {
+		t.Fatalf("expected one request before decline, got %d", len(requestsBefore))
+	}
+
+	declined, err := alice.DeclineMessageRequest(bobID.ID)
+	if err != nil {
+		t.Fatalf("decline request failed: %v", err)
+	}
+	if !declined {
+		t.Fatal("expected declined=true")
+	}
+
+	requestsAfter, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests after decline failed: %v", err)
+	}
+	if len(requestsAfter) != 0 {
+		t.Fatalf("expected empty requests inbox after decline, got %d", len(requestsAfter))
+	}
+
+	contacts, err := alice.GetContacts()
+	if err != nil {
+		t.Fatalf("get contacts failed: %v", err)
+	}
+	for _, c := range contacts {
+		if c.ID == bobID.ID {
+			t.Fatalf("decline must not auto-add contact: %s", bobID.ID)
+		}
+	}
+
+	msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("decline must not move messages to main chat, got %d", len(msgs))
+	}
+
+	declinedAgain, err := alice.DeclineMessageRequest(bobID.ID)
+	if err != nil {
+		t.Fatalf("idempotent decline failed: %v", err)
+	}
+	if !declinedAgain {
+		t.Fatal("idempotent decline must return declined=true")
+	}
+}
+
+func TestServiceDeclineRequestAllowsFutureRequestsPerPolicy(t *testing.T) {
+	alice, err := NewService()
+	if err != nil {
+		t.Fatalf("new alice service failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyRequests)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+	firstWire, err := signedPlainWire(bob, "msg-requests-decline-2", "first", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build first wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-requests-decline-2",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   firstWire,
+	})
+	if _, err := alice.DeclineMessageRequest(bobID.ID); err != nil {
+		t.Fatalf("decline failed: %v", err)
+	}
+
+	secondWire, err := signedPlainWire(bob, "msg-requests-decline-3", "second", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build second wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-requests-decline-3",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   secondWire,
+	})
+
+	requests, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests failed: %v", err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("expected one new request after re-delivery, got %d", len(requests))
+	}
+	if requests[0].SenderID != bobID.ID {
+		t.Fatalf("unexpected sender in renewed request: got=%s want=%s", requests[0].SenderID, bobID.ID)
+	}
+	if requests[0].MessageCount != 1 {
+		t.Fatalf("expected only the new message in renewed request, got=%d", requests[0].MessageCount)
+	}
+}
+
+func TestServiceBlockSenderRemovesRequestAndOverridesPrivacyModes(t *testing.T) {
+	alice, err := NewService()
+	if err != nil {
+		t.Fatalf("new alice service failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyRequests)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+	wireData, err := signedPlainWire(bob, "msg-requests-block-1", "first", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-requests-block-1",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+
+	requestsBefore, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests before block failed: %v", err)
+	}
+	if len(requestsBefore) != 1 {
+		t.Fatalf("expected one request before block, got %d", len(requestsBefore))
+	}
+
+	result, err := alice.BlockSender(bobID.ID)
+	if err != nil {
+		t.Fatalf("block sender failed: %v", err)
+	}
+	if !result.RequestRemoved {
+		t.Fatal("expected request_removed=true when blocking sender with pending request")
+	}
+	if result.ContactExists {
+		t.Fatal("expected contact_exists=false for unknown sender request")
+	}
+	foundBlocked := false
+	for _, id := range result.Blocked {
+		if id == bobID.ID {
+			foundBlocked = true
+			break
+		}
+	}
+	if !foundBlocked {
+		t.Fatalf("blocked list must include sender id %s", bobID.ID)
+	}
+
+	requestsAfter, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests after block failed: %v", err)
+	}
+	if len(requestsAfter) != 0 {
+		t.Fatalf("expected empty requests inbox after block, got %d", len(requestsAfter))
+	}
+
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyEveryone)); err != nil {
+		t.Fatalf("update privacy mode to everyone failed: %v", err)
+	}
+	wireData2, err := signedPlainWire(bob, "msg-requests-block-2", "second", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build second wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-requests-block-2",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData2,
+	})
+
+	requestsAfterSecondInbound, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests after second inbound failed: %v", err)
+	}
+	if len(requestsAfterSecondInbound) != 0 {
+		t.Fatalf("blocked sender must not create new request under everyone mode, got %d", len(requestsAfterSecondInbound))
+	}
+	msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("blocked sender must not create normal chat messages, got %d", len(msgs))
+	}
+}
+
+func TestServiceEveryoneModeCreatesImmediateChatForUnknownSender(t *testing.T) {
+	alice, err := NewService()
+	if err != nil {
+		t.Fatalf("new alice service failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyEveryone)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+	wireData, err := signedPlainWire(bob, "msg-everyone-unknown-1", "hello everyone", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-everyone-unknown-1",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+
+	requests, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests failed: %v", err)
+	}
+	if len(requests) != 0 {
+		t.Fatalf("everyone mode must bypass requests inbox, got %d entries", len(requests))
+	}
+
+	msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("everyone mode must create immediate chat message, got %d", len(msgs))
+	}
+	if string(msgs[0].Content) != "hello everyone" {
+		t.Fatalf("unexpected message content: got=%q want=%q", string(msgs[0].Content), "hello everyone")
+	}
+
+	contacts, err := alice.GetContacts()
+	if err != nil {
+		t.Fatalf("get contacts failed: %v", err)
+	}
+	found := false
+	for _, c := range contacts {
+		if c.ID == bobID.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("everyone mode inbound must establish contact context for sender: %s", bobID.ID)
+	}
+}
+
+func TestServiceContactsOnlyModeDropsUnknownSenderInbound(t *testing.T) {
+	alice, err := NewService()
+	if err != nil {
+		t.Fatalf("new alice service failed: %v", err)
+	}
+	bob, err := NewService()
+	if err != nil {
+		t.Fatalf("new bob service failed: %v", err)
+	}
+	if _, err := alice.UpdatePrivacySettings(string(app.MessagePrivacyContactsOnly)); err != nil {
+		t.Fatalf("update privacy mode failed: %v", err)
+	}
+
+	aliceID, _ := alice.GetIdentity()
+	bobID, _ := bob.GetIdentity()
+	wireData, err := signedPlainWire(bob, "msg-contacts-only-unknown-1", "must be dropped", bobID.ID, aliceID.ID)
+	if err != nil {
+		t.Fatalf("build wire failed: %v", err)
+	}
+	alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+		ID:        "msg-contacts-only-unknown-1",
+		SenderID:  bobID.ID,
+		Recipient: aliceID.ID,
+		Payload:   wireData,
+	})
+
+	requests, err := alice.ListMessageRequests()
+	if err != nil {
+		t.Fatalf("list requests failed: %v", err)
+	}
+	if len(requests) != 0 {
+		t.Fatalf("contacts_only mode must not create requests inbox entries, got %d", len(requests))
+	}
+
+	msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("contacts_only mode must drop unknown inbound messages, got %d", len(msgs))
+	}
+}
+
+func TestServiceBlocklistOverridesAllPrivacyModes(t *testing.T) {
+	cases := []struct {
+		name string
+		mode app.MessagePrivacyMode
+	}{
+		{name: "contacts_only", mode: app.MessagePrivacyContactsOnly},
+		{name: "requests", mode: app.MessagePrivacyRequests},
+		{name: "everyone", mode: app.MessagePrivacyEveryone},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			alice, err := NewService()
+			if err != nil {
+				t.Fatalf("new alice service failed: %v", err)
+			}
+			bob, err := NewService()
+			if err != nil {
+				t.Fatalf("new bob service failed: %v", err)
+			}
+			if _, err := alice.UpdatePrivacySettings(string(tc.mode)); err != nil {
+				t.Fatalf("update privacy mode failed: %v", err)
+			}
+
+			aliceID, _ := alice.GetIdentity()
+			bobID, _ := bob.GetIdentity()
+			if _, err := alice.BlockSender(bobID.ID); err != nil {
+				t.Fatalf("block sender failed: %v", err)
+			}
+
+			wireData, err := signedPlainWire(bob, "msg-blocklist-"+tc.name, "blocked inbound", bobID.ID, aliceID.ID)
+			if err != nil {
+				t.Fatalf("build wire failed: %v", err)
+			}
+			alice.handleIncomingPrivateMessage(waku.PrivateMessage{
+				ID:        "msg-blocklist-" + tc.name,
+				SenderID:  bobID.ID,
+				Recipient: aliceID.ID,
+				Payload:   wireData,
+			})
+
+			requests, err := alice.ListMessageRequests()
+			if err != nil {
+				t.Fatalf("list requests failed: %v", err)
+			}
+			if len(requests) != 0 {
+				t.Fatalf("blocked sender must not create request inbox entries in %s mode, got %d", tc.mode, len(requests))
+			}
+
+			msgs, err := alice.GetMessages(bobID.ID, 10, 0)
+			if err != nil {
+				t.Fatalf("get messages failed: %v", err)
+			}
+			if len(msgs) != 0 {
+				t.Fatalf("blocked sender must not create chat messages in %s mode, got %d", tc.mode, len(msgs))
+			}
+		})
 	}
 }
 
@@ -1060,6 +2116,10 @@ func (s *countingMessageStore) GetMessage(messageID string) (models.Message, boo
 func (s *countingMessageStore) UpdateMessageContent(_ string, _ []byte, _ string) (models.Message, bool, error) {
 	return models.Message{}, false, nil
 }
+
+func (s *countingMessageStore) DeleteMessage(_, _ string) (bool, error) { return true, nil }
+
+func (s *countingMessageStore) ClearMessages(_ string) (int, error) { return 0, nil }
 
 func (s *countingMessageStore) ListMessages(contactID string, _, _ int) []models.Message {
 	s.listCalls++

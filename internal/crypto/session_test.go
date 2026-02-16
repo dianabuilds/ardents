@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"aim-chat/go-backend/internal/securestore"
@@ -79,6 +80,29 @@ func TestEncryptedFileSessionStoreTamperFailsAuth(t *testing.T) {
 	_, _, err = NewEncryptedFileSessionStore(path, "pass").Get("aim1contact")
 	if !errors.Is(err, securestore.ErrAuthFailed) && !errors.Is(err, securestore.ErrInvalid) {
 		t.Fatalf("expected ErrAuthFailed or ErrInvalid, got %v", err)
+	}
+}
+
+func TestEncryptedFileSessionStoreCreatesPrivateDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secure", "sessions.enc")
+	store := NewEncryptedFileSessionStore(path, "pass")
+	manager := NewSessionManager(store)
+
+	peerKey := make([]byte, 32)
+	for i := range peerKey {
+		peerKey[i] = byte(i + 1)
+	}
+	if _, err := manager.InitSession("aim1local", "aim1contact-private", peerKey); err != nil {
+		t.Fatalf("init session failed: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("stat dir failed: %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("expected dir perm 0700, got %04o", info.Mode().Perm())
 	}
 }
 

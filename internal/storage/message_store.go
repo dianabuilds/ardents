@@ -110,6 +110,60 @@ func (s *MessageStore) UpdateMessageContent(messageID string, content []byte, co
 	return msg, true, nil
 }
 
+func (s *MessageStore) DeleteMessage(contactID, messageID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	msg, ok := s.messages[messageID]
+	if !ok || msg.ContactID != contactID {
+		return false, nil
+	}
+	nextMessages := cloneMessagesMap(s.messages)
+	delete(nextMessages, messageID)
+	nextPending := clonePendingMap(s.pending)
+	delete(nextPending, messageID)
+	if err := s.persistSnapshotLocked(nextMessages, nextPending); err != nil {
+		return false, err
+	}
+	s.messages = nextMessages
+	s.pending = nextPending
+	return true, nil
+}
+
+func (s *MessageStore) ClearMessages(contactID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	nextMessages := make(map[string]models.Message, len(s.messages))
+	deletedIDs := make(map[string]struct{})
+	deleted := 0
+	for id, msg := range s.messages {
+		if msg.ContactID == contactID {
+			deleted++
+			deletedIDs[id] = struct{}{}
+			continue
+		}
+		nextMessages[id] = msg
+	}
+	if deleted == 0 {
+		return 0, nil
+	}
+	nextPending := make(map[string]PendingMessage, len(s.pending))
+	for id, pending := range s.pending {
+		if _, shouldDelete := deletedIDs[id]; shouldDelete {
+			continue
+		}
+		if pending.Message.ContactID == contactID {
+			continue
+		}
+		nextPending[id] = pending
+	}
+	if err := s.persistSnapshotLocked(nextMessages, nextPending); err != nil {
+		return 0, err
+	}
+	s.messages = nextMessages
+	s.pending = nextPending
+	return deleted, nil
+}
+
 func (s *MessageStore) GetMessage(messageID string) (models.Message, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -257,7 +311,7 @@ func (s *MessageStore) persistSnapshotLocked(messages map[string]models.Message,
 	if s.path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
 	snapshot := struct {

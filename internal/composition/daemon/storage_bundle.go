@@ -8,10 +8,13 @@ import (
 )
 
 type StorageBundle struct {
-	MessageStore    *storage.MessageStore
-	SessionStore    crypto.SessionStore
-	AttachmentStore *storage.AttachmentStore
-	IdentityPath    string
+	MessageStore     *storage.MessageStore
+	SessionStore     crypto.SessionStore
+	AttachmentStore  *storage.AttachmentStore
+	IdentityPath     string
+	PrivacyPath      string
+	BlocklistPath    string
+	RequestInboxPath string
 }
 
 func BuildStorageBundle(dataDir, secret string) (StorageBundle, error) {
@@ -29,9 +32,12 @@ func BuildStorageBundle(dataDir, secret string) (StorageBundle, error) {
 	}
 
 	return StorageBundle{
-		MessageStore:    msgStore,
-		SessionStore:    crypto.NewEncryptedFileSessionStore(sessionsPath, secret),
-		AttachmentStore: attachmentStore,
-		IdentityPath:    filepath.Join(dataDir, "identity.enc"),
+		MessageStore:     msgStore,
+		SessionStore:     crypto.NewEncryptedFileSessionStore(sessionsPath, secret),
+		AttachmentStore:  attachmentStore,
+		IdentityPath:     filepath.Join(dataDir, "identity.enc"),
+		PrivacyPath:      filepath.Join(dataDir, "privacy.enc"),
+		BlocklistPath:    filepath.Join(dataDir, "blocklist.enc"),
+		RequestInboxPath: filepath.Join(dataDir, "requests.enc"),
 	}, nil
 }

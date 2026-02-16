@@ -25,6 +25,8 @@ type Server struct {
 	initErr    error
 	rpcToken   string
 	requireRPC bool
+	rpcLimiter *rpcRateLimiter
+	streams    *rpcStreamLimiter
 }
 
 func NewServerWithService(rpcAddr string, svc contracts.DaemonService) *Server {
@@ -53,6 +55,8 @@ func newServerWithService(rpcAddr string, svc contracts.DaemonService, rpcToken 
 		service:    svc,
 		rpcToken:   rpcToken,
 		requireRPC: requireRPC,
+		rpcLimiter: newRPCRateLimiter(loadRPCRateLimitConfig()),
+		streams:    newRPCStreamLimiter(loadRPCStreamLimitConfig()),
 	}
 	if s.rpcToken == "" && !s.requireRPC {
 		slog.Default().Warn("AIM_RPC_TOKEN is not set; RPC auth disabled")
@@ -151,6 +155,13 @@ func (s *Server) handleRPCStream(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeRPC(w, r) {
 		return
 	}
+	clientKey := rpcRateLimitKey(r, s.extractRPCToken(r))
+	release, allowed := s.streams.acquire(clientKey)
+	if !allowed {
+		http.Error(w, "too many stream subscriptions", http.StatusTooManyRequests)
+		return
+	}
+	defer release()
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -288,18 +299,24 @@ func (s *Server) authorizeRPC(w http.ResponseWriter, r *http.Request) bool {
 	if s.rpcToken == "" && !s.requireRPC {
 		return true
 	}
-	token := strings.TrimSpace(r.Header.Get("X-AIM-RPC-Token"))
-	if token == "" {
-		auth := strings.TrimSpace(r.Header.Get("Authorization"))
-		if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-			token = strings.TrimSpace(auth[len("bearer "):])
-		}
-	}
+	token := s.extractRPCToken(r)
 	if token != s.rpcToken {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return false
 	}
 	return true
+}
+
+func (s *Server) extractRPCToken(r *http.Request) string {
+	token := strings.TrimSpace(r.Header.Get("X-AIM-RPC-Token"))
+	if token != "" {
+		return token
+	}
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		return strings.TrimSpace(auth[len("bearer "):])
+	}
+	return ""
 }
 
 func requiresRPCToken() bool {

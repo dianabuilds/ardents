@@ -127,7 +127,7 @@ func (s *FileSessionStore) loadAllLocked() (map[string]SessionState, error) {
 }
 
 func (s *FileSessionStore) writeAllLocked(all map[string]SessionState) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
 	data, err := json.Marshal(all)

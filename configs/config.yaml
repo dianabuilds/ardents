@@ -1,5 +1,5 @@
 network:
-  transport: mock
+  transport: go-waku
   port: 60000
   advertiseAddress: ""
   enableRelay: true

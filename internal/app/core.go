@@ -25,8 +25,15 @@ type CoreAPI interface {
 
 	SendMessage(contactID, content string) (string, error)
 	EditMessage(contactID, messageID, content string) (models.Message, error)
+	DeleteMessage(contactID, messageID string) error
+	ClearMessages(contactID string) (int, error)
 	GetMessages(contactID string, limit, offset int) ([]models.Message, error)
 	GetMessageStatus(messageID string) (models.MessageStatus, error)
+	ListMessageRequests() ([]models.MessageRequest, error)
+	GetMessageRequest(senderID string) (models.MessageRequestThread, error)
+	AcceptMessageRequest(senderID string) (bool, error)
+	DeclineMessageRequest(senderID string) (bool, error)
+	BlockSender(senderID string) (models.BlockSenderResult, error)
 	InitSession(contactID string, peerPublicKey []byte) (models.SessionState, error)
 	ListDevices() ([]models.Device, error)
 	AddDevice(name string) (models.Device, error)
@@ -34,4 +41,9 @@ type CoreAPI interface {
 
 	GetNetworkStatus() models.NetworkStatus
 	GetMetrics() models.MetricsSnapshot
+	GetPrivacySettings() (PrivacySettings, error)
+	UpdatePrivacySettings(mode string) (PrivacySettings, error)
+	GetBlocklist() ([]string, error)
+	AddToBlocklist(identityID string) ([]string, error)
+	RemoveFromBlocklist(identityID string) ([]string, error)
 }

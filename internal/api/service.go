@@ -19,17 +19,26 @@ import (
 )
 
 type Service struct {
-	identityManager contracts.IdentityDomain
-	wakuNode        contracts.TransportNode
-	sessionManager  contracts.SessionDomain
-	messageStore    contracts.MessageRepository
-	attachmentStore contracts.AttachmentRepository
-	notifier        contracts.NotificationBus
-	logger          *slog.Logger
-	metrics         *app.ServiceMetricsState
-	runtime         *app.ServiceRuntime
-	identityState   *app.IdentityStateStore
-	startStopMu     sync.Mutex
+	identityManager   contracts.IdentityDomain
+	wakuNode          contracts.TransportNode
+	sessionManager    contracts.SessionDomain
+	messageStore      contracts.MessageRepository
+	attachmentStore   contracts.AttachmentRepository
+	notifier          contracts.NotificationBus
+	logger            *slog.Logger
+	metrics           *app.ServiceMetricsState
+	runtime           *app.ServiceRuntime
+	identityState     *app.IdentityStateStore
+	privacyState      *app.PrivacySettingsStateStore
+	privacySettings   app.PrivacySettings
+	privacyMu         sync.RWMutex
+	blocklistState    *app.BlocklistStateStore
+	blocklist         app.Blocklist
+	blocklistMu       sync.RWMutex
+	requestInboxState *app.MessageRequestStateStore
+	requestInbox      map[string][]models.Message
+	requestInboxMu    sync.RWMutex
+	startStopMu       sync.Mutex
 }
 
 func NewService() (*Service, error) {
@@ -78,16 +87,22 @@ func newServiceWithOptions(wakuCfg waku.Config, opts contracts.ServiceOptions) (
 		}
 	}
 	return &Service{
-		identityManager: manager,
-		wakuNode:        waku.NewNode(wakuCfg),
-		sessionManager:  crypto.NewSessionManager(opts.SessionStore),
-		messageStore:    opts.MessageStore,
-		attachmentStore: opts.AttachmentStore,
-		notifier:        newNotificationHub(2048),
-		logger:          opts.Logger,
-		metrics:         app.NewServiceMetricsState(),
-		runtime:         app.NewServiceRuntime(),
-		identityState:   &app.IdentityStateStore{},
+		identityManager:   manager,
+		wakuNode:          waku.NewNode(wakuCfg),
+		sessionManager:    crypto.NewSessionManager(opts.SessionStore),
+		messageStore:      opts.MessageStore,
+		attachmentStore:   opts.AttachmentStore,
+		notifier:          newNotificationHub(2048),
+		logger:            opts.Logger,
+		metrics:           app.NewServiceMetricsState(),
+		runtime:           app.NewServiceRuntime(),
+		identityState:     &app.IdentityStateStore{},
+		privacyState:      &app.PrivacySettingsStateStore{},
+		privacySettings:   app.DefaultPrivacySettings(),
+		blocklistState:    &app.BlocklistStateStore{},
+		blocklist:         app.Blocklist{},
+		requestInboxState: &app.MessageRequestStateStore{},
+		requestInbox:      make(map[string][]models.Message),
 	}, nil
 }
 
@@ -105,6 +120,27 @@ func newServiceForDaemonWithBundle(wakuCfg waku.Config, bundle daemoncomposition
 	if err := svc.identityState.Bootstrap(svc.identityManager); err != nil {
 		return nil, err
 	}
+	svc.privacyState.Configure(bundle.PrivacyPath, secret)
+	settings, err := svc.privacyState.Bootstrap()
+	if err != nil {
+		svc.logger.Warn("privacy settings bootstrap failed, using defaults", "error", err.Error())
+		settings = app.DefaultPrivacySettings()
+	}
+	svc.privacySettings = app.NormalizePrivacySettings(settings)
+	svc.blocklistState.Configure(bundle.BlocklistPath, secret)
+	list, err := svc.blocklistState.Bootstrap()
+	if err != nil {
+		svc.logger.Warn("blocklist bootstrap failed, using empty list", "error", err.Error())
+		list, _ = app.NewBlocklist(nil)
+	}
+	svc.blocklist = list
+	svc.requestInboxState.Configure(bundle.RequestInboxPath, secret)
+	inbox, err := svc.requestInboxState.Bootstrap()
+	if err != nil {
+		svc.logger.Warn("message request inbox bootstrap failed, using empty list", "error", err.Error())
+		inbox = map[string][]models.Message{}
+	}
+	svc.requestInbox = app.CloneMessageRequestInbox(inbox)
 	return svc, nil
 }
 
@@ -225,6 +261,10 @@ func (s *Service) SendMessage(contactID, content string) (msgID string, err erro
 		return "", err
 	}
 	msgID = msg.ID
+	s.notify("notify.message.new", map[string]any{
+		"contact_id": contactID,
+		"message":    msg,
+	})
 	wire := app.NewPlainWire(msg.Content)
 	if card, err := s.identityManager.SelfContactCard(localIdentity.ID); err == nil {
 		wire = app.WithSelfCard(wire, &card)
@@ -276,6 +316,44 @@ func (s *Service) EditMessage(contactID, messageID, content string) (models.Mess
 	return updated, nil
 }
 
+func (s *Service) DeleteMessage(contactID, messageID string) error {
+	contactID = strings.TrimSpace(contactID)
+	messageID = strings.TrimSpace(messageID)
+	if contactID == "" || messageID == "" {
+		return errors.New("invalid params")
+	}
+	deleted, err := s.messageStore.DeleteMessage(contactID, messageID)
+	if err != nil {
+		s.recordError("storage", err)
+		return err
+	}
+	if !deleted {
+		return errors.New("message not found")
+	}
+	s.notify("notify.message.deleted", map[string]any{
+		"contact_id": contactID,
+		"message_id": messageID,
+	})
+	return nil
+}
+
+func (s *Service) ClearMessages(contactID string) (int, error) {
+	contactID = strings.TrimSpace(contactID)
+	if contactID == "" {
+		return 0, errors.New("invalid params")
+	}
+	deleted, err := s.messageStore.ClearMessages(contactID)
+	if err != nil {
+		s.recordError("storage", err)
+		return 0, err
+	}
+	s.notify("notify.message.cleared", map[string]any{
+		"contact_id": contactID,
+		"count":      deleted,
+	})
+	return deleted, nil
+}
+
 func (s *Service) GetMessages(contactID string, limit, offset int) (messages []models.Message, err error) {
 	defer s.trackOperation("message.list", &err)()
 	contactID, err = app.ValidateListMessagesContactID(contactID)
@@ -291,6 +369,178 @@ func (s *Service) GetMessages(contactID string, limit, offset int) (messages []m
 		s.applyAutoRead(&messages[i], contactID)
 	}
 	return messages, nil
+}
+
+func (s *Service) ListMessageRequests() ([]models.MessageRequest, error) {
+	s.requestInboxMu.RLock()
+	defer s.requestInboxMu.RUnlock()
+
+	out := make([]models.MessageRequest, 0, len(s.requestInbox))
+	for senderID, messages := range s.requestInbox {
+		summary, err := app.BuildMessageRequestSummary(senderID, messages)
+		if err != nil {
+			continue
+		}
+		out = append(out, summary)
+	}
+	app.SortMessageRequestsByRecency(out)
+	return out, nil
+}
+
+func (s *Service) persistRequestInboxLocked() error {
+	if s.requestInboxState == nil {
+		return nil
+	}
+	return s.requestInboxState.Persist(s.requestInbox)
+}
+
+func (s *Service) GetMessageRequest(senderID string) (models.MessageRequestThread, error) {
+	senderID, err := app.ValidateListMessagesContactID(senderID)
+	if err != nil {
+		return models.MessageRequestThread{}, err
+	}
+
+	s.requestInboxMu.RLock()
+	thread, ok := s.requestInbox[senderID]
+	s.requestInboxMu.RUnlock()
+	if !ok || len(thread) == 0 {
+		return models.MessageRequestThread{}, app.ErrMessageRequestNotFound
+	}
+
+	summary, err := app.BuildMessageRequestSummary(senderID, thread)
+	if err != nil {
+		return models.MessageRequestThread{}, err
+	}
+	return models.MessageRequestThread{
+		Request:  summary,
+		Messages: app.CloneMessages(thread),
+	}, nil
+}
+
+func (s *Service) AcceptMessageRequest(senderID string) (bool, error) {
+	senderID, err := app.ValidateListMessagesContactID(senderID)
+	if err != nil {
+		return false, err
+	}
+
+	s.requestInboxMu.Lock()
+	thread, exists := s.requestInbox[senderID]
+	if !exists || len(thread) == 0 {
+		s.requestInboxMu.Unlock()
+		if s.identityManager.HasContact(senderID) {
+			return true, nil
+		}
+		return false, app.ErrMessageRequestNotFound
+	}
+	thread = app.CloneMessages(thread)
+	delete(s.requestInbox, senderID)
+	if err := s.persistRequestInboxLocked(); err != nil {
+		s.requestInbox[senderID] = thread
+		s.requestInboxMu.Unlock()
+		s.recordError("storage", err)
+		return false, err
+	}
+	s.requestInboxMu.Unlock()
+
+	if err := s.AddContact(senderID, senderID); err != nil {
+		// Restore request for retry if contact addition failed.
+		s.requestInboxMu.Lock()
+		if len(s.requestInbox[senderID]) == 0 {
+			s.requestInbox[senderID] = thread
+			if perr := s.persistRequestInboxLocked(); perr != nil {
+				s.requestInboxMu.Unlock()
+				s.recordError("storage", perr)
+				return false, errors.Join(err, perr)
+			}
+		}
+		s.requestInboxMu.Unlock()
+		return false, err
+	}
+
+	for _, msg := range thread {
+		if err := s.messageStore.SaveMessage(msg); err != nil {
+			if errors.Is(err, storage.ErrMessageIDConflict) {
+				continue
+			}
+			s.recordError("storage", err)
+			return false, err
+		}
+		s.notify("notify.message.new", map[string]any{
+			"contact_id": senderID,
+			"message":    msg,
+		})
+	}
+	s.notify("notify.request.accepted", map[string]any{
+		"contact_id": senderID,
+		"moved":      len(thread),
+	})
+	return true, nil
+}
+
+func (s *Service) DeclineMessageRequest(senderID string) (bool, error) {
+	senderID, err := app.ValidateListMessagesContactID(senderID)
+	if err != nil {
+		return false, err
+	}
+
+	exists, err := s.removeMessageRequest(senderID)
+	if err != nil {
+		s.recordError("storage", err)
+		return false, err
+	}
+
+	if exists {
+		s.notify("notify.request.declined", map[string]any{
+			"contact_id": senderID,
+		})
+	}
+	// Idempotent: repeated decline is treated as success.
+	return true, nil
+}
+
+func (s *Service) BlockSender(senderID string) (models.BlockSenderResult, error) {
+	senderID, err := app.NormalizeIdentityID(senderID)
+	if err != nil {
+		return models.BlockSenderResult{}, err
+	}
+	contactExists := s.identityManager.HasContact(senderID)
+	blocked, err := s.AddToBlocklist(senderID)
+	if err != nil {
+		return models.BlockSenderResult{}, err
+	}
+	requestRemoved, err := s.removeMessageRequest(senderID)
+	if err != nil {
+		s.recordError("storage", err)
+		return models.BlockSenderResult{}, err
+	}
+	if requestRemoved {
+		s.notify("notify.request.blocked", map[string]any{
+			"contact_id": senderID,
+		})
+	}
+	s.notify("notify.sender.blocked", map[string]any{
+		"contact_id":      senderID,
+		"request_removed": requestRemoved,
+		"contact_exists":  contactExists,
+	})
+	return models.BlockSenderResult{
+		Blocked:        blocked,
+		RequestRemoved: requestRemoved,
+		ContactExists:  contactExists,
+	}, nil
+}
+
+func (s *Service) removeMessageRequest(senderID string) (bool, error) {
+	s.requestInboxMu.Lock()
+	defer s.requestInboxMu.Unlock()
+	if _, exists := s.requestInbox[senderID]; !exists {
+		return false, nil
+	}
+	delete(s.requestInbox, senderID)
+	if err := s.persistRequestInboxLocked(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Service) GetMessageStatus(messageID string) (status models.MessageStatus, err error) {
@@ -413,8 +663,13 @@ func (s *Service) RevokeDevice(deviceID string) (models.DeviceRevocation, error)
 }
 
 func (s *Service) handleIncomingPrivateMessage(msg waku.PrivateMessage) {
-	if !s.identityManager.HasContact(msg.SenderID) {
-		s.recordError("crypto", errors.New("sender is not an added contact"))
+	decision := s.evaluateInboundPolicy(msg.SenderID)
+	switch decision.Action {
+	case app.InboundMessageActionReject:
+		s.recordError("crypto", inboundPolicyError(decision.Reason))
+		return
+	case app.InboundMessageActionQueueRequest:
+		s.handleInboundMessageRequest(msg)
 		return
 	}
 
@@ -423,10 +678,12 @@ func (s *Service) handleIncomingPrivateMessage(msg waku.PrivateMessage) {
 
 	var wire app.WirePayload
 	if err := json.Unmarshal(msg.Payload, &wire); err == nil {
-		if violation := app.ValidateInboundContactTrust(msg.SenderID, wire, s.identityManager); violation != nil {
-			s.recordError("crypto", violation.Err)
-			s.notifySecurityAlert(violation.AlertCode, msg.SenderID, violation.Err.Error())
-			return
+		if !s.shouldBypassContactTrust(decision, wire, msg.SenderID) {
+			if violation := app.ValidateInboundContactTrust(msg.SenderID, wire, s.identityManager); violation != nil {
+				s.recordError("crypto", violation.Err)
+				s.notifySecurityAlert(violation.AlertCode, msg.SenderID, violation.Err.Error())
+				return
+			}
 		}
 
 		if wire.Kind == "device_revoke" && wire.Revocation != nil {
@@ -435,9 +692,11 @@ func (s *Service) handleIncomingPrivateMessage(msg waku.PrivateMessage) {
 			}
 			return
 		}
-		if err := app.ValidateInboundDeviceAuth(msg, wire, s.identityManager); err != nil {
-			s.recordError(app.ErrorCategory(err), err)
-			return
+		if !s.shouldBypassInboundDeviceAuth(decision, wire, msg.SenderID) {
+			if err := app.ValidateInboundDeviceAuth(msg, wire, s.identityManager); err != nil {
+				s.recordError(app.ErrorCategory(err), err)
+				return
+			}
 		}
 		receiptHandling := app.ResolveInboundReceiptHandling(wire)
 		if receiptHandling.Handled {
@@ -457,8 +716,110 @@ func (s *Service) handleIncomingPrivateMessage(msg waku.PrivateMessage) {
 	if !s.persistInboundMessage(in, msg.SenderID) {
 		return
 	}
+	if !s.identityManager.HasVerifiedContact(msg.SenderID) {
+		return
+	}
 	if err := s.sendReceipt(msg.SenderID, msg.ID, "delivered"); err != nil {
 		s.recordError("network", err)
+	}
+}
+
+func (s *Service) shouldBypassContactTrust(
+	decision app.InboundMessagePolicyDecision,
+	wire app.WirePayload,
+	senderID string,
+) bool {
+	if decision.Reason != app.InboundMessageReasonUnknownEveryoneMode {
+		return false
+	}
+	if s.identityManager.HasVerifiedContact(senderID) {
+		return false
+	}
+	if wire.Card != nil {
+		return false
+	}
+	if err := s.identityManager.AddContactByIdentityID(senderID, senderID); err != nil {
+		s.recordError("crypto", err)
+		return false
+	}
+	return true
+}
+
+func (s *Service) shouldBypassInboundDeviceAuth(
+	decision app.InboundMessagePolicyDecision,
+	wire app.WirePayload,
+	senderID string,
+) bool {
+	if decision.Reason != app.InboundMessageReasonUnknownEveryoneMode {
+		return false
+	}
+	if s.identityManager.HasVerifiedContact(senderID) {
+		return false
+	}
+	return wire.Card == nil
+}
+
+func (s *Service) handleInboundMessageRequest(msg waku.PrivateMessage) {
+	content := append([]byte(nil), msg.Payload...)
+	contentType := "text"
+
+	var wire app.WirePayload
+	if err := json.Unmarshal(msg.Payload, &wire); err == nil {
+		receiptHandling := app.ResolveInboundReceiptHandling(wire)
+		if receiptHandling.Handled {
+			return
+		}
+		var decryptErr error
+		content, contentType, decryptErr = app.ResolveInboundContent(msg, wire, s.sessionManager)
+		if decryptErr != nil {
+			s.recordError("crypto", decryptErr)
+		}
+	}
+
+	in := app.BuildInboundStoredMessage(msg, content, contentType, time.Now())
+	if !s.persistInboundRequest(in) {
+		return
+	}
+	if !s.identityManager.HasVerifiedContact(msg.SenderID) {
+		return
+	}
+	if err := s.sendReceipt(msg.SenderID, msg.ID, "delivered"); err != nil {
+		s.recordError("network", err)
+	}
+}
+
+func (s *Service) evaluateInboundPolicy(senderID string) app.InboundMessagePolicyDecision {
+	return app.EvaluateInboundMessagePolicy(app.InboundMessagePolicyInput{
+		IsKnownContact: s.identityManager.HasContact(senderID),
+		IsBlocked:      s.isBlockedSender(senderID),
+		PrivacyMode:    s.currentPrivacyMode(),
+	})
+}
+
+func (s *Service) currentPrivacyMode() app.MessagePrivacyMode {
+	s.privacyMu.RLock()
+	mode := s.privacySettings.MessagePrivacyMode
+	s.privacyMu.RUnlock()
+	return mode
+}
+
+func (s *Service) isBlockedSender(senderID string) bool {
+	s.blocklistMu.RLock()
+	blocked := s.blocklist.Contains(senderID)
+	s.blocklistMu.RUnlock()
+	return blocked
+}
+
+func inboundPolicyError(reason app.InboundMessagePolicyReason) error {
+	switch reason {
+	case app.InboundMessageReasonBlockedSender:
+		return errors.New("sender is blocked")
+	case app.InboundMessageReasonUnknownContactsOnly:
+		return errors.New("sender is not an added contact")
+	case app.InboundMessageReasonUnknownMessageReq:
+		return errors.New("sender must be accepted through message requests")
+	default:
+		return errors.New("inbound message rejected by policy")
 	}
 }
 
@@ -468,12 +829,46 @@ func (s *Service) applyInboundReceiptStatus(receiptHandling app.InboundReceiptHa
 
 func (s *Service) persistInboundMessage(in models.Message, senderID string) bool {
 	if err := s.messageStore.SaveMessage(in); err != nil {
+		if errors.Is(err, storage.ErrMessageIDConflict) {
+			s.logger.Warn("inbound message id conflict ignored", "message_id", in.ID, "contact_id", in.ContactID)
+			return false
+		}
 		s.recordError("storage", err)
 		return false
 	}
 	s.logger.Info("message received", "message_id", in.ID, "contact_id", in.ContactID, "content_type", in.ContentType)
 	s.notify("notify.message.new", map[string]any{
 		"contact_id": senderID,
+		"message":    in,
+	})
+	return true
+}
+
+func (s *Service) persistInboundRequest(in models.Message) bool {
+	s.requestInboxMu.Lock()
+
+	thread := s.requestInbox[in.ContactID]
+	if app.HasMessageID(thread, in.ID) {
+		s.requestInboxMu.Unlock()
+		s.logger.Warn("inbound request message id conflict ignored", "message_id", in.ID, "contact_id", in.ContactID)
+		return false
+	}
+	in.Timestamp = app.NormalizeMessageTimestamp(in.Timestamp)
+	s.requestInbox[in.ContactID] = append(thread, in)
+	if err := s.persistRequestInboxLocked(); err != nil {
+		// Best-effort rollback for append failure.
+		if len(thread) == 0 {
+			delete(s.requestInbox, in.ContactID)
+		} else {
+			s.requestInbox[in.ContactID] = thread
+		}
+		s.requestInboxMu.Unlock()
+		s.recordError("storage", err)
+		return false
+	}
+	s.requestInboxMu.Unlock()
+	s.notify("notify.request.new", map[string]any{
+		"contact_id": in.ContactID,
 		"message":    in,
 	})
 	return true
@@ -726,6 +1121,75 @@ func (s *Service) GetMetrics() models.MetricsSnapshot {
 		LastUpdatedAt:       lastAt,
 		NotificationBacklog: s.notifier.BacklogSize(),
 	}
+}
+
+func (s *Service) GetPrivacySettings() (app.PrivacySettings, error) {
+	s.privacyMu.RLock()
+	settings := s.privacySettings
+	s.privacyMu.RUnlock()
+	return app.NormalizePrivacySettings(settings), nil
+}
+
+func (s *Service) UpdatePrivacySettings(mode string) (app.PrivacySettings, error) {
+	parsedMode, err := app.ParseMessagePrivacyMode(mode)
+	if err != nil {
+		return app.PrivacySettings{}, err
+	}
+	updated := app.PrivacySettings{MessagePrivacyMode: parsedMode}
+	updated = app.NormalizePrivacySettings(updated)
+	if err := s.privacyState.Persist(updated); err != nil {
+		s.recordError("storage", err)
+		return app.PrivacySettings{}, err
+	}
+	s.privacyMu.Lock()
+	s.privacySettings = updated
+	s.privacyMu.Unlock()
+	return updated, nil
+}
+
+func (s *Service) GetBlocklist() ([]string, error) {
+	s.blocklistMu.RLock()
+	out := s.blocklist.List()
+	s.blocklistMu.RUnlock()
+	return out, nil
+}
+
+func (s *Service) AddToBlocklist(identityID string) ([]string, error) {
+	s.blocklistMu.Lock()
+	defer s.blocklistMu.Unlock()
+
+	next, err := app.NewBlocklist(s.blocklist.List())
+	if err != nil {
+		return nil, err
+	}
+	if err := next.Add(identityID); err != nil {
+		return nil, err
+	}
+	if err := s.blocklistState.Persist(next); err != nil {
+		s.recordError("storage", err)
+		return nil, err
+	}
+	s.blocklist = next
+	return next.List(), nil
+}
+
+func (s *Service) RemoveFromBlocklist(identityID string) ([]string, error) {
+	s.blocklistMu.Lock()
+	defer s.blocklistMu.Unlock()
+
+	next, err := app.NewBlocklist(s.blocklist.List())
+	if err != nil {
+		return nil, err
+	}
+	if err := next.Remove(identityID); err != nil {
+		return nil, err
+	}
+	if err := s.blocklistState.Persist(next); err != nil {
+		s.recordError("storage", err)
+		return nil, err
+	}
+	s.blocklist = next
+	return next.List(), nil
 }
 
 func (s *Service) recordError(category string, err error) {

@@ -43,6 +43,11 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if !s.rpcLimiter.allow(rpcRateLimitKey(r, s.extractRPCToken(r)), time.Now()) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
 	if !s.authorizeRPC(w, r) {
 		return
 	}
@@ -106,6 +111,15 @@ func (s *Server) dispatchRPC(method string, rawParams json.RawMessage) (any, *rp
 		return map[string]string{"status": "ok"}, nil
 	}
 	if result, rpcErr, ok := s.dispatchIdentityRPC(method, rawParams); ok {
+		return result, rpcErr
+	}
+	if result, rpcErr, ok := s.dispatchPrivacyRPC(method, rawParams); ok {
+		return result, rpcErr
+	}
+	if result, rpcErr, ok := s.dispatchBlocklistRPC(method, rawParams); ok {
+		return result, rpcErr
+	}
+	if result, rpcErr, ok := s.dispatchRequestRPC(method, rawParams); ok {
 		return result, rpcErr
 	}
 	if result, rpcErr, ok := s.dispatchNetworkRPC(method); ok {

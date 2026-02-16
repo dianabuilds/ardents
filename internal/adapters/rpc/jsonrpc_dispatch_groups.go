@@ -94,6 +94,97 @@ func (s *Server) dispatchNetworkRPC(method string) (any, *rpcError, bool) {
 	}
 }
 
+func (s *Server) dispatchPrivacyRPC(method string, rawParams json.RawMessage) (any, *rpcError, bool) {
+	switch method {
+	case "privacy.get":
+		result, rpcErr := callWithoutParams(-32080, func() (any, error) {
+			return s.service.GetPrivacySettings()
+		})
+		return result, rpcErr, true
+	case "privacy.set":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32081, func(mode string) (any, error) {
+			return s.service.UpdatePrivacySettings(mode)
+		})
+		return result, rpcErr, true
+	default:
+		return nil, nil, false
+	}
+}
+
+func (s *Server) dispatchBlocklistRPC(method string, rawParams json.RawMessage) (any, *rpcError, bool) {
+	switch method {
+	case "blocklist.list":
+		result, rpcErr := callWithoutParams(-32090, func() (any, error) {
+			blocked, err := s.service.GetBlocklist()
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"blocked": blocked}, nil
+		})
+		return result, rpcErr, true
+	case "blocklist.add":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32091, func(identityID string) (any, error) {
+			blocked, err := s.service.AddToBlocklist(identityID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"blocked": blocked}, nil
+		})
+		return result, rpcErr, true
+	case "blocklist.remove":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32092, func(identityID string) (any, error) {
+			blocked, err := s.service.RemoveFromBlocklist(identityID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"blocked": blocked}, nil
+		})
+		return result, rpcErr, true
+	default:
+		return nil, nil, false
+	}
+}
+
+func (s *Server) dispatchRequestRPC(method string, rawParams json.RawMessage) (any, *rpcError, bool) {
+	switch method {
+	case "request.list":
+		result, rpcErr := callWithoutParams(-32093, func() (any, error) {
+			return s.service.ListMessageRequests()
+		})
+		return result, rpcErr, true
+	case "request.get":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32094, func(senderID string) (any, error) {
+			return s.service.GetMessageRequest(senderID)
+		})
+		return result, rpcErr, true
+	case "request.accept":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32095, func(senderID string) (any, error) {
+			accepted, err := s.service.AcceptMessageRequest(senderID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"accepted": accepted}, nil
+		})
+		return result, rpcErr, true
+	case "request.decline":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32096, func(senderID string) (any, error) {
+			declined, err := s.service.DeclineMessageRequest(senderID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"declined": declined}, nil
+		})
+		return result, rpcErr, true
+	case "request.block":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32097, func(senderID string) (any, error) {
+			return s.service.BlockSender(senderID)
+		})
+		return result, rpcErr, true
+	default:
+		return nil, nil, false
+	}
+}
+
 func (s *Server) dispatchSessionMessageRPC(method string, rawParams json.RawMessage) (any, *rpcError, bool) {
 	switch method {
 	case "session.init":
@@ -113,6 +204,23 @@ func (s *Server) dispatchSessionMessageRPC(method string, rawParams json.RawMess
 	case "message.edit":
 		result, rpcErr := callWithMessageEditParams(rawParams, -32043, func(contactID, messageID, content string) (any, error) {
 			return s.service.EditMessage(contactID, messageID, content)
+		})
+		return result, rpcErr, true
+	case "message.delete":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32044, func(contactID, messageID string) (any, error) {
+			if err := s.service.DeleteMessage(contactID, messageID); err != nil {
+				return nil, err
+			}
+			return map[string]bool{"deleted": true}, nil
+		})
+		return result, rpcErr, true
+	case "message.clear":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32045, func(contactID string) (any, error) {
+			cleared, err := s.service.ClearMessages(contactID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]int{"cleared": cleared}, nil
 		})
 		return result, rpcErr, true
 	case "message.list":

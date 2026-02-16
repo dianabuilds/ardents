@@ -108,6 +108,10 @@ func Merge(dst *waku.Config, src DaemonNetworkConfig) {
 }
 
 func ApplyEnvOverrides(cfg *waku.Config) {
+	if transport := strings.TrimSpace(os.Getenv("AIM_NETWORK_TRANSPORT")); transport != "" {
+		cfg.Transport = transport
+	}
+
 	raw := strings.TrimSpace(os.Getenv("AIM_NETWORK_FAILOVER_V1"))
 	if raw == "" {
 		return
