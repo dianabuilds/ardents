@@ -210,3 +210,77 @@ func TestEncryptedPersistentMessageStoreCreatesPrivateDir(t *testing.T) {
 		t.Fatalf("expected dir perm 0700, got %04o", info.Mode().Perm())
 	}
 }
+
+func TestMessageStoreNormalizesDirectConversationFields(t *testing.T) {
+	s := NewMessageStore()
+	msg := models.Message{
+		ID:        "m-direct",
+		ContactID: "c1",
+		Content:   []byte("hi"),
+		Timestamp: time.Now().UTC(),
+		Direction: "out",
+		Status:    "pending",
+	}
+	if err := s.SaveMessage(msg); err != nil {
+		t.Fatalf("save message failed: %v", err)
+	}
+	got, ok := s.GetMessage("m-direct")
+	if !ok {
+		t.Fatal("message not found")
+	}
+	if got.ConversationType != models.ConversationTypeDirect {
+		t.Fatalf("expected direct conversation type, got %q", got.ConversationType)
+	}
+	if got.ConversationID != "c1" {
+		t.Fatalf("expected conversation id to match contact id, got %q", got.ConversationID)
+	}
+}
+
+func TestMessageStoreListMessagesByConversationSupportsGroupAndDirect(t *testing.T) {
+	s := NewMessageStore()
+	now := time.Now().UTC()
+
+	fixture := []models.Message{
+		{
+			ID:               "m1",
+			ContactID:        "c1",
+			ConversationID:   "c1",
+			ConversationType: models.ConversationTypeDirect,
+			Timestamp:        now,
+		},
+		{
+			ID:               "m2",
+			ContactID:        "c2",
+			ConversationID:   "group-1",
+			ConversationType: models.ConversationTypeGroup,
+			Timestamp:        now.Add(time.Second),
+		},
+		{
+			ID:               "m3",
+			ContactID:        "c3",
+			ConversationID:   "group-1",
+			ConversationType: models.ConversationTypeGroup,
+			Timestamp:        now.Add(2 * time.Second),
+		},
+	}
+	for _, msg := range fixture {
+		if err := s.SaveMessage(msg); err != nil {
+			t.Fatalf("save message %s failed: %v", msg.ID, err)
+		}
+	}
+
+	direct := s.ListMessagesByConversation("c1", models.ConversationTypeDirect, 50, 0)
+	if len(direct) != 1 || direct[0].ID != "m1" {
+		t.Fatalf("unexpected direct conversation messages: %+v", direct)
+	}
+
+	group := s.ListMessagesByConversation("group-1", models.ConversationTypeGroup, 50, 0)
+	if len(group) != 2 || group[0].ID != "m2" || group[1].ID != "m3" {
+		t.Fatalf("unexpected group conversation messages: %+v", group)
+	}
+
+	legacyDirect := s.ListMessages("c1", 50, 0)
+	if len(legacyDirect) != 1 || legacyDirect[0].ID != "m1" {
+		t.Fatalf("legacy direct list regression: %+v", legacyDirect)
+	}
+}

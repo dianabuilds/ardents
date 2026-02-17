@@ -185,6 +185,107 @@ func (s *Server) dispatchRequestRPC(method string, rawParams json.RawMessage) (a
 	}
 }
 
+func (s *Server) dispatchGroupRPC(method string, rawParams json.RawMessage) (any, *rpcError, bool) {
+	switch method {
+	case "group.create":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32100, func(title string) (any, error) {
+			return s.service.CreateGroup(title)
+		})
+		return result, rpcErr, true
+	case "group.get":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32101, func(groupID string) (any, error) {
+			return s.service.GetGroup(groupID)
+		})
+		return result, rpcErr, true
+	case "group.list":
+		result, rpcErr := callWithoutParams(-32102, func() (any, error) {
+			return s.service.ListGroups()
+		})
+		return result, rpcErr, true
+	case "group.members.list":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32103, func(groupID string) (any, error) {
+			return s.service.ListGroupMembers(groupID)
+		})
+		return result, rpcErr, true
+	case "group.leave":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32104, func(groupID string) (any, error) {
+			left, err := s.service.LeaveGroup(groupID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"left": left}, nil
+		})
+		return result, rpcErr, true
+	case "group.invite":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32110, func(groupID, memberID string) (any, error) {
+			return s.service.InviteToGroup(groupID, memberID)
+		})
+		return result, rpcErr, true
+	case "group.accept_invite":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32111, func(groupID string) (any, error) {
+			accepted, err := s.service.AcceptGroupInvite(groupID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"accepted": accepted}, nil
+		})
+		return result, rpcErr, true
+	case "group.decline_invite":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32112, func(groupID string) (any, error) {
+			declined, err := s.service.DeclineGroupInvite(groupID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"declined": declined}, nil
+		})
+		return result, rpcErr, true
+	case "group.remove_member":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32113, func(groupID, memberID string) (any, error) {
+			removed, err := s.service.RemoveGroupMember(groupID, memberID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"removed": removed}, nil
+		})
+		return result, rpcErr, true
+	case "group.promote":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32114, func(groupID, memberID string) (any, error) {
+			return s.service.PromoteGroupMember(groupID, memberID)
+		})
+		return result, rpcErr, true
+	case "group.demote":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32115, func(groupID, memberID string) (any, error) {
+			return s.service.DemoteGroupMember(groupID, memberID)
+		})
+		return result, rpcErr, true
+	case "group.send":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32120, func(groupID, content string) (any, error) {
+			return s.service.SendGroupMessage(groupID, content)
+		})
+		return result, rpcErr, true
+	case "group.messages.list":
+		result, rpcErr := callWithMessageListParams(rawParams, -32121, func(groupID string, limit, offset int) (any, error) {
+			return s.service.ListGroupMessages(groupID, limit, offset)
+		})
+		return result, rpcErr, true
+	case "group.message.status":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32122, func(groupID, messageID string) (any, error) {
+			return s.service.GetGroupMessageStatus(groupID, messageID)
+		})
+		return result, rpcErr, true
+	case "group.message.delete":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32123, func(groupID, messageID string) (any, error) {
+			if err := s.service.DeleteGroupMessage(groupID, messageID); err != nil {
+				return nil, err
+			}
+			return map[string]bool{"deleted": true}, nil
+		})
+		return result, rpcErr, true
+	default:
+		return nil, nil, false
+	}
+}
+
 func (s *Server) dispatchSessionMessageRPC(method string, rawParams json.RawMessage) (any, *rpcError, bool) {
 	switch method {
 	case "session.init":

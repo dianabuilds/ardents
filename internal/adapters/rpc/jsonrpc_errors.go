@@ -1,9 +1,8 @@
 package rpc
 
 import (
+	"aim-chat/go-backend/internal/domains/contracts"
 	"errors"
-
-	"aim-chat/go-backend/internal/app/contracts"
 )
 
 func rpcInvalidParams() *rpcError {

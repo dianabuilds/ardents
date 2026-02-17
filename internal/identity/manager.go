@@ -9,12 +9,13 @@ import (
 	"sync"
 	"time"
 
+	identitypolicy "aim-chat/go-backend/internal/domains/identity/policy"
 	"aim-chat/go-backend/pkg/models"
 )
 
 var (
-	ErrInvalidContactCard = errors.New("invalid contact card")
-	ErrIdentityMismatch   = errors.New("identity_id does not match public key")
+	ErrInvalidContactCard = identitypolicy.ErrInvalidContactCard
+	ErrIdentityMismatch   = identitypolicy.ErrIdentityMismatch
 	ErrInvalidContactID   = errors.New("invalid contact id")
 	ErrContactKeyMismatch = errors.New("contact public key mismatch")
 )
@@ -35,7 +36,7 @@ func NewManager() (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, err := BuildIdentityID(pub)
+	id, err := identitypolicy.BuildIdentityID(pub)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +148,7 @@ func (m *Manager) RestoreIdentityPrivateKey(privateKey []byte) error {
 	}
 	priv := ed25519.PrivateKey(append([]byte(nil), privateKey...))
 	pub := priv.Public().(ed25519.PublicKey)
-	id, err := BuildIdentityID(pub)
+	id, err := identitypolicy.BuildIdentityID(pub)
 	if err != nil {
 		return err
 	}
@@ -164,7 +165,7 @@ func (m *Manager) RestoreIdentityPrivateKey(privateKey []byte) error {
 }
 
 func (m *Manager) AddContact(card models.ContactCard) error {
-	if ok, err := VerifyContactCard(card); err != nil || !ok {
+	if ok, err := identitypolicy.VerifyContactCard(card); err != nil || !ok {
 		if err != nil {
 			return err
 		}
@@ -231,7 +232,7 @@ func (m *Manager) VerifyPassword(password string) error {
 }
 
 func (m *Manager) VerifyContactCard(card models.ContactCard) (bool, error) {
-	return VerifyContactCard(card)
+	return identitypolicy.VerifyContactCard(card)
 }
 
 func (m *Manager) Contacts() []models.Contact {
@@ -276,49 +277,5 @@ func (m *Manager) SelfContactCard(displayName string) (models.ContactCard, error
 	defer m.mu.RUnlock()
 	pub := ed25519.PublicKey(append([]byte(nil), m.identity.SigningPublicKey...))
 	priv := ed25519.PrivateKey(append([]byte(nil), m.selfPriv...))
-	return SignContactCard(m.identity.ID, displayName, pub, priv)
-}
-
-func SignContactCard(identityID, displayName string, publicKey ed25519.PublicKey, privateKey ed25519.PrivateKey) (models.ContactCard, error) {
-	if privateKey == nil || publicKey == nil {
-		return models.ContactCard{}, ErrInvalidContactCard
-	}
-	card := models.ContactCard{
-		IdentityID:  identityID,
-		DisplayName: displayName,
-		PublicKey:   append([]byte(nil), publicKey...),
-	}
-	if ok, err := VerifyIdentityID(identityID, publicKey); err != nil || !ok {
-		if err != nil {
-			return models.ContactCard{}, err
-		}
-		return models.ContactCard{}, ErrIdentityMismatch
-	}
-	card.Signature = ed25519.Sign(privateKey, contactCardSigningBytes(card))
-	return card, nil
-}
-
-func VerifyContactCard(card models.ContactCard) (bool, error) {
-	if len(card.PublicKey) != ed25519.PublicKeySize || len(card.Signature) != ed25519.SignatureSize {
-		return false, ErrInvalidContactCard
-	}
-	ok, err := VerifyIdentityID(card.IdentityID, card.PublicKey)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return false, ErrIdentityMismatch
-	}
-	return ed25519.Verify(card.PublicKey, contactCardSigningBytes(card), card.Signature), nil
-}
-
-func contactCardSigningBytes(card models.ContactCard) []byte {
-	// Canonical and deterministic byte encoding for signatures.
-	b := make([]byte, 0, len(card.IdentityID)+len(card.DisplayName)+len(card.PublicKey)+2)
-	b = append(b, []byte(card.IdentityID)...)
-	b = append(b, 0)
-	b = append(b, []byte(card.DisplayName)...)
-	b = append(b, 0)
-	b = append(b, card.PublicKey...)
-	return b
+	return identitypolicy.SignContactCard(m.identity.ID, displayName, pub, priv)
 }

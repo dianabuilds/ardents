@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,10 +39,6 @@ func NewMessageStore() *MessageStore {
 	}
 }
 
-func NewPersistentMessageStore(path string) (*MessageStore, error) {
-	return NewEncryptedPersistentMessageStore(path, "")
-}
-
 func NewEncryptedPersistentMessageStore(path, passphrase string) (*MessageStore, error) {
 	s := &MessageStore{
 		messages: make(map[string]models.Message),
@@ -58,6 +55,7 @@ func NewEncryptedPersistentMessageStore(path, passphrase string) (*MessageStore,
 func (s *MessageStore) SaveMessage(msg models.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	msg = models.NormalizeMessageConversation(msg)
 	if existing, ok := s.messages[msg.ID]; ok {
 		if messagesEqual(existing, msg) {
 			return nil
@@ -177,16 +175,46 @@ func (s *MessageStore) GetMessage(messageID string) (models.Message, bool) {
 func (s *MessageStore) ListMessages(contactID string, limit, offset int) []models.Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.listMessagesFiltered(limit, offset, func(msg models.Message) (models.Message, bool) {
+		if msg.ContactID != contactID {
+			return models.Message{}, false
+		}
+		return msg, true
+	})
+}
+
+func (s *MessageStore) ListMessagesByConversation(conversationID, conversationType string, limit, offset int) []models.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	conversationID = strings.TrimSpace(conversationID)
+	conversationType = models.NormalizeConversationType(conversationType)
+	return s.listMessagesFiltered(limit, offset, func(msg models.Message) (models.Message, bool) {
+		normalized := models.NormalizeMessageConversation(msg)
+		if normalized.ConversationID != conversationID || normalized.ConversationType != conversationType {
+			return models.Message{}, false
+		}
+		return normalized, true
+	})
+}
+
+func (s *MessageStore) listMessagesFiltered(
+	limit, offset int,
+	include func(models.Message) (models.Message, bool),
+) []models.Message {
 	filtered := make([]models.Message, 0)
 	for _, msg := range s.messages {
-		if msg.ContactID == contactID {
-			filtered = append(filtered, msg)
+		item, ok := include(msg)
+		if ok {
+			filtered = append(filtered, item)
 		}
 	}
 	sort.Slice(filtered, func(i, j int) bool {
 		return filtered[i].Timestamp.Before(filtered[j].Timestamp)
 	})
+	return paginateMessages(filtered, limit, offset)
+}
 
+func paginateMessages(filtered []models.Message, limit, offset int) []models.Message {
 	if offset < 0 {
 		offset = 0
 	}
@@ -299,10 +327,17 @@ func (s *MessageStore) load() error {
 		return err
 	}
 	if snapshot.Messages != nil {
-		s.messages = snapshot.Messages
+		s.messages = make(map[string]models.Message, len(snapshot.Messages))
+		for id, msg := range snapshot.Messages {
+			s.messages[id] = models.NormalizeMessageConversation(msg)
+		}
 	}
 	if snapshot.Pending != nil {
-		s.pending = snapshot.Pending
+		s.pending = make(map[string]PendingMessage, len(snapshot.Pending))
+		for id, p := range snapshot.Pending {
+			p.Message = models.NormalizeMessageConversation(p.Message)
+			s.pending[id] = p
+		}
 	}
 	return nil
 }
@@ -373,8 +408,12 @@ func statusOrder(status string) int {
 }
 
 func messagesEqual(a, b models.Message) bool {
+	a = models.NormalizeMessageConversation(a)
+	b = models.NormalizeMessageConversation(b)
 	return a.ID == b.ID &&
 		a.ContactID == b.ContactID &&
+		a.ConversationID == b.ConversationID &&
+		a.ConversationType == b.ConversationType &&
 		bytes.Equal(a.Content, b.Content) &&
 		a.Timestamp.Equal(b.Timestamp) &&
 		a.Direction == b.Direction &&

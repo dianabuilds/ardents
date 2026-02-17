@@ -28,14 +28,16 @@ type Contact struct {
 }
 
 type Message struct {
-	ID          string    `json:"id"`
-	ContactID   string    `json:"contact_id"`
-	Content     []byte    `json:"content"`
-	Timestamp   time.Time `json:"timestamp"`
-	Direction   string    `json:"direction"`
-	Status      string    `json:"status"`
-	ContentType string    `json:"content_type"`
-	Edited      bool      `json:"edited"`
+	ID               string    `json:"id"`
+	ContactID        string    `json:"contact_id"`
+	ConversationID   string    `json:"conversation_id,omitempty"`
+	ConversationType string    `json:"conversation_type,omitempty"`
+	Content          []byte    `json:"content"`
+	Timestamp        time.Time `json:"timestamp"`
+	Direction        string    `json:"direction"`
+	Status           string    `json:"status"`
+	ContentType      string    `json:"content_type"`
+	Edited           bool      `json:"edited"`
 }
 
 type Settings struct {
@@ -66,6 +68,7 @@ type MetricsSnapshot struct {
 	PeerCount           int                        `json:"peer_count"`
 	PendingQueueSize    int                        `json:"pending_queue_size"`
 	ErrorCounters       map[string]int             `json:"error_counters"`
+	GroupAggregates     map[string]int             `json:"group_aggregates,omitempty"`
 	NetworkMetrics      map[string]int             `json:"network_metrics"`
 	OperationStats      map[string]OperationMetric `json:"operation_stats"`
 	RetryAttemptsTotal  int                        `json:"retry_attempts_total"`

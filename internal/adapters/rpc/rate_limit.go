@@ -6,10 +6,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"golang.org/x/time/rate"
+	"aim-chat/go-backend/internal/platform/ratelimiter"
 )
 
 const (
@@ -25,17 +24,7 @@ type rpcRateLimitConfig struct {
 }
 
 type rpcRateLimiter struct {
-	limit   rate.Limit
-	burst   int
-	mu      sync.Mutex
-	byKey   map[string]*rpcRateLimitEntry
-	hits    uint64
-	idleTTL time.Duration
-}
-
-type rpcRateLimitEntry struct {
-	limiter  *rate.Limiter
-	lastSeen time.Time
+	limiter *ratelimiter.MapLimiter
 }
 
 func loadRPCRateLimitConfig() rpcRateLimitConfig {
@@ -70,10 +59,7 @@ func newRPCRateLimiter(cfg rpcRateLimitConfig) *rpcRateLimiter {
 		return nil
 	}
 	return &rpcRateLimiter{
-		limit:   rate.Limit(cfg.RPS),
-		burst:   cfg.Burst,
-		byKey:   make(map[string]*rpcRateLimitEntry),
-		idleTTL: 10 * time.Minute,
+		limiter: ratelimiter.New(cfg.RPS, cfg.Burst, 10*time.Minute),
 	}
 }
 
@@ -81,29 +67,7 @@ func (l *rpcRateLimiter) allow(key string, now time.Time) bool {
 	if l == nil {
 		return true
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	entry, ok := l.byKey[key]
-	if !ok {
-		entry = &rpcRateLimitEntry{
-			limiter:  rate.NewLimiter(l.limit, l.burst),
-			lastSeen: now,
-		}
-		l.byKey[key] = entry
-	}
-	entry.lastSeen = now
-	allowed := entry.limiter.AllowN(now, 1)
-
-	l.hits++
-	if l.hits%512 == 0 {
-		cutoff := now.Add(-l.idleTTL)
-		for k, v := range l.byKey {
-			if v.lastSeen.Before(cutoff) {
-				delete(l.byKey, k)
-			}
-		}
-	}
-	return allowed
+	return l.limiter.Allow(key, now)
 }
 
 func rpcRateLimitKey(r *http.Request, token string) string {

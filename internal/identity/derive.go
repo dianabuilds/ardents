@@ -3,11 +3,8 @@ package identity
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
-	"fmt"
 	"io"
 
-	"github.com/mr-tron/base58/base58"
-	"golang.org/x/crypto/blake2b"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -34,22 +31,6 @@ func DeriveKeys(seedBytes []byte) (*DerivedKeys, error) {
 		SigningPublicKey:  signingPub,
 		EncryptionSeed:    encryptionSeed,
 	}, nil
-}
-
-func BuildIdentityID(signingPublicKey []byte) (string, error) {
-	if len(signingPublicKey) != ed25519.PublicKeySize {
-		return "", fmt.Errorf("invalid signing public key size: %d", len(signingPublicKey))
-	}
-	h := blake2b.Sum256(signingPublicKey)
-	return "aim1" + base58.Encode(h[:]), nil
-}
-
-func VerifyIdentityID(identityID string, signingPublicKey []byte) (bool, error) {
-	expected, err := BuildIdentityID(signingPublicKey)
-	if err != nil {
-		return false, err
-	}
-	return identityID == expected, nil
 }
 
 func hkdfExpand(seed []byte, info string, outLen int) ([]byte, error) {

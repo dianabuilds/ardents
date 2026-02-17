@@ -14,19 +14,20 @@ import (
 	"strings"
 	"time"
 
-	"aim-chat/go-backend/internal/app/contracts"
+	"aim-chat/go-backend/internal/domains/contracts"
 )
 
 const DefaultRPCAddr = "127.0.0.1:8787"
 
 type Server struct {
-	httpServer *http.Server
-	service    contracts.DaemonService
-	initErr    error
-	rpcToken   string
-	requireRPC bool
-	rpcLimiter *rpcRateLimiter
-	streams    *rpcStreamLimiter
+	httpServer    *http.Server
+	service       contracts.DaemonService
+	initErr       error
+	rpcToken      string
+	requireRPC    bool
+	groupsEnabled bool
+	rpcLimiter    *rpcRateLimiter
+	streams       *rpcStreamLimiter
 }
 
 func NewServerWithService(rpcAddr string, svc contracts.DaemonService) *Server {
@@ -52,11 +53,12 @@ func newServerWithService(rpcAddr string, svc contracts.DaemonService, rpcToken 
 			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
-		service:    svc,
-		rpcToken:   rpcToken,
-		requireRPC: requireRPC,
-		rpcLimiter: newRPCRateLimiter(loadRPCRateLimitConfig()),
-		streams:    newRPCStreamLimiter(loadRPCStreamLimitConfig()),
+		service:       svc,
+		rpcToken:      rpcToken,
+		requireRPC:    requireRPC,
+		groupsEnabled: groupsEnabled(),
+		rpcLimiter:    newRPCRateLimiter(loadRPCRateLimitConfig()),
+		streams:       newRPCStreamLimiter(loadRPCStreamLimitConfig()),
 	}
 	if s.rpcToken == "" && !s.requireRPC {
 		slog.Default().Warn("AIM_RPC_TOKEN is not set; RPC auth disabled")
@@ -361,5 +363,17 @@ func parseBoolEnv(name string) (bool, bool) {
 		return false, true
 	default:
 		return false, false
+	}
+}
+
+func groupsEnabled() bool {
+	if v, ok := parseBoolEnv("AIM_GROUPS_ENABLED"); ok {
+		return v
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AIM_ENV"))) {
+	case "test", "testing", "dev", "development", "local":
+		return true
+	default:
+		return false
 	}
 }

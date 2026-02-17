@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	identitypolicy "aim-chat/go-backend/internal/domains/identity/policy"
+
 	"github.com/tyler-smith/go-bip39"
 )
 
@@ -193,7 +195,7 @@ func FromKeys(keys *DerivedKeys) (id string, publicKey ed25519.PublicKey, err er
 	if keys == nil || len(keys.SigningPublicKey) != ed25519.PublicKeySize {
 		return "", nil, ErrIdentityInit
 	}
-	id, err = BuildIdentityID(keys.SigningPublicKey)
+	id, err = identitypolicy.BuildIdentityID(keys.SigningPublicKey)
 	if err != nil {
 		return "", nil, err
 	}

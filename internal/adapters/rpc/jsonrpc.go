@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -110,6 +111,9 @@ func (s *Server) dispatchRPC(method string, rawParams json.RawMessage) (any, *rp
 	if method == "health_check" {
 		return map[string]string{"status": "ok"}, nil
 	}
+	if strings.HasPrefix(method, "group.") && !s.groupsEnabled {
+		return nil, &rpcError{Code: -32199, Message: "groups feature is disabled"}
+	}
 	if result, rpcErr, ok := s.dispatchIdentityRPC(method, rawParams); ok {
 		return result, rpcErr
 	}
@@ -120,6 +124,9 @@ func (s *Server) dispatchRPC(method string, rawParams json.RawMessage) (any, *rp
 		return result, rpcErr
 	}
 	if result, rpcErr, ok := s.dispatchRequestRPC(method, rawParams); ok {
+		return result, rpcErr
+	}
+	if result, rpcErr, ok := s.dispatchGroupRPC(method, rawParams); ok {
 		return result, rpcErr
 	}
 	if result, rpcErr, ok := s.dispatchNetworkRPC(method); ok {
