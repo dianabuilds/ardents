@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +35,10 @@ type Server struct {
 
 func NewServerWithService(rpcAddr string, svc contracts.DaemonService) *Server {
 	requireRPC := requiresRPCToken()
-	rpcToken := strings.TrimSpace(os.Getenv("AIM_RPC_TOKEN"))
+	rpcToken, err := resolveRPCToken()
+	if err != nil {
+		return &Server{initErr: err}
+	}
 	if requireRPC && rpcToken == "" {
 		return &Server{
 			initErr: errors.New("AIM_RPC_TOKEN is required unless AIM_REQUIRE_RPC_TOKEN=false or AIM_ENV is test/development/local"),
@@ -323,13 +329,24 @@ func (s *Server) extractRPCToken(r *http.Request) string {
 
 func requiresRPCToken() bool {
 	if v, ok := parseBoolEnv("AIM_REQUIRE_RPC_TOKEN"); ok {
+		if !v && !isNonProdEnv() {
+			// Fail-closed in production-like environments.
+			return true
+		}
 		return v
 	}
+	if isNonProdEnv() {
+		return false
+	}
+	return true
+}
+
+func isNonProdEnv() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("AIM_ENV"))) {
 	case "test", "testing", "dev", "development", "local":
-		return false
-	default:
 		return true
+	default:
+		return false
 	}
 }
 
@@ -364,6 +381,47 @@ func parseBoolEnv(name string) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+func resolveRPCToken() (string, error) {
+	token := strings.TrimSpace(os.Getenv("AIM_RPC_TOKEN"))
+	rotate := strings.EqualFold(token, "auto")
+	if !rotate {
+		if v, ok := parseBoolEnv("AIM_RPC_TOKEN_ROTATE_ON_START"); ok && v {
+			rotate = true
+		}
+	}
+	if rotate {
+		generated, err := generateRPCToken()
+		if err != nil {
+			return "", err
+		}
+		token = generated
+		_ = os.Setenv("AIM_RPC_TOKEN", token)
+		if err := persistRPCToken(token); err != nil {
+			return "", err
+		}
+	}
+	return token, nil
+}
+
+func generateRPCToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "rpc_" + hex.EncodeToString(buf), nil
+}
+
+func persistRPCToken(token string) error {
+	pathValue := strings.TrimSpace(os.Getenv("AIM_RPC_TOKEN_FILE"))
+	if pathValue == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(pathValue), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(pathValue, []byte(token), 0o600)
 }
 
 func groupsEnabled() bool {

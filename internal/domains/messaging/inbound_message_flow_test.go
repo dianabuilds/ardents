@@ -72,23 +72,29 @@ func TestResolveInboundContent_E2EEUnreadable(t *testing.T) {
 func TestBuildInboundStoredMessage(t *testing.T) {
 	now := time.Now()
 	msg := waku.PrivateMessage{ID: "m1", SenderID: "s1"}
-	in := BuildInboundStoredMessage(msg, []byte("hello"), "text", now)
+	in := BuildInboundStoredMessage(msg, "thread-1", []byte("hello"), "text", now)
 	if in.ID != "m1" || in.ContactID != "s1" || in.Direction != "in" || in.Status != "delivered" {
 		t.Fatalf("unexpected inbound message: %#v", in)
 	}
 	if in.ConversationType != models.ConversationTypeDirect || in.ConversationID != "s1" {
 		t.Fatalf("unexpected inbound conversation fields: type=%q id=%q", in.ConversationType, in.ConversationID)
 	}
+	if in.ThreadID != "thread-1" {
+		t.Fatalf("unexpected inbound thread id: %q", in.ThreadID)
+	}
 }
 
 func TestBuildInboundGroupStoredMessage(t *testing.T) {
 	now := time.Now()
 	msg := waku.PrivateMessage{ID: "gm1", SenderID: "s1"}
-	in := BuildInboundGroupStoredMessage(msg, "group-1", []byte("hello group"), "e2ee", now)
+	in := BuildInboundGroupStoredMessage(msg, "group-1", "thread-g1", []byte("hello group"), "e2ee", now)
 	if in.ID != "gm1" || in.ContactID != "s1" || in.Direction != "in" || in.Status != "delivered" {
 		t.Fatalf("unexpected inbound group message: %#v", in)
 	}
 	if in.ConversationType != models.ConversationTypeGroup || in.ConversationID != "group-1" {
 		t.Fatalf("unexpected inbound group conversation fields: type=%q id=%q", in.ConversationType, in.ConversationID)
+	}
+	if in.ThreadID != "thread-g1" {
+		t.Fatalf("unexpected inbound group thread id: %q", in.ThreadID)
 	}
 }

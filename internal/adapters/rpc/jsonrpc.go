@@ -111,7 +111,7 @@ func (s *Server) dispatchRPC(method string, rawParams json.RawMessage) (any, *rp
 	if method == "health_check" {
 		return map[string]string{"status": "ok"}, nil
 	}
-	if strings.HasPrefix(method, "group.") && !s.groupsEnabled {
+	if (strings.HasPrefix(method, "group.") || strings.HasPrefix(method, "channel.")) && !s.groupsEnabled {
 		return nil, &rpcError{Code: -32199, Message: "groups feature is disabled"}
 	}
 	if result, rpcErr, ok := s.dispatchIdentityRPC(method, rawParams); ok {
@@ -127,6 +127,9 @@ func (s *Server) dispatchRPC(method string, rawParams json.RawMessage) (any, *rp
 		return result, rpcErr
 	}
 	if result, rpcErr, ok := s.dispatchGroupRPC(method, rawParams); ok {
+		return result, rpcErr
+	}
+	if result, rpcErr, ok := s.dispatchChannelRPC(method, rawParams); ok {
 		return result, rpcErr
 	}
 	if result, rpcErr, ok := s.dispatchNetworkRPC(method); ok {

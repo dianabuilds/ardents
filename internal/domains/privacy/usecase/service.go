@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"errors"
 	"sync"
 
 	privacymodel "aim-chat/go-backend/internal/domains/privacy/model"
@@ -55,17 +56,34 @@ func (s *Service) SetState(settings privacymodel.PrivacySettings, blocklist priv
 }
 
 func (s *Service) Bootstrap() (privacymodel.PrivacySettings, privacymodel.Blocklist, error) {
-	settings, err := s.privacyState.Bootstrap()
-	if err != nil {
-		return privacymodel.PrivacySettings{}, privacymodel.Blocklist{}, err
+	settings, list, settingsErr, blocklistErr := s.BootstrapPartial()
+	if settingsErr != nil {
+		return privacymodel.PrivacySettings{}, privacymodel.Blocklist{}, settingsErr
 	}
-	list, err := s.blocklistState.Bootstrap()
-	if err != nil {
-		return privacymodel.PrivacySettings{}, privacymodel.Blocklist{}, err
+	if blocklistErr != nil {
+		return privacymodel.PrivacySettings{}, privacymodel.Blocklist{}, blocklistErr
 	}
-	settings = privacymodel.NormalizePrivacySettings(settings)
-	s.SetState(settings, list)
 	return settings, list, nil
+}
+
+func (s *Service) BootstrapPartial() (privacymodel.PrivacySettings, privacymodel.Blocklist, error, error) {
+	settings := privacymodel.DefaultPrivacySettings()
+	list, _ := privacymodel.NewBlocklist(nil)
+
+	settings, err := s.privacyState.Bootstrap()
+	settingsErr := err
+	if settingsErr == nil {
+		settings = privacymodel.NormalizePrivacySettings(settings)
+	}
+
+	bootstrappedList, err := s.blocklistState.Bootstrap()
+	blocklistErr := err
+	if blocklistErr == nil {
+		list = bootstrappedList
+	}
+
+	s.SetState(settings, list)
+	return settings, list, settingsErr, blocklistErr
 }
 
 func (s *Service) CurrentMode() privacymodel.MessagePrivacyMode {
@@ -94,7 +112,12 @@ func (s *Service) UpdatePrivacySettings(mode string) (privacymodel.PrivacySettin
 	if err != nil {
 		return privacymodel.PrivacySettings{}, err
 	}
-	updated := privacymodel.PrivacySettings{MessagePrivacyMode: parsedMode}
+	current, err := s.GetPrivacySettings()
+	if err != nil {
+		return privacymodel.PrivacySettings{}, err
+	}
+	updated := current
+	updated.MessagePrivacyMode = parsedMode
 	updated = privacymodel.NormalizePrivacySettings(updated)
 	if err := s.privacyState.Persist(updated); err != nil {
 		if s.recordError != nil {
@@ -107,6 +130,47 @@ func (s *Service) UpdatePrivacySettings(mode string) (privacymodel.PrivacySettin
 	s.privacy = updated
 	s.mu.Unlock()
 	return updated, nil
+}
+
+func (s *Service) GetStoragePolicy() (privacymodel.StoragePolicy, error) {
+	settings, err := s.GetPrivacySettings()
+	if err != nil {
+		return privacymodel.StoragePolicy{}, err
+	}
+	return privacymodel.StoragePolicyFromSettings(settings), nil
+}
+
+func (s *Service) UpdateStoragePolicy(
+	storageProtection string,
+	retention string,
+	messageTTLSeconds int,
+	fileTTLSeconds int,
+) (privacymodel.StoragePolicy, error) {
+	policy, err := privacymodel.ParseStoragePolicy(storageProtection, retention, messageTTLSeconds, fileTTLSeconds)
+	if err != nil {
+		return privacymodel.StoragePolicy{}, err
+	}
+	current, err := s.GetPrivacySettings()
+	if err != nil {
+		return privacymodel.StoragePolicy{}, err
+	}
+	updated := current
+	updated.StorageProtection = policy.StorageProtection
+	updated.ContentRetentionMode = policy.ContentRetentionMode
+	updated.MessageTTLSeconds = policy.MessageTTLSeconds
+	updated.FileTTLSeconds = policy.FileTTLSeconds
+	updated = privacymodel.NormalizePrivacySettings(updated)
+	if err := s.privacyState.Persist(updated); err != nil {
+		if s.recordError != nil {
+			s.recordError("storage", err)
+		}
+		return privacymodel.StoragePolicy{}, err
+	}
+
+	s.mu.Lock()
+	s.privacy = updated
+	s.mu.Unlock()
+	return privacymodel.StoragePolicyFromSettings(updated), nil
 }
 
 func (s *Service) GetBlocklist() ([]string, error) {
@@ -147,4 +211,27 @@ func (s *Service) updateBlocklist(mutate func(privacymodel.Blocklist) error) ([]
 	}
 	s.blocklist = next
 	return next.List(), nil
+}
+
+func (s *Service) WipeState() error {
+	var wipeErr error
+	if wiper, ok := s.privacyState.(interface{ Wipe() error }); ok {
+		if err := wiper.Wipe(); err != nil {
+			wipeErr = errors.Join(wipeErr, err)
+		}
+	}
+	if wiper, ok := s.blocklistState.(interface{ Wipe() error }); ok {
+		if err := wiper.Wipe(); err != nil {
+			wipeErr = errors.Join(wipeErr, err)
+		}
+	}
+	list, err := privacymodel.NewBlocklist(nil)
+	if err != nil {
+		return errors.Join(wipeErr, err)
+	}
+	s.mu.Lock()
+	s.privacy = privacymodel.DefaultPrivacySettings()
+	s.blocklist = list
+	s.mu.Unlock()
+	return wipeErr
 }

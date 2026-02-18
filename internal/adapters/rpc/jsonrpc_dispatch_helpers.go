@@ -90,6 +90,38 @@ func callWithMessageListParams(
 	return result, nil
 }
 
+func callWithThreadSendParams(
+	rawParams json.RawMessage,
+	serviceErrCode int,
+	call func(targetID, content, threadID string) (any, error),
+) (any, *rpcError) {
+	targetID, content, threadID, err := decodeThreadSendParams(rawParams)
+	if err != nil {
+		return nil, rpcInvalidParams()
+	}
+	result, err := call(targetID, content, threadID)
+	if err != nil {
+		return nil, rpcServiceError(serviceErrCode, err)
+	}
+	return result, nil
+}
+
+func callWithThreadListParams(
+	rawParams json.RawMessage,
+	serviceErrCode int,
+	call func(targetID, threadID string, limit, offset int) (any, error),
+) (any, *rpcError) {
+	targetID, threadID, limit, offset, err := decodeThreadListParams(rawParams)
+	if err != nil {
+		return nil, rpcInvalidParams()
+	}
+	result, err := call(targetID, threadID, limit, offset)
+	if err != nil {
+		return nil, rpcServiceError(serviceErrCode, err)
+	}
+	return result, nil
+}
+
 func callWithCardParam(
 	rawParams json.RawMessage,
 	serviceErrCode int,

@@ -12,24 +12,25 @@ import (
 
 func (s *Service) groupUseCases() *groupdomain.Service {
 	return &groupdomain.Service{
-		IdentityID:        func() string { return s.identityManager.GetIdentity().ID },
-		WithMembership:    s.withGroupMembership,
-		SnapshotStates:    s.snapshotGroupStates,
-		GenerateID:        runtimeapp.GeneratePrefixedID,
-		GenerateEventID:   s.mustGenerateEventID,
-		Now:               time.Now,
-		Abuse:             s.groupAbuse,
-		IsBlockedSender:   s.privacyCore.IsBlockedSender,
-		ActiveDeviceID:    s.activeDeviceID,
-		GetMessage:        s.messageStore.GetMessage,
-		SaveMessage:       s.messageStore.SaveMessage,
-		DeleteMessage:     s.messageStore.DeleteMessage,
-		ListMessages:      s.messageStore.ListMessagesByConversation,
-		PrepareAndPublish: s.prepareAndPublishGroupMessage,
-		RecordError:       s.recordError,
-		Notify:            s.notify,
-		RecordAggregate:   s.recordGroupAggregate,
-		LogInfo:           s.logger.Info,
+		IdentityID:           func() string { return s.identityManager.GetIdentity().ID },
+		WithMembership:       s.withGroupMembership,
+		SnapshotStates:       s.snapshotGroupStates,
+		GenerateID:           runtimeapp.GeneratePrefixedID,
+		GenerateEventID:      s.mustGenerateEventID,
+		Now:                  time.Now,
+		Abuse:                s.groupAbuse,
+		IsBlockedSender:      s.privacyCore.IsBlockedSender,
+		ActiveDeviceID:       s.activeDeviceID,
+		GetMessage:           s.messageStore.GetMessage,
+		SaveMessage:          s.messageStore.SaveMessage,
+		DeleteMessage:        s.messageStore.DeleteMessage,
+		ListMessages:         s.messageStore.ListMessagesByConversation,
+		ListMessagesByThread: s.messageStore.ListMessagesByConversationThread,
+		PrepareAndPublish:    s.prepareAndPublishGroupMessage,
+		RecordError:          s.recordError,
+		Notify:               s.notify,
+		RecordAggregate:      s.recordGroupAggregate,
+		LogInfo:              s.logger.Info,
 	}
 }
 
@@ -79,6 +80,7 @@ func (s *Service) prepareAndPublishGroupMessage(msg models.Message, recipientID 
 	}
 	wire.ConversationType = models.ConversationTypeGroup
 	wire.ConversationID = meta.GroupID
+	wire.ThreadID = strings.TrimSpace(msg.ThreadID)
 	wire.EventType = messagingapp.GroupWireEventTypeMessage
 	wire.EventID = meta.EventID
 	wire.MembershipVersion = meta.MembershipVersion

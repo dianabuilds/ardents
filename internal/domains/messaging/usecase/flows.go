@@ -4,7 +4,6 @@ import (
 	"aim-chat/go-backend/internal/crypto"
 	"aim-chat/go-backend/internal/domains/contracts"
 	messagingpolicy "aim-chat/go-backend/internal/domains/messaging/policy"
-	"aim-chat/go-backend/internal/storage"
 	"aim-chat/go-backend/internal/waku"
 	"aim-chat/go-backend/pkg/models"
 	"bytes"
@@ -109,12 +108,12 @@ func ResolveInboundContent(msg waku.PrivateMessage, wire contracts.WirePayload, 
 	return content, contentType, nil
 }
 
-func BuildInboundStoredMessage(msg waku.PrivateMessage, content []byte, contentType string, now time.Time) models.Message {
-	return models.Message{ID: msg.ID, ContactID: msg.SenderID, ConversationID: msg.SenderID, ConversationType: models.ConversationTypeDirect, Content: content, Timestamp: now.UTC(), Direction: "in", Status: "delivered", ContentType: contentType}
+func BuildInboundStoredMessage(msg waku.PrivateMessage, threadID string, content []byte, contentType string, now time.Time) models.Message {
+	return models.Message{ID: msg.ID, ContactID: msg.SenderID, ConversationID: msg.SenderID, ConversationType: models.ConversationTypeDirect, ThreadID: strings.TrimSpace(threadID), Content: content, Timestamp: now.UTC(), Direction: "in", Status: "delivered", ContentType: contentType}
 }
 
-func BuildInboundGroupStoredMessage(msg waku.PrivateMessage, conversationID string, content []byte, contentType string, now time.Time) models.Message {
-	return models.Message{ID: msg.ID, ContactID: msg.SenderID, ConversationID: strings.TrimSpace(conversationID), ConversationType: models.ConversationTypeGroup, Content: content, Timestamp: now.UTC(), Direction: "in", Status: "delivered", ContentType: contentType}
+func BuildInboundGroupStoredMessage(msg waku.PrivateMessage, conversationID, threadID string, content []byte, contentType string, now time.Time) models.Message {
+	return models.Message{ID: msg.ID, ContactID: msg.SenderID, ConversationID: strings.TrimSpace(conversationID), ConversationType: models.ConversationTypeGroup, ThreadID: strings.TrimSpace(threadID), Content: content, Timestamp: now.UTC(), Direction: "in", Status: "delivered", ContentType: contentType}
 }
 
 type InboundReceiptHandling struct {
@@ -122,6 +121,13 @@ type InboundReceiptHandling struct {
 	ShouldUpdate bool
 	MessageID    string
 	Status       string
+}
+
+type PendingMessage struct {
+	Message    models.Message
+	RetryCount int
+	NextRetry  time.Time
+	LastError  string
 }
 
 func ResolveInboundReceiptHandling(wire contracts.WirePayload) InboundReceiptHandling {
@@ -137,15 +143,23 @@ func ResolveInboundReceiptHandling(wire contracts.WirePayload) InboundReceiptHan
 	return h
 }
 
-func AllocateOutboundMessage(contactID, content string, now func() time.Time, nextID func() (string, error), save func(models.Message) error) (models.Message, error) {
+func AllocateOutboundMessage(
+	contactID, content string,
+	threadID string,
+	now func() time.Time,
+	nextID func() (string, error),
+	save func(models.Message) error,
+	isMessageIDConflict func(error) bool,
+) (models.Message, error) {
 	for i := 0; i < 3; i++ {
 		msgID, err := nextID()
 		if err != nil {
 			return models.Message{}, err
 		}
 		msg := messagingpolicy.NewOutboundMessage(msgID, contactID, content, now())
+		msg.ThreadID = strings.TrimSpace(threadID)
 		if err := save(msg); err != nil {
-			if errors.Is(err, storage.ErrMessageIDConflict) {
+			if isMessageIDConflict != nil && isMessageIDConflict(err) {
 				continue
 			}
 			return models.Message{}, err
@@ -194,7 +208,14 @@ func NewReceiptWire(messageID, status string, now time.Time) contracts.WirePaylo
 const RetryLoopTick = 1 * time.Second
 const StartupRecoveryLookahead = 24 * time.Hour
 
-func ProcessPendingMessages(ctx context.Context, pending []storage.PendingMessage, buildWire func(models.Message) (contracts.WirePayload, error), publish func(context.Context, string, string, contracts.WirePayload) error, onPublishError func(storage.PendingMessage, error), onPublished func(string)) {
+func ProcessPendingMessages(
+	ctx context.Context,
+	pending []PendingMessage,
+	buildWire func(models.Message) (contracts.WirePayload, error),
+	publish func(context.Context, string, string, contracts.WirePayload) error,
+	onPublishError func(PendingMessage, error),
+	onPublished func(string),
+) {
 	for _, p := range pending {
 		wire, err := buildWire(p.Message)
 		if err != nil {
@@ -318,6 +339,7 @@ func BuildWireAuthPayload(messageID, senderID, recipient string, wire contracts.
 		Kind              string `json:"kind"`
 		ConversationID    string `json:"conversation_id,omitempty"`
 		ConversationType  string `json:"conversation_type,omitempty"`
+		ThreadID          string `json:"thread_id,omitempty"`
 		EventID           string `json:"event_id,omitempty"`
 		EventType         string `json:"event_type,omitempty"`
 		MembershipVersion uint64 `json:"membership_version,omitempty"`
@@ -335,6 +357,7 @@ func BuildWireAuthPayload(messageID, senderID, recipient string, wire contracts.
 		Kind:              wire.Kind,
 		ConversationID:    strings.TrimSpace(wire.ConversationID),
 		ConversationType:  strings.TrimSpace(wire.ConversationType),
+		ThreadID:          strings.TrimSpace(wire.ThreadID),
 		EventID:           strings.TrimSpace(wire.EventID),
 		EventType:         strings.TrimSpace(wire.EventType),
 		MembershipVersion: wire.MembershipVersion,

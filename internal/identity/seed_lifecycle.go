@@ -31,6 +31,22 @@ type SeedManager struct {
 	now            func() time.Time
 }
 
+func cloneEnvelope(env *EncryptedSeedEnvelope) *EncryptedSeedEnvelope {
+	if env == nil {
+		return nil
+	}
+	return &EncryptedSeedEnvelope{
+		Version:     env.Version,
+		KDF:         env.KDF,
+		KDFTime:     env.KDFTime,
+		KDFMemoryKB: env.KDFMemoryKB,
+		KDFThreads:  env.KDFThreads,
+		Salt:        append([]byte(nil), env.Salt...),
+		Nonce:       append([]byte(nil), env.Nonce...),
+		Ciphertext:  append([]byte(nil), env.Ciphertext...),
+	}
+}
+
 func NewSeedManager() *SeedManager {
 	return &SeedManager{now: time.Now}
 }
@@ -156,6 +172,19 @@ func (s *SeedManager) ChangePassword(oldPassword, newPassword string) error {
 
 func (s *SeedManager) ValidateMnemonic(mnemonic string) bool {
 	return bip39.IsMnemonicValid(strings.TrimSpace(mnemonic))
+}
+
+func (s *SeedManager) SnapshotEnvelope() *EncryptedSeedEnvelope {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneEnvelope(s.envelope)
+}
+
+func (s *SeedManager) RestoreEnvelope(env *EncryptedSeedEnvelope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.envelope = cloneEnvelope(env)
+	s.resetPasswordAttemptState()
 }
 
 func (s *SeedManager) ensureUnlocked() error {

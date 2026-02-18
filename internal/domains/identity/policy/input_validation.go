@@ -6,7 +6,13 @@ import (
 	"strings"
 )
 
-const maxAttachmentBytes = 5 * 1024 * 1024
+const (
+	maxAttachmentBytes        = 5 * 1024 * 1024
+	maxChunkedAttachmentMB    = 64
+	maxChunkedAttachmentBytes = maxChunkedAttachmentMB * 1024 * 1024
+	minAttachmentChunkSize    = 16 * 1024
+	maxAttachmentChunkSize    = 1024 * 1024
+)
 
 func DecodeAttachmentInput(name, mimeType, dataBase64 string) (string, string, []byte, error) {
 	name = strings.TrimSpace(name)
@@ -34,6 +40,50 @@ func ValidateAttachmentID(attachmentID string) (string, error) {
 		return "", errors.New("attachment id is required")
 	}
 	return attachmentID, nil
+}
+
+func ValidateAttachmentUploadInit(name, mimeType string, totalSize int64, totalChunks, chunkSize int) (string, string, int64, int, int, error) {
+	name = strings.TrimSpace(name)
+	mimeType = strings.TrimSpace(mimeType)
+	if name == "" {
+		return "", "", 0, 0, 0, errors.New("attachment name is required")
+	}
+	if totalSize <= 0 || totalSize > maxChunkedAttachmentBytes {
+		return "", "", 0, 0, 0, errors.New("attachment exceeds maximum size")
+	}
+	if totalChunks <= 0 || totalChunks > 10_000 {
+		return "", "", 0, 0, 0, errors.New("invalid chunk count")
+	}
+	if chunkSize < minAttachmentChunkSize || chunkSize > maxAttachmentChunkSize {
+		return "", "", 0, 0, 0, errors.New("invalid chunk size")
+	}
+	if int64(totalChunks-1)*int64(chunkSize) >= totalSize {
+		return "", "", 0, 0, 0, errors.New("invalid chunk manifest")
+	}
+	return name, mimeType, totalSize, totalChunks, chunkSize, nil
+}
+
+func ValidateAttachmentChunkInput(uploadID string, index int, data []byte, expectedChunkSize int, totalSize int64, totalChunks int) (string, error) {
+	uploadID = strings.TrimSpace(uploadID)
+	if uploadID == "" {
+		return "", errors.New("upload id is required")
+	}
+	if index < 0 || index >= totalChunks {
+		return "", errors.New("invalid chunk index")
+	}
+	if len(data) == 0 {
+		return "", errors.New("chunk data is required")
+	}
+	if index < totalChunks-1 && len(data) != expectedChunkSize {
+		return "", errors.New("invalid chunk size")
+	}
+	if index == totalChunks-1 {
+		remaining := int(totalSize - int64(expectedChunkSize*(totalChunks-1)))
+		if remaining <= 0 || len(data) != remaining {
+			return "", errors.New("invalid final chunk size")
+		}
+	}
+	return uploadID, nil
 }
 
 func ValidateLoginInput(accountID, password, currentIdentityID string) error {

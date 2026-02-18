@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -140,6 +141,38 @@ func (m *Manager) SnapshotIdentityKeys() (publicKey []byte, privateKey []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]byte(nil), m.identity.SigningPublicKey...), append([]byte(nil), m.selfPriv...)
+}
+
+func (m *Manager) SnapshotSeedEnvelope() *EncryptedSeedEnvelope {
+	return m.seeds.SnapshotEnvelope()
+}
+
+func (m *Manager) RestoreSeedEnvelope(env *EncryptedSeedEnvelope) {
+	m.seeds.RestoreEnvelope(env)
+}
+
+func (m *Manager) SnapshotSeedEnvelopeJSON() []byte {
+	env := m.seeds.SnapshotEnvelope()
+	if env == nil {
+		return nil
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+func (m *Manager) RestoreSeedEnvelopeJSON(raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var env EncryptedSeedEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return err
+	}
+	m.seeds.RestoreEnvelope(&env)
+	return nil
 }
 
 func (m *Manager) RestoreIdentityPrivateKey(privateKey []byte) error {

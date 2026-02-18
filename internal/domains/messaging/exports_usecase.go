@@ -3,6 +3,7 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"aim-chat/go-backend/internal/crypto"
@@ -16,6 +17,7 @@ import (
 type InboundContactTrustViolation = messagingusecase.InboundContactTrustViolation
 type InboundReceiptHandling = messagingusecase.InboundReceiptHandling
 type RevocationFailure = messagingusecase.RevocationFailure
+type PendingMessage = messagingusecase.PendingMessage
 type InboundPolicyAction = messagingusecase.InboundPolicyAction
 type InboundPolicyDecision = messagingusecase.InboundPolicyDecision
 type InboundServiceDeps = messagingusecase.InboundServiceDeps
@@ -54,12 +56,12 @@ func ResolveInboundContent(msg waku.PrivateMessage, wire contracts.WirePayload, 
 	return messagingusecase.ResolveInboundContent(msg, wire, sessions)
 }
 
-func BuildInboundStoredMessage(msg waku.PrivateMessage, content []byte, contentType string, now time.Time) models.Message {
-	return messagingusecase.BuildInboundStoredMessage(msg, content, contentType, now)
+func BuildInboundStoredMessage(msg waku.PrivateMessage, threadID string, content []byte, contentType string, now time.Time) models.Message {
+	return messagingusecase.BuildInboundStoredMessage(msg, threadID, content, contentType, now)
 }
 
-func BuildInboundGroupStoredMessage(msg waku.PrivateMessage, conversationID string, content []byte, contentType string, now time.Time) models.Message {
-	return messagingusecase.BuildInboundGroupStoredMessage(msg, conversationID, content, contentType, now)
+func BuildInboundGroupStoredMessage(msg waku.PrivateMessage, conversationID, threadID string, content []byte, contentType string, now time.Time) models.Message {
+	return messagingusecase.BuildInboundGroupStoredMessage(msg, conversationID, threadID, content, contentType, now)
 }
 
 func ResolveInboundReceiptHandling(wire contracts.WirePayload) InboundReceiptHandling {
@@ -67,7 +69,15 @@ func ResolveInboundReceiptHandling(wire contracts.WirePayload) InboundReceiptHan
 }
 
 func AllocateOutboundMessage(contactID, content string, now func() time.Time, nextID func() (string, error), save func(models.Message) error) (models.Message, error) {
-	return messagingusecase.AllocateOutboundMessage(contactID, content, now, nextID, save)
+	return messagingusecase.AllocateOutboundMessage(
+		contactID,
+		content,
+		"",
+		now,
+		nextID,
+		save,
+		func(err error) bool { return errors.Is(err, storage.ErrMessageIDConflict) },
+	)
 }
 
 func NewPlainWire(content []byte) contracts.WirePayload {
@@ -86,7 +96,33 @@ func NewReceiptWire(messageID, status string, now time.Time) contracts.WirePaylo
 }
 
 func ProcessPendingMessages(ctx context.Context, pending []storage.PendingMessage, buildWire func(models.Message) (contracts.WirePayload, error), publish func(context.Context, string, string, contracts.WirePayload) error, onPublishError func(storage.PendingMessage, error), onPublished func(string)) {
-	messagingusecase.ProcessPendingMessages(ctx, pending, buildWire, publish, onPublishError, onPublished)
+	converted := make([]messagingusecase.PendingMessage, len(pending))
+	for i := range pending {
+		converted[i] = messagingusecase.PendingMessage{
+			Message:    pending[i].Message,
+			RetryCount: pending[i].RetryCount,
+			NextRetry:  pending[i].NextRetry,
+			LastError:  pending[i].LastError,
+		}
+	}
+	messagingusecase.ProcessPendingMessages(
+		ctx,
+		converted,
+		buildWire,
+		publish,
+		func(p messagingusecase.PendingMessage, err error) {
+			if onPublishError == nil {
+				return
+			}
+			onPublishError(storage.PendingMessage{
+				Message:    p.Message,
+				RetryCount: p.RetryCount,
+				NextRetry:  p.NextRetry,
+				LastError:  p.LastError,
+			}, err)
+		},
+		onPublished,
+	)
 }
 
 func ComposeSignedPrivateMessage(messageID, recipient string, wire contracts.WirePayload, identity interface {

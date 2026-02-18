@@ -64,6 +64,16 @@ func (s *SettingsStore) Persist(settings PrivacySettings) error {
 	return persistEncryptedJSON(s.path, s.secret, state)
 }
 
+func (s *SettingsStore) Wipe() error {
+	if strings.TrimSpace(s.path) == "" {
+		return nil
+	}
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 type persistedPrivacySettingsState struct {
 	Version  int             `json:"version"`
 	Settings PrivacySettings `json:"settings"`

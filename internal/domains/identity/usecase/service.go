@@ -3,6 +3,8 @@ package usecase
 import (
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"aim-chat/go-backend/internal/domains/contracts"
 	identitypolicy "aim-chat/go-backend/internal/domains/identity/policy"
@@ -20,6 +22,8 @@ type Service struct {
 	sessionManager  contracts.SessionDomain
 	attachmentStore contracts.AttachmentRepository
 	logger          *slog.Logger
+	uploadMu        sync.Mutex
+	uploads         map[string]attachmentUploadSession
 }
 
 func NewService(
@@ -37,6 +41,7 @@ func NewService(
 		sessionManager:  sessionManager,
 		attachmentStore: attachmentStore,
 		logger:          logger,
+		uploads:         make(map[string]attachmentUploadSession),
 	}
 }
 
@@ -129,4 +134,15 @@ func (s *Service) GetAttachment(attachmentID string) (models.AttachmentMeta, []b
 		return models.AttachmentMeta{}, nil, err
 	}
 	return s.attachmentStore.Get(attachmentID)
+}
+
+func (s *Service) purgeExpiredAttachmentUploads(now time.Time) {
+	const ttl = 15 * time.Minute
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	for uploadID, session := range s.uploads {
+		if now.Sub(session.UpdatedAt) > ttl {
+			delete(s.uploads, uploadID)
+		}
+	}
 }

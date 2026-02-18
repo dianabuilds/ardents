@@ -43,23 +43,36 @@ func (s *InMemorySessionStore) All() ([]SessionState, error) {
 	return out, nil
 }
 
+func (s *InMemorySessionStore) Wipe() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions = make(map[string]SessionState)
+	return nil
+}
+
 type FileSessionStore struct {
-	mu     sync.Mutex
-	path   string
-	secret string
+	mu       sync.Mutex
+	path     string
+	secret   string
+	persist  bool
+	sessions map[string]SessionState
 }
 
 func NewFileSessionStore(path string) *FileSessionStore {
-	return &FileSessionStore{path: path}
+	return &FileSessionStore{path: path, persist: true, sessions: make(map[string]SessionState)}
 }
 
 func NewEncryptedFileSessionStore(path, passphrase string) *FileSessionStore {
-	return &FileSessionStore{path: path, secret: passphrase}
+	return &FileSessionStore{path: path, secret: passphrase, persist: true, sessions: make(map[string]SessionState)}
 }
 
 func (s *FileSessionStore) Save(state SessionState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.persist {
+		s.sessions[state.ContactID] = state
+		return nil
+	}
 	all, err := s.loadAllLocked()
 	if err != nil {
 		return err
@@ -71,6 +84,10 @@ func (s *FileSessionStore) Save(state SessionState) error {
 func (s *FileSessionStore) Get(contactID string) (SessionState, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.persist {
+		state, ok := s.sessions[contactID]
+		return state, ok, nil
+	}
 	all, err := s.loadAllLocked()
 	if err != nil {
 		return SessionState{}, false, err
@@ -82,6 +99,13 @@ func (s *FileSessionStore) Get(contactID string) (SessionState, bool, error) {
 func (s *FileSessionStore) All() ([]SessionState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.persist {
+		out := make([]SessionState, 0, len(s.sessions))
+		for _, state := range s.sessions {
+			out = append(out, state)
+		}
+		return out, nil
+	}
 	all, err := s.loadAllLocked()
 	if err != nil {
 		return nil, err
@@ -91,6 +115,25 @@ func (s *FileSessionStore) All() ([]SessionState, error) {
 		out = append(out, state)
 	}
 	return out, nil
+}
+
+func (s *FileSessionStore) Wipe() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions = make(map[string]SessionState)
+	if s.path == "" {
+		return nil
+	}
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (s *FileSessionStore) SetPersistenceEnabled(enabled bool) {
+	s.mu.Lock()
+	s.persist = enabled
+	s.mu.Unlock()
 }
 
 func (s *FileSessionStore) loadAllLocked() (map[string]SessionState, error) {

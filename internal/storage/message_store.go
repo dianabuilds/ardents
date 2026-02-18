@@ -30,12 +30,14 @@ type MessageStore struct {
 	pending  map[string]PendingMessage
 	path     string
 	secret   string
+	persist  bool
 }
 
 func NewMessageStore() *MessageStore {
 	return &MessageStore{
 		messages: make(map[string]models.Message),
 		pending:  make(map[string]PendingMessage),
+		persist:  true,
 	}
 }
 
@@ -45,6 +47,7 @@ func NewEncryptedPersistentMessageStore(path, passphrase string) (*MessageStore,
 		pending:  make(map[string]PendingMessage),
 		path:     path,
 		secret:   passphrase,
+		persist:  true,
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -197,6 +200,24 @@ func (s *MessageStore) ListMessagesByConversation(conversationID, conversationTy
 	})
 }
 
+func (s *MessageStore) ListMessagesByConversationThread(conversationID, conversationType, threadID string, limit, offset int) []models.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	conversationID = strings.TrimSpace(conversationID)
+	conversationType = models.NormalizeConversationType(conversationType)
+	threadID = strings.TrimSpace(threadID)
+	return s.listMessagesFiltered(limit, offset, func(msg models.Message) (models.Message, bool) {
+		normalized := models.NormalizeMessageConversation(msg)
+		if normalized.ConversationID != conversationID || normalized.ConversationType != conversationType {
+			return models.Message{}, false
+		}
+		if strings.TrimSpace(normalized.ThreadID) != threadID {
+			return models.Message{}, false
+		}
+		return normalized, true
+	})
+}
+
 func (s *MessageStore) listMessagesFiltered(
 	limit, offset int,
 	include func(models.Message) (models.Message, bool),
@@ -289,6 +310,58 @@ func (s *MessageStore) Snapshot() (map[string]models.Message, map[string]Pending
 	return messages, pending
 }
 
+func (s *MessageStore) Wipe() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = make(map[string]models.Message)
+	s.pending = make(map[string]PendingMessage)
+	if strings.TrimSpace(s.path) == "" {
+		return nil
+	}
+	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (s *MessageStore) SetPersistenceEnabled(enabled bool) {
+	s.mu.Lock()
+	s.persist = enabled
+	s.mu.Unlock()
+}
+
+func (s *MessageStore) PurgeOlderThan(cutoff time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	nextMessages := make(map[string]models.Message, len(s.messages))
+	deletedIDs := make(map[string]struct{})
+	deleted := 0
+	for id, msg := range s.messages {
+		if !msg.Timestamp.After(cutoff) {
+			deleted++
+			deletedIDs[id] = struct{}{}
+			continue
+		}
+		nextMessages[id] = msg
+	}
+	if deleted == 0 {
+		return 0, nil
+	}
+	nextPending := make(map[string]PendingMessage, len(s.pending))
+	for id, pending := range s.pending {
+		if _, removed := deletedIDs[id]; removed {
+			continue
+		}
+		nextPending[id] = pending
+	}
+	if err := s.persistSnapshotLocked(nextMessages, nextPending); err != nil {
+		return 0, err
+	}
+	s.messages = nextMessages
+	s.pending = nextPending
+	return deleted, nil
+}
+
 func (s *MessageStore) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -343,7 +416,7 @@ func (s *MessageStore) load() error {
 }
 
 func (s *MessageStore) persistSnapshotLocked(messages map[string]models.Message, pending map[string]PendingMessage) error {
-	if s.path == "" {
+	if s.path == "" || !s.persist {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
@@ -386,6 +459,15 @@ func clonePendingMap(in map[string]PendingMessage) map[string]PendingMessage {
 }
 
 func mergeMessageStatus(current, candidate string) string {
+	if candidate == "failed" {
+		// Terminal failure is allowed only for unsent states.
+		switch current {
+		case "", "pending":
+			return "failed"
+		default:
+			return current
+		}
+	}
 	if statusOrder(candidate) >= statusOrder(current) {
 		return candidate
 	}
@@ -402,6 +484,8 @@ func statusOrder(status string) int {
 		return 3
 	case "read":
 		return 4
+	case "failed":
+		return 1
 	default:
 		return 0
 	}

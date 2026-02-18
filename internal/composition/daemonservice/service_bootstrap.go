@@ -7,7 +7,6 @@ import (
 	"aim-chat/go-backend/internal/domains/contracts"
 	groupdomain "aim-chat/go-backend/internal/domains/group"
 	inboxapp "aim-chat/go-backend/internal/domains/inbox"
-	privacydomain "aim-chat/go-backend/internal/domains/privacy"
 	runtimeapp "aim-chat/go-backend/internal/platform/runtime"
 	"aim-chat/go-backend/internal/waku"
 	"aim-chat/go-backend/pkg/models"
@@ -41,13 +40,15 @@ func newServiceForDaemonWithBundle(wakuCfg waku.Config, bundle daemoncomposition
 		return nil, err
 	}
 	svc.privacyCore.Configure(bundle.PrivacyPath, bundle.BlocklistPath, secret)
-	settings, list, err := svc.privacyCore.Bootstrap()
-	if err != nil {
-		svc.logger.Warn("privacy settings bootstrap failed, using defaults", "error", err.Error())
-		settings = privacydomain.DefaultPrivacySettings()
-		svc.logger.Warn("blocklist bootstrap failed, using empty list", "error", err.Error())
-		list, _ = privacydomain.NewBlocklist(nil)
-		svc.privacyCore.SetState(settings, list)
+	settings, _, settingsErr, blocklistErr := svc.privacyCore.BootstrapPartial()
+	if settingsErr != nil {
+		svc.logger.Warn("privacy settings bootstrap failed, using defaults", "error", settingsErr.Error())
+	}
+	if blocklistErr != nil {
+		svc.logger.Warn("blocklist bootstrap failed, using empty list", "error", blocklistErr.Error())
+	}
+	if err := svc.applyStoragePolicyFromSettings(settings); err != nil {
+		return nil, err
 	}
 	svc.requestInboxState.Configure(bundle.RequestInboxPath, secret)
 	inbox, err := svc.requestInboxState.Bootstrap()

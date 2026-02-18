@@ -32,6 +32,7 @@ type Message struct {
 	ContactID        string    `json:"contact_id"`
 	ConversationID   string    `json:"conversation_id,omitempty"`
 	ConversationType string    `json:"conversation_type,omitempty"`
+	ThreadID         string    `json:"thread_id,omitempty"`
 	Content          []byte    `json:"content"`
 	Timestamp        time.Time `json:"timestamp"`
 	Direction        string    `json:"direction"`

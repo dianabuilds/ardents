@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"os"
 
 	"aim-chat/go-backend/internal/securestore"
 	"aim-chat/go-backend/pkg/models"
@@ -60,6 +61,16 @@ func (s *RequestStore) Persist(inbox map[string][]models.Message) error {
 		Inbox:   cloneMessageRequestInbox(inbox),
 	}
 	return securestore.WriteEncryptedJSON(s.path, s.secret, state)
+}
+
+func (s *RequestStore) Wipe() error {
+	if s.path == "" {
+		return nil
+	}
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 type persistedMessageRequestState struct {

@@ -1,10 +1,13 @@
 package daemonservice
 
 import (
+	"errors"
+
 	"aim-chat/go-backend/internal/domains/contracts"
 	messagingapp "aim-chat/go-backend/internal/domains/messaging"
 	privacydomain "aim-chat/go-backend/internal/domains/privacy"
 	runtimeapp "aim-chat/go-backend/internal/platform/runtime"
+	"aim-chat/go-backend/internal/storage"
 	"aim-chat/go-backend/internal/waku"
 	"aim-chat/go-backend/pkg/models"
 )
@@ -25,8 +28,9 @@ func buildMessagingDeps(svc *Service) messagingapp.ServiceDeps {
 			}
 			return svc.publishWithTimeout(ctx, msg)
 		},
-		Notify:      svc.notify,
-		RecordError: svc.recordError,
+		Notify:              svc.notify,
+		RecordError:         svc.recordError,
+		IsMessageIDConflict: func(err error) bool { return errors.Is(err, storage.ErrMessageIDConflict) },
 	}
 }
 

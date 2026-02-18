@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"os"
 	"sort"
 	"strings"
 
@@ -69,6 +70,16 @@ func (s *SnapshotStore) Persist(states map[string]GroupState, eventLog map[strin
 		EventLog: normalizedEvents,
 	}
 	return securestore.WriteEncryptedJSON(s.path, s.secret, state)
+}
+
+func (s *SnapshotStore) Wipe() error {
+	if s.path == "" {
+		return nil
+	}
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func NormalizeGroupSnapshot(

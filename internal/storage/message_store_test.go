@@ -43,6 +43,49 @@ func TestMessageStatusMonotonicTransitions(t *testing.T) {
 	}
 }
 
+func TestMessageStatusAllowsPendingToFailedButKeepsDelivered(t *testing.T) {
+	s := NewMessageStore()
+	now := time.Now().UTC()
+
+	if err := s.SaveMessage(models.Message{
+		ID:        "m-fail-1",
+		ContactID: "c1",
+		Status:    "pending",
+		Timestamp: now,
+	}); err != nil {
+		t.Fatalf("save pending message failed: %v", err)
+	}
+	if _, err := s.UpdateMessageStatus("m-fail-1", "failed"); err != nil {
+		t.Fatalf("set failed status failed: %v", err)
+	}
+	got, ok := s.GetMessage("m-fail-1")
+	if !ok {
+		t.Fatal("message m-fail-1 not found")
+	}
+	if got.Status != "failed" {
+		t.Fatalf("expected status failed, got %s", got.Status)
+	}
+
+	if err := s.SaveMessage(models.Message{
+		ID:        "m-fail-2",
+		ContactID: "c1",
+		Status:    "delivered",
+		Timestamp: now.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("save delivered message failed: %v", err)
+	}
+	if _, err := s.UpdateMessageStatus("m-fail-2", "failed"); err != nil {
+		t.Fatalf("attempt downgrade to failed should not error: %v", err)
+	}
+	got2, ok := s.GetMessage("m-fail-2")
+	if !ok {
+		t.Fatal("message m-fail-2 not found")
+	}
+	if got2.Status != "delivered" {
+		t.Fatalf("delivered status must not downgrade to failed, got %s", got2.Status)
+	}
+}
+
 func TestEncryptedPersistentMessageStoreTamperFailsAuth(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "messages.enc")
 	store, err := NewEncryptedPersistentMessageStore(path, "pass")
@@ -100,6 +143,7 @@ func TestMessageStoreSaveMessageRollbackOnPersistError(t *testing.T) {
 		messages: make(map[string]models.Message),
 		pending:  make(map[string]PendingMessage),
 		path:     t.TempDir(), // directory path forces os.WriteFile error
+		persist:  true,
 	}
 	msg := models.Message{
 		ID:        "m-rollback",
@@ -127,6 +171,7 @@ func TestMessageStoreUpdateStatusRollbackOnPersistError(t *testing.T) {
 		},
 		pending: make(map[string]PendingMessage),
 		path:    t.TempDir(), // directory path forces os.WriteFile error
+		persist: true,
 	}
 	ok, err := store.UpdateMessageStatus("m1", "sent")
 	if err == nil {
@@ -282,5 +327,91 @@ func TestMessageStoreListMessagesByConversationSupportsGroupAndDirect(t *testing
 	legacyDirect := s.ListMessages("c1", 50, 0)
 	if len(legacyDirect) != 1 || legacyDirect[0].ID != "m1" {
 		t.Fatalf("legacy direct list regression: %+v", legacyDirect)
+	}
+}
+
+func TestMessageStoreListMessagesByConversationThread(t *testing.T) {
+	s := NewMessageStore()
+	now := time.Now().UTC()
+
+	fixture := []models.Message{
+		{
+			ID:               "m1",
+			ContactID:        "c1",
+			ConversationID:   "group-1",
+			ConversationType: models.ConversationTypeGroup,
+			ThreadID:         "t1",
+			Timestamp:        now,
+		},
+		{
+			ID:               "m2",
+			ContactID:        "c2",
+			ConversationID:   "group-1",
+			ConversationType: models.ConversationTypeGroup,
+			ThreadID:         "t2",
+			Timestamp:        now.Add(time.Second),
+		},
+		{
+			ID:               "m3",
+			ContactID:        "c3",
+			ConversationID:   "group-1",
+			ConversationType: models.ConversationTypeGroup,
+			ThreadID:         "t1",
+			Timestamp:        now.Add(2 * time.Second),
+		},
+	}
+	for _, msg := range fixture {
+		if err := s.SaveMessage(msg); err != nil {
+			t.Fatalf("save message %s failed: %v", msg.ID, err)
+		}
+	}
+
+	thread := s.ListMessagesByConversationThread("group-1", models.ConversationTypeGroup, "t1", 50, 0)
+	if len(thread) != 2 || thread[0].ID != "m1" || thread[1].ID != "m3" {
+		t.Fatalf("unexpected thread messages: %+v", thread)
+	}
+}
+
+func TestMessageStorePurgeOlderThan(t *testing.T) {
+	s := NewMessageStore()
+	now := time.Now().UTC()
+
+	oldMsg := models.Message{
+		ID:        "old",
+		ContactID: "c1",
+		Content:   []byte("old"),
+		Timestamp: now.Add(-2 * time.Hour),
+	}
+	newMsg := models.Message{
+		ID:        "new",
+		ContactID: "c1",
+		Content:   []byte("new"),
+		Timestamp: now,
+	}
+	if err := s.SaveMessage(oldMsg); err != nil {
+		t.Fatalf("save old message failed: %v", err)
+	}
+	if err := s.SaveMessage(newMsg); err != nil {
+		t.Fatalf("save new message failed: %v", err)
+	}
+	if err := s.AddOrUpdatePending(oldMsg, 1, now, "retry"); err != nil {
+		t.Fatalf("add pending failed: %v", err)
+	}
+
+	deleted, err := s.PurgeOlderThan(now.Add(-30 * time.Minute))
+	if err != nil {
+		t.Fatalf("purge failed: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected one deleted message, got %d", deleted)
+	}
+	if _, ok := s.GetMessage("old"); ok {
+		t.Fatal("old message must be deleted")
+	}
+	if _, ok := s.GetMessage("new"); !ok {
+		t.Fatal("new message must stay")
+	}
+	if s.PendingCount() != 0 {
+		t.Fatalf("pending entries for deleted messages must be removed, got %d", s.PendingCount())
 	}
 }

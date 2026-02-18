@@ -1,4 +1,4 @@
-//goland:noinspection GoNameStartsWithPackageName
+// noinspection GoNameStartsWithPackageName
 package privacy
 
 import (
@@ -6,12 +6,21 @@ import (
 )
 
 type MessagePrivacyMode = privacymodel.MessagePrivacyMode
+type StorageProtectionMode = privacymodel.StorageProtectionMode
+type ContentRetentionMode = privacymodel.ContentRetentionMode
 
 const (
-	MessagePrivacyContactsOnly = privacymodel.MessagePrivacyContactsOnly
-	MessagePrivacyRequests     = privacymodel.MessagePrivacyRequests
-	MessagePrivacyEveryone     = privacymodel.MessagePrivacyEveryone
-	DefaultMessagePrivacyMode  = privacymodel.DefaultMessagePrivacyMode
+	MessagePrivacyContactsOnly        = privacymodel.MessagePrivacyContactsOnly
+	MessagePrivacyRequests            = privacymodel.MessagePrivacyRequests
+	MessagePrivacyEveryone            = privacymodel.MessagePrivacyEveryone
+	DefaultMessagePrivacyMode         = privacymodel.DefaultMessagePrivacyMode
+	StorageProtectionProtected        = privacymodel.StorageProtectionProtected
+	DefaultStorageProtectionMode      = privacymodel.DefaultStorageProtectionMode
+	RetentionEphemeral                = privacymodel.RetentionEphemeral
+	RetentionZeroRetention            = privacymodel.RetentionZeroRetention
+	DefaultContentRetentionMode       = privacymodel.DefaultContentRetentionMode
+	DefaultEphemeralMessageTTLSeconds = privacymodel.DefaultEphemeralMessageTTLSeconds
+	DefaultEphemeralFileTTLSeconds    = privacymodel.DefaultEphemeralFileTTLSeconds
 )
 
 var (
@@ -19,8 +28,9 @@ var (
 	ErrInvalidIdentityID         = privacymodel.ErrInvalidIdentityID
 )
 
-//goland:noinspection GoNameStartsWithPackageName
+// noinspection GoNameStartsWithPackageName
 type PrivacySettings = privacymodel.PrivacySettings
+type StoragePolicy = privacymodel.StoragePolicy
 type Blocklist = privacymodel.Blocklist
 
 func DefaultPrivacySettings() PrivacySettings {
@@ -33,6 +43,18 @@ func NormalizePrivacySettings(in PrivacySettings) PrivacySettings {
 
 func ParseMessagePrivacyMode(raw string) (MessagePrivacyMode, error) {
 	return privacymodel.ParseMessagePrivacyMode(raw)
+}
+
+func ParseStoragePolicy(storageProtection, retention string, messageTTLSeconds, fileTTLSeconds int) (StoragePolicy, error) {
+	return privacymodel.ParseStoragePolicy(storageProtection, retention, messageTTLSeconds, fileTTLSeconds)
+}
+
+func NormalizeStoragePolicy(in StoragePolicy) StoragePolicy {
+	return privacymodel.NormalizeStoragePolicy(in)
+}
+
+func StoragePolicyFromSettings(settings PrivacySettings) StoragePolicy {
+	return privacymodel.StoragePolicyFromSettings(settings)
 }
 
 func NormalizeIdentityID(identityID string) (string, error) {

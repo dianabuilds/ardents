@@ -20,11 +20,12 @@ type Service struct {
 	Abuse           *AbuseProtection
 	IsBlockedSender func(string) bool
 
-	ActiveDeviceID func() (string, error)
-	GetMessage     func(string) (models.Message, bool)
-	SaveMessage    func(models.Message) error
-	DeleteMessage  func(contactID, messageID string) (bool, error)
-	ListMessages   func(conversationID, conversationType string, limit, offset int) []models.Message
+	ActiveDeviceID       func() (string, error)
+	GetMessage           func(string) (models.Message, bool)
+	SaveMessage          func(models.Message) error
+	DeleteMessage        func(contactID, messageID string) (bool, error)
+	ListMessages         func(conversationID, conversationType string, limit, offset int) []models.Message
+	ListMessagesByThread func(conversationID, conversationType, threadID string, limit, offset int) []models.Message
 
 	PrepareAndPublish func(msg models.Message, recipientID string, meta GroupMessageWireMeta) (string, string, error)
 	RecordError       func(category string, err error)
@@ -225,6 +226,18 @@ func (s *Service) changeGroupMemberRole(groupID, memberID string, role GroupMemb
 }
 
 func (s *Service) SendGroupMessage(groupID, content string) (GroupMessageFanoutResult, error) {
+	return s.sendGroupMessageWithThread(groupID, content, "")
+}
+
+func (s *Service) SendGroupMessageInThread(groupID, content, threadID string) (GroupMessageFanoutResult, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return GroupMessageFanoutResult{}, ErrInvalidGroupMessageContent
+	}
+	return s.sendGroupMessageWithThread(groupID, content, threadID)
+}
+
+func (s *Service) sendGroupMessageWithThread(groupID, content, threadID string) (GroupMessageFanoutResult, error) {
 	groupID, err := NormalizeGroupID(groupID)
 	if err != nil {
 		return GroupMessageFanoutResult{}, err
@@ -240,10 +253,10 @@ func (s *Service) SendGroupMessage(groupID, content string) (GroupMessageFanoutR
 	if err != nil {
 		return GroupMessageFanoutResult{}, err
 	}
-	return s.SendGroupMessageFanout(groupID, eventID, content)
+	return s.SendGroupMessageFanout(groupID, eventID, content, threadID)
 }
 
-func (s *Service) SendGroupMessageFanout(groupID, eventID, content string) (GroupMessageFanoutResult, error) {
+func (s *Service) SendGroupMessageFanout(groupID, eventID, content, threadID string) (GroupMessageFanoutResult, error) {
 	groupID, err := NormalizeGroupID(groupID)
 	if err != nil {
 		return GroupMessageFanoutResult{}, err
@@ -262,7 +275,7 @@ func (s *Service) SendGroupMessageFanout(groupID, eventID, content string) (Grou
 	if content == "" {
 		return GroupMessageFanoutResult{}, ErrInvalidGroupMessageContent
 	}
-	result, err := s.sendGroupMessageFanout(groupID, eventID, content)
+	result, err := s.sendGroupMessageFanout(groupID, eventID, content, strings.TrimSpace(threadID))
 	if err != nil {
 		return GroupMessageFanoutResult{}, err
 	}
@@ -280,7 +293,7 @@ func (s *Service) SendGroupMessageFanout(groupID, eventID, content string) (Grou
 	return result, nil
 }
 
-func (s *Service) sendGroupMessageFanout(groupID, eventID, content string) (GroupMessageFanoutResult, error) {
+func (s *Service) sendGroupMessageFanout(groupID, eventID, content, threadID string) (GroupMessageFanoutResult, error) {
 	fanout := &GroupMessageFanoutService{
 		States:             s.SnapshotStates(),
 		Abuse:              s.Abuse,
@@ -295,7 +308,7 @@ func (s *Service) sendGroupMessageFanout(groupID, eventID, content string) (Grou
 		RecordError:        s.RecordError,
 		NotifyGroupMessage: func(groupID string, msg models.Message) { s.notifyGroupMessage(groupID, msg) },
 	}
-	return fanout.SendGroupMessageFanout(groupID, eventID, content)
+	return fanout.SendGroupMessageFanout(groupID, eventID, content, threadID)
 }
 
 func (s *Service) notifyGroupMessage(groupID string, msg models.Message) {
@@ -314,6 +327,15 @@ func (s *Service) ListGroupMessages(groupID string, limit, offset int) ([]models
 		ListMessagesByConversation: s.ListMessages,
 	}
 	return read.ListGroupMessages(groupID, limit, offset)
+}
+
+func (s *Service) ListGroupMessagesByThread(groupID, threadID string, limit, offset int) ([]models.Message, error) {
+	read := &GroupReadService{
+		States:                           s.SnapshotStates(),
+		ListMessagesByConversation:       s.ListMessages,
+		ListMessagesByConversationThread: s.ListMessagesByThread,
+	}
+	return read.ListGroupMessagesByThread(groupID, threadID, limit, offset)
 }
 
 func (s *Service) GetGroupMessageStatus(groupID, messageID string) (models.MessageStatus, error) {

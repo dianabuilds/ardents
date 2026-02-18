@@ -71,7 +71,7 @@ func (s *Service) StopNetworking(ctx context.Context) error {
 
 	retryCancel, networkCancel, wasRunning := s.runtime.Deactivate()
 	if !wasRunning {
-		return nil
+		return s.cleanupOnStopIfZeroRetention()
 	}
 
 	if retryCancel != nil {
@@ -86,6 +86,9 @@ func (s *Service) StopNetworking(ctx context.Context) error {
 		return err
 	}
 	s.notifyNetworkStatus(true)
+	if err := s.cleanupOnStopIfZeroRetention(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -99,6 +102,7 @@ func (s *Service) runRetryLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.notifyNetworkStatus(false)
+			s.enforceRetentionPolicies(time.Now())
 			now := time.Now()
 			pending := s.messageStore.DuePending(now)
 			s.processPendingBatch(ctx, pending, s.handleRetryPublishError)
@@ -124,7 +128,14 @@ func (s *Service) recoverPendingOnStartup(ctx context.Context) {
 }
 
 func (s *Service) publishSignedWireWithContext(ctx context.Context, messageID, recipient string, wire contracts.WirePayload) error {
-	wmsg, err := messagingapp.ComposeSignedPrivateMessage(messageID, recipient, wire, s.identityManager)
+	hardenedWire, delay, err := s.metaHardening.harden(wire)
+	if err != nil {
+		return &contracts.CategorizedError{Category: "api", Err: err}
+	}
+	if err := waitWithContext(ctx, delay); err != nil {
+		return &contracts.CategorizedError{Category: "network", Err: err}
+	}
+	wmsg, err := messagingapp.ComposeSignedPrivateMessage(messageID, recipient, hardenedWire, s.identityManager)
 	if err != nil {
 		return err
 	}
@@ -199,6 +210,14 @@ func (s *Service) processPendingBatch(
 func (s *Service) handleRetryPublishError(p storage.PendingMessage, err error) {
 	s.recordError(messagingapp.ErrorCategory(err), err)
 	nextCount := p.RetryCount + 1
+	if nextCount > 8 {
+		s.logger.Warn("message retry limit reached", "message_id", p.Message.ID, "contact_id", p.Message.ContactID, "retry_count", nextCount)
+		s.updateMessageStatusAndNotify(p.Message.ID, "failed")
+		if remErr := s.messageStore.RemovePending(p.Message.ID); remErr != nil {
+			s.recordError("storage", remErr)
+		}
+		return
+	}
 	s.recordRetryAttempt()
 	s.logger.Warn("message retry scheduled", "message_id", p.Message.ID, "contact_id", p.Message.ContactID, "retry_count", nextCount)
 	if perr := s.messageStore.AddOrUpdatePending(p.Message, nextCount, messagingapp.NextRetryTime(nextCount), err.Error()); perr != nil {

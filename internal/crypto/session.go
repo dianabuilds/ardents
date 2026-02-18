@@ -108,6 +108,25 @@ func (m *SessionManager) Snapshot() ([]SessionState, error) {
 	return m.store.All()
 }
 
+func (m *SessionManager) Wipe() error {
+	if m == nil || m.store == nil {
+		return nil
+	}
+	if wiper, ok := m.store.(interface{ Wipe() error }); ok {
+		return wiper.Wipe()
+	}
+	return nil
+}
+
+func (m *SessionManager) SetPersistenceEnabled(enabled bool) {
+	if m == nil || m.store == nil {
+		return
+	}
+	if setter, ok := m.store.(interface{ SetPersistenceEnabled(bool) }); ok {
+		setter.SetPersistenceEnabled(enabled)
+	}
+}
+
 func (m *SessionManager) Encrypt(contactID string, plaintext []byte) (MessageEnvelope, error) {
 	state, ok, err := m.store.Get(contactID)
 	if err != nil {

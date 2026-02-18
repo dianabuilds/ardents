@@ -10,6 +10,12 @@ func TestDefaultPrivacySettings(t *testing.T) {
 	if got.MessagePrivacyMode != DefaultMessagePrivacyMode {
 		t.Fatalf("unexpected default privacy mode: got=%q want=%q", got.MessagePrivacyMode, DefaultMessagePrivacyMode)
 	}
+	if got.StorageProtection != DefaultStorageProtectionMode {
+		t.Fatalf("unexpected default storage protection: got=%q want=%q", got.StorageProtection, DefaultStorageProtectionMode)
+	}
+	if got.ContentRetentionMode != DefaultContentRetentionMode {
+		t.Fatalf("unexpected default retention mode: got=%q want=%q", got.ContentRetentionMode, DefaultContentRetentionMode)
+	}
 }
 
 func TestMessagePrivacyModeValid(t *testing.T) {
@@ -35,10 +41,25 @@ func TestMessagePrivacyModeValid(t *testing.T) {
 }
 
 func TestNormalizePrivacySettings(t *testing.T) {
-	in := PrivacySettings{MessagePrivacyMode: MessagePrivacyMode("invalid")}
+	in := PrivacySettings{
+		MessagePrivacyMode:   MessagePrivacyMode("invalid"),
+		StorageProtection:    StorageProtectionMode("bad"),
+		ContentRetentionMode: ContentRetentionMode("bad"),
+		MessageTTLSeconds:    -1,
+		FileTTLSeconds:       -4,
+	}
 	got := NormalizePrivacySettings(in)
 	if got.MessagePrivacyMode != DefaultMessagePrivacyMode {
 		t.Fatalf("unexpected normalized mode: got=%q want=%q", got.MessagePrivacyMode, DefaultMessagePrivacyMode)
+	}
+	if got.StorageProtection != DefaultStorageProtectionMode {
+		t.Fatalf("unexpected normalized storage mode: got=%q want=%q", got.StorageProtection, DefaultStorageProtectionMode)
+	}
+	if got.ContentRetentionMode != DefaultContentRetentionMode {
+		t.Fatalf("unexpected normalized retention mode: got=%q want=%q", got.ContentRetentionMode, DefaultContentRetentionMode)
+	}
+	if got.MessageTTLSeconds != 0 || got.FileTTLSeconds != 0 {
+		t.Fatalf("ttl must be reset in persistent mode, got message=%d file=%d", got.MessageTTLSeconds, got.FileTTLSeconds)
 	}
 }
 
@@ -62,4 +83,35 @@ func TestParseMessagePrivacyMode(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+}
+
+func TestNormalizePrivacySettingsEphemeralDefaultsTTL(t *testing.T) {
+	in := PrivacySettings{
+		MessagePrivacyMode:   MessagePrivacyEveryone,
+		StorageProtection:    StorageProtectionProtected,
+		ContentRetentionMode: RetentionEphemeral,
+	}
+	got := NormalizePrivacySettings(in)
+	if got.MessageTTLSeconds != DefaultEphemeralMessageTTLSeconds {
+		t.Fatalf("unexpected message ttl: got=%d want=%d", got.MessageTTLSeconds, DefaultEphemeralMessageTTLSeconds)
+	}
+	if got.FileTTLSeconds != DefaultEphemeralFileTTLSeconds {
+		t.Fatalf("unexpected file ttl: got=%d want=%d", got.FileTTLSeconds, DefaultEphemeralFileTTLSeconds)
+	}
+}
+
+func TestParseStoragePolicy(t *testing.T) {
+	got, err := ParseStoragePolicy("protected", "zero_retention", 100, 200)
+	if err != nil {
+		t.Fatalf("parse storage policy failed: %v", err)
+	}
+	if got.StorageProtection != StorageProtectionProtected {
+		t.Fatalf("unexpected storage mode: %q", got.StorageProtection)
+	}
+	if got.ContentRetentionMode != RetentionZeroRetention {
+		t.Fatalf("unexpected retention mode: %q", got.ContentRetentionMode)
+	}
+	if got.MessageTTLSeconds != 0 || got.FileTTLSeconds != 0 {
+		t.Fatalf("ttl must be zero in zero retention: %+v", got)
+	}
 }

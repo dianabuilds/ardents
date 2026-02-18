@@ -20,6 +20,7 @@ func NormalizeMessageConversation(msg Message) Message {
 	msg.ContactID = strings.TrimSpace(msg.ContactID)
 	msg.ConversationID = strings.TrimSpace(msg.ConversationID)
 	msg.ConversationType = NormalizeConversationType(msg.ConversationType)
+	msg.ThreadID = strings.TrimSpace(msg.ThreadID)
 
 	// Backward compatibility: direct messages default to contact-scoped conversation.
 	if msg.ConversationType == ConversationTypeDirect && msg.ConversationID == "" {

@@ -1,7 +1,10 @@
 package daemonservice
 
 import (
+	"errors"
+
 	inboxapp "aim-chat/go-backend/internal/domains/inbox"
+	"aim-chat/go-backend/internal/storage"
 	"aim-chat/go-backend/pkg/models"
 )
 
@@ -14,6 +17,7 @@ func (s *Service) inboxUseCases() *inboxapp.Service {
 		HasContact:           s.identityManager.HasContact,
 		AddContact:           s.AddContact,
 		SaveMessage:          s.messageStore.SaveMessage,
+		IsMessageIDConflict:  func(err error) bool { return errors.Is(err, storage.ErrMessageIDConflict) },
 		AddToBlocklist:       s.AddToBlocklist,
 		RecordError:          s.recordError,
 		Notify:               s.notify,

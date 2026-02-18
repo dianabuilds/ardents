@@ -27,7 +27,7 @@ func BuildStorageBundle(dataDir, secret string) (StorageBundle, error) {
 	if err != nil {
 		return StorageBundle{}, err
 	}
-	attachmentStore, err := storage.NewAttachmentStore(attachmentsPath)
+	attachmentStore, err := storage.NewAttachmentStoreWithSecret(attachmentsPath, secret)
 	if err != nil {
 		return StorageBundle{}, err
 	}

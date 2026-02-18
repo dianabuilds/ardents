@@ -2,7 +2,7 @@ package usecase
 
 import (
 	"aim-chat/go-backend/internal/domains/contracts"
-	"aim-chat/go-backend/internal/storage"
+	messagingpolicy "aim-chat/go-backend/internal/domains/messaging/policy"
 	"aim-chat/go-backend/internal/waku"
 	"aim-chat/go-backend/pkg/models"
 	"errors"
@@ -15,13 +15,14 @@ type ServiceDeps struct {
 	Sessions contracts.SessionDomain
 	Messages contracts.MessageRepository
 
-	GenerateID     func(prefix string) (string, error)
-	TrackOperation func(operation string, errRef *error) func()
-	PublishQueued  func(msg models.Message, contactID string, wire contracts.WirePayload) (string, error)
-	ApplyAutoRead  func(message *models.Message, contactID string)
-	PublishPrivate func(msg waku.PrivateMessage) error
-	Notify         func(method string, payload any)
-	RecordError    func(category string, err error)
+	GenerateID          func(prefix string) (string, error)
+	TrackOperation      func(operation string, errRef *error) func()
+	PublishQueued       func(msg models.Message, contactID string, wire contracts.WirePayload) (string, error)
+	ApplyAutoRead       func(message *models.Message, contactID string)
+	PublishPrivate      func(msg waku.PrivateMessage) error
+	Notify              func(method string, payload any)
+	RecordError         func(category string, err error)
+	IsMessageIDConflict func(err error) bool
 }
 
 type Service struct {
@@ -33,6 +34,18 @@ func NewService(deps ServiceDeps) *Service {
 }
 
 func (s *Service) SendMessage(contactID, content string) (msgID string, err error) {
+	return s.sendMessageWithThread(contactID, content, "")
+}
+
+func (s *Service) SendMessageInThread(contactID, content, threadID string) (msgID string, err error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return "", errors.New("thread id is required")
+	}
+	return s.sendMessageWithThread(contactID, content, threadID)
+}
+
+func (s *Service) sendMessageWithThread(contactID, content, threadID string) (msgID string, err error) {
 	if s.deps.TrackOperation != nil {
 		defer s.deps.TrackOperation("message.send", &err)()
 	}
@@ -45,7 +58,8 @@ func (s *Service) SendMessage(contactID, content string) (msgID string, err erro
 	}
 
 	draft := BuildOutboundDraft("draft", contactID, content, time.Now())
-	wire, _, werr := BuildWireForOutboundMessage(draft, s.deps.Sessions)
+	draft.ThreadID = threadID
+	wire, werr := s.BuildStoredMessageWire(draft)
 	if werr != nil {
 		s.deps.RecordError("crypto", werr)
 		return "", werr
@@ -54,15 +68,17 @@ func (s *Service) SendMessage(contactID, content string) (msgID string, err erro
 	msg, err := AllocateOutboundMessage(
 		contactID,
 		content,
+		threadID,
 		time.Now,
 		func() (string, error) { return s.deps.GenerateID("msg") },
 		func(msg models.Message) error {
 			err := s.deps.Messages.SaveMessage(msg)
-			if err != nil && !errors.Is(err, storage.ErrMessageIDConflict) {
+			if err != nil && (s.deps.IsMessageIDConflict == nil || !s.deps.IsMessageIDConflict(err)) {
 				s.deps.RecordError("storage", err)
 			}
 			return err
 		},
+		s.deps.IsMessageIDConflict,
 	)
 	if err != nil {
 		return "", err
@@ -160,6 +176,29 @@ func (s *Service) GetMessages(contactID string, limit, offset int) (messages []m
 	return messages, nil
 }
 
+func (s *Service) GetMessagesByThread(contactID, threadID string, limit, offset int) (messages []models.Message, err error) {
+	if s.deps.TrackOperation != nil {
+		defer s.deps.TrackOperation("message.list", &err)()
+	}
+	contactID, err = ParseMessageListContactID(contactID)
+	if err != nil {
+		return nil, err
+	}
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, errors.New("thread id is required")
+	}
+	messages = s.deps.Messages.ListMessagesByConversationThread(contactID, models.ConversationTypeDirect, threadID, limit, offset)
+	for i := range messages {
+		msg := messages[i]
+		if !ShouldAutoReadOnList(msg) {
+			continue
+		}
+		s.deps.ApplyAutoRead(&messages[i], contactID)
+	}
+	return messages, nil
+}
+
 func (s *Service) GetMessageStatus(messageID string) (status models.MessageStatus, err error) {
 	if s.deps.TrackOperation != nil {
 		defer s.deps.TrackOperation("message.status", &err)()
@@ -174,9 +213,20 @@ func (s *Service) GetMessageStatus(messageID string) (status models.MessageStatu
 
 func (s *Service) BuildStoredMessageWire(msg models.Message) (contracts.WirePayload, error) {
 	wire, _, err := BuildWireForOutboundMessage(msg, s.deps.Sessions)
+	if errors.Is(err, messagingpolicy.ErrOutboundSessionRequired) {
+		card, cardErr := s.deps.Identity.SelfContactCard(s.deps.Identity.GetIdentity().ID)
+		if cardErr != nil {
+			return contracts.WirePayload{}, &contracts.CategorizedError{Category: "crypto", Err: err}
+		}
+		plainWire := NewPlainWire(msg.Content)
+		plainWire.ThreadID = strings.TrimSpace(msg.ThreadID)
+		plainWire.Card = &card
+		return plainWire, nil
+	}
 	if err != nil {
 		return contracts.WirePayload{}, &contracts.CategorizedError{Category: "crypto", Err: err}
 	}
+	wire.ThreadID = strings.TrimSpace(msg.ThreadID)
 	return wire, nil
 }
 

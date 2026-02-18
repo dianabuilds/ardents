@@ -4,7 +4,6 @@ import (
 	inboxmodel "aim-chat/go-backend/internal/domains/inbox/model"
 	messagingdomain "aim-chat/go-backend/internal/domains/messaging"
 	privacydomain "aim-chat/go-backend/internal/domains/privacy"
-	"aim-chat/go-backend/internal/storage"
 	"aim-chat/go-backend/pkg/models"
 	"errors"
 )
@@ -17,6 +16,7 @@ type Service struct {
 	HasContact           func(senderID string) bool
 	AddContact           func(contactID, displayName string) error
 	SaveMessage          func(msg models.Message) error
+	IsMessageIDConflict  func(err error) bool
 	AddToBlocklist       func(senderID string) ([]string, error)
 	RecordError          func(category string, err error)
 	Notify               func(method string, payload any)
@@ -26,6 +26,10 @@ func (s *Service) recordStorageError(err error) {
 	if s.RecordError != nil {
 		s.RecordError("storage", err)
 	}
+}
+
+func (s *Service) isMessageIDConflict(err error) bool {
+	return s.IsMessageIDConflict != nil && s.IsMessageIDConflict(err)
 }
 
 func (s *Service) removeThreadWithStorageError(senderID string) (bool, error) {
@@ -127,7 +131,7 @@ func (s *Service) AcceptMessageRequest(senderID string) (bool, error) {
 			continue
 		}
 		if err := s.SaveMessage(msg); err != nil {
-			if errors.Is(err, storage.ErrMessageIDConflict) {
+			if s.isMessageIDConflict(err) {
 				continue
 			}
 			s.recordStorageError(err)

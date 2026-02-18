@@ -54,6 +54,67 @@ func TestServiceUpdatePrivacySettings(t *testing.T) {
 	}
 }
 
+func TestServiceUpdatePrivacySettingsPreservesStoragePolicy(t *testing.T) {
+	bl, err := NewBlocklist(nil)
+	if err != nil {
+		t.Fatalf("new blocklist failed: %v", err)
+	}
+	initial := NormalizePrivacySettings(PrivacySettings{
+		MessagePrivacyMode:   MessagePrivacyEveryone,
+		StorageProtection:    StorageProtectionProtected,
+		ContentRetentionMode: RetentionEphemeral,
+		MessageTTLSeconds:    120,
+		FileTTLSeconds:       180,
+	})
+	svc := NewService(
+		&fakePrivacyStore{settings: initial},
+		&fakeBlocklistStore{list: bl},
+		nil,
+	)
+	svc.SetState(initial, bl)
+
+	updated, err := svc.UpdatePrivacySettings(string(MessagePrivacyRequests))
+	if err != nil {
+		t.Fatalf("update privacy settings failed: %v", err)
+	}
+	if updated.StorageProtection != StorageProtectionProtected {
+		t.Fatalf("storage protection must be preserved, got=%q", updated.StorageProtection)
+	}
+	if updated.ContentRetentionMode != RetentionEphemeral {
+		t.Fatalf("retention mode must be preserved, got=%q", updated.ContentRetentionMode)
+	}
+	if updated.MessageTTLSeconds != 120 || updated.FileTTLSeconds != 180 {
+		t.Fatalf("ttl must be preserved, got message=%d file=%d", updated.MessageTTLSeconds, updated.FileTTLSeconds)
+	}
+}
+
+func TestServiceUpdateStoragePolicy(t *testing.T) {
+	bl, err := NewBlocklist(nil)
+	if err != nil {
+		t.Fatalf("new blocklist failed: %v", err)
+	}
+	svc := NewService(
+		&fakePrivacyStore{settings: DefaultPrivacySettings()},
+		&fakeBlocklistStore{list: bl},
+		nil,
+	)
+	svc.SetState(DefaultPrivacySettings(), bl)
+
+	updated, err := svc.UpdateStoragePolicy("protected", "zero_retention", 600, 600)
+	if err != nil {
+		t.Fatalf("update storage policy failed: %v", err)
+	}
+	if updated.StorageProtection != StorageProtectionProtected {
+		t.Fatalf("unexpected storage mode: %q", updated.StorageProtection)
+	}
+	if updated.ContentRetentionMode != RetentionZeroRetention {
+		t.Fatalf("unexpected retention mode: %q", updated.ContentRetentionMode)
+	}
+	if updated.MessageTTLSeconds != 0 || updated.FileTTLSeconds != 0 {
+		t.Fatalf("ttl must be zero for zero retention: %+v", updated)
+	}
+}
+
 func TestServiceBlocklistRoundtrip(t *testing.T) {
 	bl, err := NewBlocklist(nil)
 	if err != nil {

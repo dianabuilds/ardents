@@ -35,7 +35,7 @@ func (s *Service) handleInboundGroupMessage(msg waku.PrivateMessage, wire contra
 			return messagingapp.ResolveInboundContent(msg, wire, s.sessionManager)
 		},
 		BuildStoredMessage: func(content []byte, contentType string, now time.Time) models.Message {
-			return messagingapp.BuildInboundGroupStoredMessage(msg, wire.ConversationID, content, contentType, now)
+			return messagingapp.BuildInboundGroupStoredMessage(msg, wire.ConversationID, wire.ThreadID, content, contentType, now)
 		},
 		SaveMessage:         s.messageStore.SaveMessage,
 		IsMessageIDConflict: func(err error) bool { return errors.Is(err, storage.ErrMessageIDConflict) },

@@ -14,9 +14,11 @@ import (
 const (
 	storagePassphraseEnv     = "AIM_STORAGE_PASSPHRASE"
 	legacyMigrationSecretEnv = "AIM_LEGACY_STORAGE_PASSPHRASE"
+	storageKeyWrappedEnv     = "AIM_STORAGE_KEY_WRAPPED"
 )
 
 var ErrLegacyStorageSecretRequired = errors.New("legacy storage secret is required")
+var ErrInsecureStorageKeyMode = errors.New("insecure storage key mode is forbidden in production")
 
 func StoragePassphrase(dataDir string) (string, error) {
 	if secret := strings.TrimSpace(os.Getenv(storagePassphraseEnv)); secret != "" {
@@ -26,11 +28,17 @@ func StoragePassphrase(dataDir string) (string, error) {
 	existing, err := os.ReadFile(keyPath)
 	if err == nil {
 		if secret := strings.TrimSpace(string(existing)); secret != "" {
+			if policyErr := enforceStorageKeyPolicy("file"); policyErr != nil {
+				return "", policyErr
+			}
 			return secret, nil
 		}
 	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", err
+	}
+	if policyErr := enforceStorageKeyPolicy("auto-generate"); policyErr != nil {
+		return "", policyErr
 	}
 	if hasLegacyPersistentData(dataDir) {
 		return "", fmt.Errorf(
@@ -52,6 +60,9 @@ func StoragePassphrase(dataDir string) (string, error) {
 }
 
 func WriteStorageKey(dataDir, secret string) error {
+	if policyErr := enforceStorageKeyPolicy("write-file"); policyErr != nil {
+		return policyErr
+	}
 	keyPath := filepath.Join(dataDir, "storage.key")
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
 		return err
@@ -79,4 +90,48 @@ func hasLegacyPersistentData(dataDir string) bool {
 		}
 	}
 	return false
+}
+
+func enforceStorageKeyPolicy(source string) error {
+	if !isProductionEnv() {
+		return nil
+	}
+	if source == "auto-generate" {
+		return fmt.Errorf(
+			"%w: production requires %s or OS-keystore-wrapped key flow; raw storage.key generation is disabled",
+			ErrInsecureStorageKeyMode,
+			storagePassphraseEnv,
+		)
+	}
+	wrapped, _ := parseBoolEnv(storageKeyWrappedEnv)
+	if wrapped {
+		return nil
+	}
+	return fmt.Errorf(
+		"%w: raw storage.key is forbidden in production; set %s or enable wrapped key flow (%s=true)",
+		ErrInsecureStorageKeyMode,
+		storagePassphraseEnv,
+		storageKeyWrappedEnv,
+	)
+}
+
+func isProductionEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AIM_ENV"))) {
+	case "prod", "production":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseBoolEnv(name string) (bool, bool) {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, false
+	}
 }

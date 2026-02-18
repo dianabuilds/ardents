@@ -110,6 +110,18 @@ func (h *NotificationHub) BacklogSize() int {
 	return len(h.history)
 }
 
+func (h *NotificationHub) Reset() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, ch := range h.subs {
+		close(ch)
+		delete(h.subs, id)
+	}
+	h.history = nil
+	h.nextSeq = 0
+	h.nextSub = 0
+}
+
 type ServiceRuntime struct {
 	Mu              sync.RWMutex
 	Networking      bool

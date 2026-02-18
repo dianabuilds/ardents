@@ -1,6 +1,7 @@
 package daemonservice
 
 import (
+	"log/slog"
 	"sync"
 
 	"aim-chat/go-backend/internal/crypto"
@@ -10,6 +11,7 @@ import (
 	inboxapp "aim-chat/go-backend/internal/domains/inbox"
 	messagingapp "aim-chat/go-backend/internal/domains/messaging"
 	privacyapp "aim-chat/go-backend/internal/domains/privacy"
+	"aim-chat/go-backend/internal/platform/privacylog"
 	runtimeapp "aim-chat/go-backend/internal/platform/runtime"
 	"aim-chat/go-backend/internal/storage"
 	"aim-chat/go-backend/internal/waku"
@@ -48,6 +50,7 @@ func newServiceWithOptions(wakuCfg waku.Config, opts contracts.ServiceOptions) (
 		groupStateStore:   groupdomain.NewSnapshotStore(),
 		groupAbuse:        groupdomain.NewAbuseProtectionFromEnv(),
 		startStopMu:       &sync.Mutex{},
+		metaHardening:     newOutboundMetadataHardeningFromEnv(),
 	}
 
 	svc.identityCore = identityapp.NewService(
@@ -77,6 +80,7 @@ func ensureServiceOptions(opts contracts.ServiceOptions) (contracts.ServiceOptio
 	if opts.Logger == nil {
 		opts.Logger = runtimeapp.DefaultLogger()
 	}
+	opts.Logger = slog.New(privacylog.WrapHandler(opts.Logger.Handler()))
 	if opts.AttachmentStore == nil {
 		opts.AttachmentStore, err = storage.NewAttachmentStore("")
 		if err != nil {

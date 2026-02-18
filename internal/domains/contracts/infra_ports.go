@@ -32,6 +32,7 @@ type MessageRepository interface {
 	ClearMessages(contactID string) (int, error)
 	ListMessages(contactID string, limit, offset int) []models.Message
 	ListMessagesByConversation(conversationID, conversationType string, limit, offset int) []models.Message
+	ListMessagesByConversationThread(conversationID, conversationType, threadID string, limit, offset int) []models.Message
 	PendingCount() int
 	DuePending(now time.Time) []storage.PendingMessage
 }
@@ -61,8 +62,10 @@ type WirePayload struct {
 	Kind              string                   `json:"kind"`
 	Envelope          crypto.MessageEnvelope   `json:"envelope"`
 	Plain             []byte                   `json:"plain"`
+	Padding           string                   `json:"padding,omitempty"`
 	ConversationID    string                   `json:"conversation_id,omitempty"`
 	ConversationType  string                   `json:"conversation_type,omitempty"`
+	ThreadID          string                   `json:"thread_id,omitempty"`
 	EventID           string                   `json:"event_id,omitempty"`
 	EventType         string                   `json:"event_type,omitempty"`
 	MembershipVersion uint64                   `json:"membership_version,omitempty"`

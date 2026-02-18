@@ -31,7 +31,9 @@ type groupCore interface {
 	PromoteGroupMember(groupID, memberID string) (groupdomain.GroupMember, error)
 	DemoteGroupMember(groupID, memberID string) (groupdomain.GroupMember, error)
 	SendGroupMessage(groupID, content string) (groupdomain.GroupMessageFanoutResult, error)
+	SendGroupMessageInThread(groupID, content, threadID string) (groupdomain.GroupMessageFanoutResult, error)
 	ListGroupMessages(groupID string, limit, offset int) ([]models.Message, error)
+	ListGroupMessagesByThread(groupID, threadID string, limit, offset int) ([]models.Message, error)
 	GetGroupMessageStatus(groupID, messageID string) (models.MessageStatus, error)
 	DeleteGroupMessage(groupID, messageID string) error
 }
@@ -68,4 +70,5 @@ type Service struct {
 	groupStateStore   *groupdomain.SnapshotStore
 	groupAbuse        *groupdomain.AbuseProtection
 	startStopMu       *sync.Mutex
+	metaHardening     *outboundMetadataHardening
 }

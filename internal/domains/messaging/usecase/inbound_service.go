@@ -118,7 +118,7 @@ func (s *InboundService) HandleIncomingPrivateMessage(msg waku.PrivateMessage) {
 		}
 	}
 
-	in := BuildInboundStoredMessage(msg, content, contentType, time.Now())
+	in := BuildInboundStoredMessage(msg, wire.ThreadID, content, contentType, time.Now())
 	if !s.deps.PersistInboundMessage(in, msg.SenderID) {
 		return
 	}
@@ -151,7 +151,7 @@ func (s *InboundService) HandleInboundMessageRequest(msg waku.PrivateMessage) {
 		}
 	}
 
-	in := BuildInboundStoredMessage(msg, content, contentType, time.Now())
+	in := BuildInboundStoredMessage(msg, wire.ThreadID, content, contentType, time.Now())
 	if !s.deps.PersistInboundRequest(in) {
 		return
 	}

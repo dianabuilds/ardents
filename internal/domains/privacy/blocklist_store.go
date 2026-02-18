@@ -67,6 +67,16 @@ func (s *BlocklistStore) Persist(list Blocklist) error {
 	return persistEncryptedJSON(s.path, s.secret, state)
 }
 
+func (s *BlocklistStore) Wipe() error {
+	if strings.TrimSpace(s.path) == "" {
+		return nil
+	}
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 type persistedBlocklistState struct {
 	Version int      `json:"version"`
 	Blocked []string `json:"blocked"`

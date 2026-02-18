@@ -8,10 +8,11 @@ import (
 )
 
 type GroupReadService struct {
-	States                     map[string]GroupState
-	GetMessage                 func(messageID string) (models.Message, bool)
-	DeleteMessage              func(contactID, messageID string) (bool, error)
-	ListMessagesByConversation func(conversationID, conversationType string, limit, offset int) []models.Message
+	States                           map[string]GroupState
+	GetMessage                       func(messageID string) (models.Message, bool)
+	DeleteMessage                    func(contactID, messageID string) (bool, error)
+	ListMessagesByConversation       func(conversationID, conversationType string, limit, offset int) []models.Message
+	ListMessagesByConversationThread func(conversationID, conversationType, threadID string, limit, offset int) []models.Message
 }
 
 func (s *GroupReadService) GetGroup(groupID string) (Group, error) {
@@ -71,7 +72,40 @@ func (s *GroupReadService) ListGroupMessages(groupID string, limit, offset int) 
 		return nil, errors.New("message list repository is not configured")
 	}
 	msgs := s.ListMessagesByConversation(groupID, models.ConversationTypeGroup, limit, offset)
-	return append([]models.Message(nil), msgs...), nil
+	filtered := make([]models.Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if strings.TrimSpace(msg.ContentType) == groupFanoutTransportContentType {
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	return append([]models.Message(nil), filtered...), nil
+}
+
+func (s *GroupReadService) ListGroupMessagesByThread(groupID, threadID string, limit, offset int) ([]models.Message, error) {
+	groupID, err := NormalizeGroupID(groupID)
+	if err != nil {
+		return nil, err
+	}
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, errors.New("thread id is required")
+	}
+	if _, ok := s.States[groupID]; !ok {
+		return nil, ErrGroupNotFound
+	}
+	if s.ListMessagesByConversationThread == nil {
+		return nil, errors.New("threaded message list repository is not configured")
+	}
+	msgs := s.ListMessagesByConversationThread(groupID, models.ConversationTypeGroup, threadID, limit, offset)
+	filtered := make([]models.Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if strings.TrimSpace(msg.ContentType) == groupFanoutTransportContentType {
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	return append([]models.Message(nil), filtered...), nil
 }
 
 func (s *GroupReadService) GetGroupMessageStatus(groupID, messageID string) (models.MessageStatus, error) {

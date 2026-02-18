@@ -2,7 +2,7 @@ package usecase
 
 import (
 	"aim-chat/go-backend/pkg/models"
-	"sort"
+	"math/rand"
 	"strings"
 	"time"
 )
@@ -31,7 +31,9 @@ type GroupMessageFanoutService struct {
 	NotifyGroupMessage func(groupID string, msg models.Message)
 }
 
-func (s *GroupMessageFanoutService) SendGroupMessageFanout(groupID, eventID, content string) (GroupMessageFanoutResult, error) {
+const groupFanoutTransportContentType = "group_fanout_transport"
+
+func (s *GroupMessageFanoutService) SendGroupMessageFanout(groupID, eventID, content, threadID string) (GroupMessageFanoutResult, error) {
 	groupID, err := NormalizeGroupID(groupID)
 	if err != nil {
 		return GroupMessageFanoutResult{}, err
@@ -51,6 +53,7 @@ func (s *GroupMessageFanoutService) SendGroupMessageFanout(groupID, eventID, con
 	if content == "" {
 		return GroupMessageFanoutResult{}, ErrInvalidGroupMessageContent
 	}
+	threadID = strings.TrimSpace(threadID)
 	if s.IdentityID == nil {
 		return GroupMessageFanoutResult{}, ErrInvalidGroupMemberID
 	}
@@ -81,6 +84,9 @@ func (s *GroupMessageFanoutService) SendGroupMessageFanout(groupID, eventID, con
 	if !ok || actor.Status != GroupMemberStatusActive {
 		return GroupMessageFanoutResult{}, ErrGroupPermissionDenied
 	}
+	if isChannelGroupTitle(state.Group.Title) && actor.Role != GroupMemberRoleOwner && actor.Role != GroupMemberRoleAdmin {
+		return GroupMessageFanoutResult{}, ErrGroupPermissionDenied
+	}
 	groupKeyVersion := state.LastKeyVersion
 	if groupKeyVersion == 0 {
 		groupKeyVersion = 1
@@ -99,13 +105,54 @@ func (s *GroupMessageFanoutService) SendGroupMessageFanout(groupID, eventID, con
 		}
 		recipients = append(recipients, memberID)
 	}
-	sort.Strings(recipients)
+	if len(recipients) > 1 {
+		r := rand.New(rand.NewSource(now.UnixNano()))
+		r.Shuffle(len(recipients), func(i, j int) {
+			recipients[i], recipients[j] = recipients[j], recipients[i]
+		})
+	}
 
 	result := GroupMessageFanoutResult{
 		GroupID:    groupID,
 		EventID:    eventID,
 		Attempted:  len(recipients),
 		Recipients: make([]GroupMessageRecipientStatus, 0, len(recipients)),
+	}
+
+	// Persist a canonical sender-visible message so group history includes own sends
+	// even when there are no other active members in the group.
+	if s.SaveMessage != nil {
+		senderMessageID := DeriveRecipientMessageID(eventID, actorID)
+		senderStored := false
+		if s.GetMessage != nil {
+			if existing, exists := s.GetMessage(senderMessageID); exists {
+				senderStored = true
+				if s.NotifyGroupMessage != nil {
+					s.NotifyGroupMessage(groupID, existing)
+				}
+			}
+		}
+		if !senderStored {
+			senderMsg := models.Message{
+				ID:               senderMessageID,
+				ContactID:        actorID,
+				ConversationID:   groupID,
+				ConversationType: models.ConversationTypeGroup,
+				ThreadID:         threadID,
+				Content:          []byte(content),
+				Timestamp:        now,
+				Direction:        "out",
+				Status:           "sent",
+				ContentType:      "text",
+			}
+			if err := s.SaveMessage(senderMsg); err != nil {
+				if s.RecordError != nil {
+					s.RecordError("storage", err)
+				}
+			} else if s.NotifyGroupMessage != nil {
+				s.NotifyGroupMessage(groupID, senderMsg)
+			}
+		}
 	}
 
 	for _, recipientID := range recipients {
@@ -133,11 +180,12 @@ func (s *GroupMessageFanoutService) SendGroupMessageFanout(groupID, eventID, con
 			ContactID:        recipientID,
 			ConversationID:   groupID,
 			ConversationType: models.ConversationTypeGroup,
+			ThreadID:         threadID,
 			Content:          []byte(content),
 			Timestamp:        now,
 			Direction:        "out",
 			Status:           "pending",
-			ContentType:      "text",
+			ContentType:      groupFanoutTransportContentType,
 		}
 		if s.SaveMessage == nil {
 			return GroupMessageFanoutResult{}, ErrGroupNotFound
@@ -195,11 +243,11 @@ func (s *GroupMessageFanoutService) SendGroupMessageFanout(groupID, eventID, con
 			MessageID:   messageID,
 			Status:      statusValue,
 		})
-		if s.GetMessage != nil && s.NotifyGroupMessage != nil {
-			if stored, exists := s.GetMessage(messageID); exists {
-				s.NotifyGroupMessage(groupID, stored)
-			}
-		}
 	}
 	return result, nil
+}
+
+func isChannelGroupTitle(title string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(title))
+	return strings.HasPrefix(normalized, "[channel")
 }

@@ -38,10 +38,12 @@ type IdentityAPI interface {
 // MessagingAPI is a transport-neutral direct messaging/session contract.
 type MessagingAPI interface {
 	SendMessage(contactID, content string) (string, error)
+	SendMessageInThread(contactID, content, threadID string) (string, error)
 	EditMessage(contactID, messageID, content string) (models.Message, error)
 	DeleteMessage(contactID, messageID string) error
 	ClearMessages(contactID string) (int, error)
 	GetMessages(contactID string, limit, offset int) ([]models.Message, error)
+	GetMessagesByThread(contactID, threadID string, limit, offset int) ([]models.Message, error)
 	GetMessageStatus(messageID string) (models.MessageStatus, error)
 	InitSession(contactID string, peerPublicKey []byte) (models.SessionState, error)
 }
@@ -60,7 +62,9 @@ type GroupAPI interface {
 	PromoteGroupMember(groupID, memberID string) (groupdomain.GroupMember, error)
 	DemoteGroupMember(groupID, memberID string) (groupdomain.GroupMember, error)
 	SendGroupMessage(groupID, content string) (groupdomain.GroupMessageFanoutResult, error)
+	SendGroupMessageInThread(groupID, content, threadID string) (groupdomain.GroupMessageFanoutResult, error)
 	ListGroupMessages(groupID string, limit, offset int) ([]models.Message, error)
+	ListGroupMessagesByThread(groupID, threadID string, limit, offset int) ([]models.Message, error)
 	GetGroupMessageStatus(groupID, messageID string) (models.MessageStatus, error)
 	DeleteGroupMessage(groupID, messageID string) error
 }
