@@ -38,12 +38,13 @@ func (s *Service) applyAutoRead(message *models.Message, contactID string) {
 	}
 	message.Status = "read"
 	if err := s.sendReceipt(contactID, message.ID, "read"); err != nil {
-		s.recordError("network", err)
+		s.recordErrorWithContext(contracts.ErrorCategoryNetwork, err, "message.auto_read_receipt", messageCorrelationID(message.ID, contactID), "message_id", message.ID, "contact_id", contactID)
 	}
 }
 
 func (s *Service) publishQueuedMessage(msg models.Message, contactID string, wire contracts.WirePayload) (string, error) {
-	s.logger.Info("message queued", "message_id", msg.ID, "contact_id", contactID, "kind", wire.Kind)
+	correlationID := messageCorrelationID(msg.ID, contactID)
+	s.logInfo("message.outbound_queue", correlationID, "message queued", "message_id", msg.ID, "contact_id", contactID, "kind", wire.Kind)
 	ctx, err := s.networkContext("network")
 	if err == nil {
 		err = s.publishSignedWireWithContext(ctx, msg.ID, contactID, wire)
@@ -51,16 +52,16 @@ func (s *Service) publishQueuedMessage(msg models.Message, contactID string, wir
 	if err != nil {
 		category := messagingapp.ErrorCategory(err)
 		s.recordError(category, err)
-		if category == "network" {
+		if category == contracts.ErrorCategoryNetwork {
 			if perr := s.messageStore.AddOrUpdatePending(msg, 1, messagingapp.NextRetryTime(1), err.Error()); perr != nil {
-				s.recordError("storage", perr)
+				s.recordErrorWithContext(contracts.ErrorCategoryStorage, perr, "message.outbound_queue", correlationID, "message_id", msg.ID, "contact_id", contactID)
 				return "", perr
 			}
 			return msg.ID, nil
 		}
 		return "", err
 	}
-	s.logger.Info("message published", "message_id", msg.ID, "contact_id", contactID)
+	s.logInfo("message.outbound_published", correlationID, "message published", "message_id", msg.ID, "contact_id", contactID)
 	s.markMessageAsSent(msg.ID)
 	return msg.ID, nil
 }

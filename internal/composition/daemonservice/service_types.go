@@ -71,4 +71,17 @@ type Service struct {
 	groupAbuse        *groupdomain.AbuseProtection
 	startStopMu       *sync.Mutex
 	metaHardening     *outboundMetadataHardening
+	replicationMu     *sync.RWMutex
+	replicationMode   blobReplicationMode
+	blobFlags         blobFeatureFlags
+	presetMu          *sync.RWMutex
+	nodePreset        blobNodePresetConfig
+	serveLimiter      *bandwidthLimiter
+	fetchLimiter      *bandwidthLimiter
+	blobACLMu         *sync.RWMutex
+	blobACL           blobACLPolicy
+	bindingStore      *nodeBindingStore
+	bindingLinkMu     *sync.Mutex
+	bindingLinks      map[string]pendingNodeBindingLink
+	blobProviders     *blobProviderRegistry
 }

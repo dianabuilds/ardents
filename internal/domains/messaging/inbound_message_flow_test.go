@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"aim-chat/go-backend/internal/crypto"
-	"aim-chat/go-backend/internal/waku"
 	"aim-chat/go-backend/pkg/models"
 )
 
@@ -32,7 +31,7 @@ func (f *fakeInboundDecryptor) Decrypt(_ string, _ crypto.MessageEnvelope) ([]by
 }
 
 func TestValidateInboundDeviceAuth_MissingDevice(t *testing.T) {
-	msg := waku.PrivateMessage{ID: "m1", SenderID: "s1", Recipient: "r1"}
+	msg := InboundPrivateMessage{ID: "m1", SenderID: "s1", Recipient: "r1"}
 	wire := contracts.WirePayload{Kind: "plain", Plain: []byte("x")}
 	err := ValidateInboundDeviceAuth(msg, wire, &fakeInboundDeviceVerifier{})
 	if err == nil || ErrorCategory(err) != "crypto" {
@@ -41,7 +40,7 @@ func TestValidateInboundDeviceAuth_MissingDevice(t *testing.T) {
 }
 
 func TestValidateInboundDeviceAuth_VerifierError(t *testing.T) {
-	msg := waku.PrivateMessage{ID: "m1", SenderID: "s1", Recipient: "r1"}
+	msg := InboundPrivateMessage{ID: "m1", SenderID: "s1", Recipient: "r1"}
 	wire := contracts.WirePayload{
 		Kind:      "plain",
 		Plain:     []byte("x"),
@@ -55,7 +54,7 @@ func TestValidateInboundDeviceAuth_VerifierError(t *testing.T) {
 }
 
 func TestResolveInboundContent_E2EEUnreadable(t *testing.T) {
-	msg := waku.PrivateMessage{ID: "m1", SenderID: "s1", Payload: []byte("cipher")}
+	msg := InboundPrivateMessage{ID: "m1", SenderID: "s1", Payload: []byte("cipher")}
 	wire := contracts.WirePayload{Kind: "e2ee", Envelope: crypto.MessageEnvelope{}}
 	content, kind, err := ResolveInboundContent(msg, wire, &fakeInboundDecryptor{err: errors.New("decrypt failed")})
 	if err == nil {
@@ -71,7 +70,7 @@ func TestResolveInboundContent_E2EEUnreadable(t *testing.T) {
 
 func TestBuildInboundStoredMessage(t *testing.T) {
 	now := time.Now()
-	msg := waku.PrivateMessage{ID: "m1", SenderID: "s1"}
+	msg := InboundPrivateMessage{ID: "m1", SenderID: "s1"}
 	in := BuildInboundStoredMessage(msg, "thread-1", []byte("hello"), "text", now)
 	if in.ID != "m1" || in.ContactID != "s1" || in.Direction != "in" || in.Status != "delivered" {
 		t.Fatalf("unexpected inbound message: %#v", in)
@@ -86,7 +85,7 @@ func TestBuildInboundStoredMessage(t *testing.T) {
 
 func TestBuildInboundGroupStoredMessage(t *testing.T) {
 	now := time.Now()
-	msg := waku.PrivateMessage{ID: "gm1", SenderID: "s1"}
+	msg := InboundPrivateMessage{ID: "gm1", SenderID: "s1"}
 	in := BuildInboundGroupStoredMessage(msg, "group-1", "thread-g1", []byte("hello group"), "e2ee", now)
 	if in.ID != "gm1" || in.ContactID != "s1" || in.Direction != "in" || in.Status != "delivered" {
 		t.Fatalf("unexpected inbound group message: %#v", in)

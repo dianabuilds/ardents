@@ -10,6 +10,26 @@ import (
 	"aim-chat/go-backend/pkg/models"
 )
 
+func decodeSingleOrDirect[T any](raw json.RawMessage) (T, error) {
+	var arr []T
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		return arr[0], nil
+	}
+	var direct T
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		return direct, nil
+	}
+	var zero T
+	return zero, errInvalidParams
+}
+
+func intPtrValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
 func decodeCardParam(raw json.RawMessage) (models.ContactCard, error) {
 	// Preferred shape: [ { ...card } ]
 	var arr []models.ContactCard
@@ -53,6 +73,14 @@ func decodeTwoStringParams(raw json.RawMessage) (string, string, error) {
 		return arr[0], arr[1], nil
 	}
 	return "", "", errInvalidParams
+}
+
+func decodeThreeStringParams(raw json.RawMessage) (string, string, string, error) {
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 3 && arr[0] != "" && arr[1] != "" && arr[2] != "" {
+		return arr[0], arr[1], arr[2], nil
+	}
+	return "", "", "", errInvalidParams
 }
 
 func decodeSessionInitParams(raw json.RawMessage) (string, []byte, error) {
@@ -241,41 +269,304 @@ func decodeChannelCreateParams(raw json.RawMessage) (string, string, string, err
 	return name, visibility, strings.TrimSpace(payload.Description), nil
 }
 
-func decodeStoragePolicyParams(raw json.RawMessage) (string, string, int, int, error) {
+func decodeStoragePolicyParams(raw json.RawMessage) (string, string, int, int, int, int, int, int, int, error) {
 	type payload struct {
 		StorageProtectionMode string `json:"storage_protection_mode"`
 		ContentRetentionMode  string `json:"content_retention_mode"`
 		MessageTTLSeconds     *int   `json:"message_ttl_seconds"`
+		ImageTTLSeconds       *int   `json:"image_ttl_seconds"`
 		FileTTLSeconds        *int   `json:"file_ttl_seconds"`
+		ImageQuotaMB          *int   `json:"image_quota_mb"`
+		FileQuotaMB           *int   `json:"file_quota_mb"`
+		ImageMaxItemSizeMB    *int   `json:"image_max_item_size_mb"`
+		FileMaxItemSizeMB     *int   `json:"file_max_item_size_mb"`
 	}
 
-	decodePayload := func(p payload) (string, string, int, int, error) {
+	decodePayload := func(p payload) (string, string, int, int, int, int, int, int, int, error) {
 		protection := strings.TrimSpace(p.StorageProtectionMode)
 		retention := strings.TrimSpace(p.ContentRetentionMode)
 		if protection == "" || retention == "" {
-			return "", "", 0, 0, errInvalidParams
+			return "", "", 0, 0, 0, 0, 0, 0, 0, errInvalidParams
 		}
-		messageTTL := 0
-		fileTTL := 0
-		if p.MessageTTLSeconds != nil {
-			messageTTL = *p.MessageTTLSeconds
+		return protection, retention,
+			intPtrValue(p.MessageTTLSeconds),
+			intPtrValue(p.ImageTTLSeconds),
+			intPtrValue(p.FileTTLSeconds),
+			intPtrValue(p.ImageQuotaMB),
+			intPtrValue(p.FileQuotaMB),
+			intPtrValue(p.ImageMaxItemSizeMB),
+			intPtrValue(p.FileMaxItemSizeMB),
+			nil
+	}
+
+	p, err := decodeSingleOrDirect[payload](raw)
+	if err == nil {
+		return decodePayload(p)
+	}
+	return "", "", 0, 0, 0, 0, 0, 0, 0, errInvalidParams
+}
+
+func decodeStorageScopePolicySetParams(raw json.RawMessage) (string, string, string, string, int, int, int, int, int, int, int, bool, bool, error) {
+	type payload struct {
+		Scope                  string `json:"scope"`
+		ScopeID                string `json:"scope_id"`
+		StorageProtectionMode  string `json:"storage_protection_mode"`
+		ContentRetentionMode   string `json:"content_retention_mode"`
+		MessageTTLSeconds      *int   `json:"message_ttl_seconds"`
+		ImageTTLSeconds        *int   `json:"image_ttl_seconds"`
+		FileTTLSeconds         *int   `json:"file_ttl_seconds"`
+		ImageQuotaMB           *int   `json:"image_quota_mb"`
+		FileQuotaMB            *int   `json:"file_quota_mb"`
+		ImageMaxItemSizeMB     *int   `json:"image_max_item_size_mb"`
+		FileMaxItemSizeMB      *int   `json:"file_max_item_size_mb"`
+		InfiniteTTL            bool   `json:"infinite_ttl"`
+		PinRequiredForInfinite bool   `json:"pin_required_for_infinite"`
+	}
+	parse := func(p payload) (string, string, string, string, int, int, int, int, int, int, int, bool, bool, error) {
+		scope := strings.TrimSpace(p.Scope)
+		scopeID := strings.TrimSpace(p.ScopeID)
+		protection := strings.TrimSpace(p.StorageProtectionMode)
+		retention := strings.TrimSpace(p.ContentRetentionMode)
+		if scope == "" || protection == "" || retention == "" {
+			return "", "", "", "", 0, 0, 0, 0, 0, 0, 0, false, false, errInvalidParams
 		}
-		if p.FileTTLSeconds != nil {
-			fileTTL = *p.FileTTLSeconds
+		return scope, scopeID, protection, retention,
+			intPtrValue(p.MessageTTLSeconds),
+			intPtrValue(p.ImageTTLSeconds),
+			intPtrValue(p.FileTTLSeconds),
+			intPtrValue(p.ImageQuotaMB),
+			intPtrValue(p.FileQuotaMB),
+			intPtrValue(p.ImageMaxItemSizeMB),
+			intPtrValue(p.FileMaxItemSizeMB),
+			p.InfiniteTTL,
+			p.PinRequiredForInfinite,
+			nil
+	}
+	p, err := decodeSingleOrDirect[payload](raw)
+	if err == nil {
+		return parse(p)
+	}
+	return "", "", "", "", 0, 0, 0, 0, 0, 0, 0, false, false, errInvalidParams
+}
+
+func decodeStorageScopePolicyRefParams(raw json.RawMessage) (string, string, bool, error) {
+	type payload struct {
+		Scope    string `json:"scope"`
+		ScopeID  string `json:"scope_id"`
+		IsPinned bool   `json:"is_pinned"`
+	}
+	parse := func(p payload) (string, string, bool, error) {
+		scope := strings.TrimSpace(p.Scope)
+		scopeID := strings.TrimSpace(p.ScopeID)
+		if scope == "" {
+			return "", "", false, errInvalidParams
 		}
-		return protection, retention, messageTTL, fileTTL, nil
+		return scope, scopeID, p.IsPinned, nil
+	}
+	var arr []payload
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		return parse(arr[0])
+	}
+	var direct payload
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		return parse(direct)
+	}
+	return "", "", false, errInvalidParams
+}
+
+func decodeBlobProvidersParams(raw json.RawMessage) (string, error) {
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		blobID := strings.TrimSpace(arr[0])
+		if blobID == "" {
+			return "", errInvalidParams
+		}
+		return blobID, nil
+	}
+	var payload struct {
+		BlobID string `json:"blob_id"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", errInvalidParams
+	}
+	blobID := strings.TrimSpace(payload.BlobID)
+	if blobID == "" {
+		return "", errInvalidParams
+	}
+	return blobID, nil
+}
+
+func decodeBlobReplicationModeParams(raw json.RawMessage) (string, error) {
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		mode := strings.TrimSpace(arr[0])
+		if mode == "" {
+			return "", errInvalidParams
+		}
+		return mode, nil
+	}
+	var payload struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", errInvalidParams
+	}
+	mode := strings.TrimSpace(payload.Mode)
+	if mode == "" {
+		return "", errInvalidParams
+	}
+	return mode, nil
+}
+
+func decodeBlobFeatureFlagsParams(raw json.RawMessage) (bool, bool, int, error) {
+	type payload struct {
+		AnnounceEnabled *bool `json:"announce_enabled"`
+		FetchEnabled    *bool `json:"fetch_enabled"`
+		RolloutPercent  *int  `json:"rollout_percent"`
+	}
+	parse := func(p payload) (bool, bool, int, error) {
+		if p.AnnounceEnabled == nil || p.FetchEnabled == nil || p.RolloutPercent == nil {
+			return false, false, 0, errInvalidParams
+		}
+		if *p.RolloutPercent < 0 || *p.RolloutPercent > 100 {
+			return false, false, 0, errInvalidParams
+		}
+		return *p.AnnounceEnabled, *p.FetchEnabled, *p.RolloutPercent, nil
 	}
 
 	var arr []payload
 	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
-		return decodePayload(arr[0])
+		return parse(arr[0])
 	}
-
 	var direct payload
 	if err := json.Unmarshal(raw, &direct); err == nil {
-		return decodePayload(direct)
+		return parse(direct)
 	}
-	return "", "", 0, 0, errInvalidParams
+	return false, false, 0, errInvalidParams
+}
+
+func decodeBlobACLPolicyParams(raw json.RawMessage) (string, []string, error) {
+	type payload struct {
+		Mode      string   `json:"mode"`
+		Allowlist []string `json:"allowlist"`
+	}
+	parse := func(p payload) (string, []string, error) {
+		mode := strings.TrimSpace(p.Mode)
+		if mode == "" {
+			return "", nil, errInvalidParams
+		}
+		return mode, p.Allowlist, nil
+	}
+
+	var arr []payload
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		return parse(arr[0])
+	}
+	var direct payload
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		return parse(direct)
+	}
+	return "", nil, errInvalidParams
+}
+
+func decodeBlobNodePresetParams(raw json.RawMessage) (string, error) {
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		preset := strings.TrimSpace(arr[0])
+		if preset == "" {
+			return "", errInvalidParams
+		}
+		return preset, nil
+	}
+	var payload struct {
+		Preset string `json:"preset"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", errInvalidParams
+	}
+	preset := strings.TrimSpace(payload.Preset)
+	if preset == "" {
+		return "", errInvalidParams
+	}
+	return preset, nil
+}
+
+func decodeNodeBindingLinkCreateParams(raw json.RawMessage) (int, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, nil
+	}
+	type payload struct {
+		TTLSeconds *int `json:"ttl_seconds"`
+	}
+	var arr []payload
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		if arr[0].TTLSeconds == nil {
+			return 0, nil
+		}
+		if *arr[0].TTLSeconds < 1 {
+			return 0, errInvalidParams
+		}
+		return *arr[0].TTLSeconds, nil
+	}
+	var direct payload
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		if direct.TTLSeconds == nil {
+			return 0, nil
+		}
+		if *direct.TTLSeconds < 1 {
+			return 0, errInvalidParams
+		}
+		return *direct.TTLSeconds, nil
+	}
+	return 0, errInvalidParams
+}
+
+func decodeNodeBindingCompleteParams(raw json.RawMessage) (string, string, string, string, bool, error) {
+	type payload struct {
+		LinkCode            string `json:"link_code"`
+		NodeID              string `json:"node_id"`
+		NodePublicKeyBase64 string `json:"node_public_key_base64"`
+		NodeSignatureBase64 string `json:"node_signature_base64"`
+		Rebind              bool   `json:"rebind"`
+	}
+	parse := func(p payload) (string, string, string, string, bool, error) {
+		linkCode := strings.TrimSpace(p.LinkCode)
+		nodeID := strings.TrimSpace(p.NodeID)
+		pub := strings.TrimSpace(p.NodePublicKeyBase64)
+		sig := strings.TrimSpace(p.NodeSignatureBase64)
+		if linkCode == "" || nodeID == "" || pub == "" || sig == "" {
+			return "", "", "", "", false, errInvalidParams
+		}
+		return linkCode, nodeID, pub, sig, p.Rebind, nil
+	}
+	var arr []payload
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		return parse(arr[0])
+	}
+	var direct payload
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		return parse(direct)
+	}
+	return "", "", "", "", false, errInvalidParams
+}
+
+func decodeNodeBindingUnbindParams(raw json.RawMessage) (string, bool, error) {
+	type payload struct {
+		NodeID  string `json:"node_id"`
+		Confirm bool   `json:"confirm"`
+	}
+	parse := func(p payload) (string, bool, error) {
+		return strings.TrimSpace(p.NodeID), p.Confirm, nil
+	}
+	var arr []payload
+	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) == 1 {
+		return parse(arr[0])
+	}
+	var direct payload
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		return parse(direct)
+	}
+	return "", false, errInvalidParams
 }
 
 var errInvalidParams = errors.New("invalid params")

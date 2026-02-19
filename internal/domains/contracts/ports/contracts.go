@@ -18,6 +18,7 @@ type IdentityAPI interface {
 	CreateIdentity(password string) (models.Identity, string, error)
 	ExportSeed(password string) (string, error)
 	ExportBackup(consentToken, passphrase string) (string, error)
+	RestoreBackup(consentToken, passphrase, backupBlob string) (models.Identity, error)
 	ImportIdentity(mnemonic, password string) (models.Identity, error)
 	ValidateMnemonic(mnemonic string) bool
 	ChangePassword(oldPassword, newPassword string) error
@@ -26,6 +27,7 @@ type IdentityAPI interface {
 	VerifyContactCard(card models.ContactCard) (bool, error)
 	PutAttachment(name, mimeType, dataBase64 string) (models.AttachmentMeta, error)
 	GetAttachment(attachmentID string) (models.AttachmentMeta, []byte, error)
+	ListBlobProviders(blobID string) ([]models.BlobProviderInfo, error)
 
 	AddContact(contactID, displayName string) error
 	RemoveContact(contactID string) error

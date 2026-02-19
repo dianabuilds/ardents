@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -113,5 +114,43 @@ func TestResolveRPCToken_RotateOnStartOverridesStaticToken(t *testing.T) {
 	}
 	if token == "" || token == "static-token" {
 		t.Fatalf("expected rotated token, got %q", token)
+	}
+}
+
+func TestApplyCORS_SetsSecurityHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/rpc", nil)
+	rr := httptest.NewRecorder()
+	s := &Server{rpcToken: "token", requireRPC: true}
+
+	if ok := s.applyCORS(rr, req); !ok {
+		t.Fatal("expected CORS apply to succeed")
+	}
+
+	headers := rr.Result().Header
+	if got := headers.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("unexpected X-Content-Type-Options: %q", got)
+	}
+	if got := headers.Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("unexpected Referrer-Policy: %q", got)
+	}
+	if got := headers.Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("unexpected X-Frame-Options: %q", got)
+	}
+	if got := headers.Get("Permissions-Policy"); got == "" {
+		t.Fatal("expected Permissions-Policy header")
+	}
+}
+
+func TestApplyCORS_RejectsOriginWhenAuthDisabled(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/rpc", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	rr := httptest.NewRecorder()
+	s := &Server{rpcToken: "", requireRPC: false}
+
+	if ok := s.applyCORS(rr, req); ok {
+		t.Fatal("expected CORS apply to fail when auth is disabled and origin is set")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden status, got %d", rr.Code)
 	}
 }

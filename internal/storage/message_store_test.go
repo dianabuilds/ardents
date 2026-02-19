@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -156,6 +157,71 @@ func TestMessageStoreSaveMessageRollbackOnPersistError(t *testing.T) {
 	}
 	if _, ok := store.GetMessage(msg.ID); ok {
 		t.Fatal("message must not stay in memory after persist failure")
+	}
+}
+
+func TestMessageStoreRollforwardWritesSchemaVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "messages.json")
+	legacy := map[string]any{
+		"messages": map[string]models.Message{
+			"m1": {
+				ID:               "m1",
+				ContactID:        "c1",
+				ConversationID:   "c1",
+				ConversationType: models.ConversationTypeDirect,
+				Status:           "pending",
+				Timestamp:        time.Now().UTC(),
+			},
+		},
+		"pending": map[string]PendingMessage{},
+	}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy snapshot failed: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write legacy snapshot failed: %v", err)
+	}
+
+	if _, err := NewEncryptedPersistentMessageStore(path, ""); err != nil {
+		t.Fatalf("open store failed: %v", err)
+	}
+
+	updatedRaw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read updated snapshot failed: %v", err)
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(updatedRaw, &snapshot); err != nil {
+		t.Fatalf("decode updated snapshot failed: %v", err)
+	}
+	version, ok := snapshot["schema_version"].(float64)
+	if !ok {
+		t.Fatal("expected schema_version field in migrated snapshot")
+	}
+	if int(version) != messageStoreSchemaVersion {
+		t.Fatalf("unexpected schema version: got=%d want=%d", int(version), messageStoreSchemaVersion)
+	}
+}
+
+func TestMessageStoreFailsOnFutureSchemaVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "messages.json")
+	payload := map[string]any{
+		"schema_version": messageStoreSchemaVersion + 1,
+		"messages":       map[string]any{},
+		"pending":        map[string]any{},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload failed: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write payload failed: %v", err)
+	}
+
+	_, err = NewEncryptedPersistentMessageStore(path, "")
+	if !errors.Is(err, ErrUnsupportedStorageSchema) {
+		t.Fatalf("expected ErrUnsupportedStorageSchema, got %v", err)
 	}
 }
 

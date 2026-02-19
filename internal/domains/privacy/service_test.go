@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -64,7 +65,12 @@ func TestServiceUpdatePrivacySettingsPreservesStoragePolicy(t *testing.T) {
 		StorageProtection:    StorageProtectionProtected,
 		ContentRetentionMode: RetentionEphemeral,
 		MessageTTLSeconds:    120,
+		ImageTTLSeconds:      150,
 		FileTTLSeconds:       180,
+		ImageQuotaMB:         512,
+		FileQuotaMB:          256,
+		ImageMaxItemSizeMB:   25,
+		FileMaxItemSizeMB:    10,
 	})
 	svc := NewService(
 		&fakePrivacyStore{settings: initial},
@@ -83,8 +89,11 @@ func TestServiceUpdatePrivacySettingsPreservesStoragePolicy(t *testing.T) {
 	if updated.ContentRetentionMode != RetentionEphemeral {
 		t.Fatalf("retention mode must be preserved, got=%q", updated.ContentRetentionMode)
 	}
-	if updated.MessageTTLSeconds != 120 || updated.FileTTLSeconds != 180 {
-		t.Fatalf("ttl must be preserved, got message=%d file=%d", updated.MessageTTLSeconds, updated.FileTTLSeconds)
+	if updated.MessageTTLSeconds != 120 || updated.ImageTTLSeconds != 150 || updated.FileTTLSeconds != 180 {
+		t.Fatalf("ttl must be preserved, got message=%d image=%d file=%d", updated.MessageTTLSeconds, updated.ImageTTLSeconds, updated.FileTTLSeconds)
+	}
+	if updated.ImageQuotaMB != 512 || updated.FileQuotaMB != 256 || updated.ImageMaxItemSizeMB != 25 || updated.FileMaxItemSizeMB != 10 {
+		t.Fatalf("class policy must be preserved, got %+v", updated)
 	}
 }
 
@@ -100,7 +109,7 @@ func TestServiceUpdateStoragePolicy(t *testing.T) {
 	)
 	svc.SetState(DefaultPrivacySettings(), bl)
 
-	updated, err := svc.UpdateStoragePolicy("protected", "zero_retention", 600, 600)
+	updated, err := svc.UpdateStoragePolicy("protected", "zero_retention", 600, 600, 600, 512, 256, 25, 10)
 	if err != nil {
 		t.Fatalf("update storage policy failed: %v", err)
 	}
@@ -110,8 +119,11 @@ func TestServiceUpdateStoragePolicy(t *testing.T) {
 	if updated.ContentRetentionMode != RetentionZeroRetention {
 		t.Fatalf("unexpected retention mode: %q", updated.ContentRetentionMode)
 	}
-	if updated.MessageTTLSeconds != 0 || updated.FileTTLSeconds != 0 {
+	if updated.MessageTTLSeconds != 0 || updated.ImageTTLSeconds != 0 || updated.FileTTLSeconds != 0 {
 		t.Fatalf("ttl must be zero for zero retention: %+v", updated)
+	}
+	if updated.ImageQuotaMB != 512 || updated.FileQuotaMB != 256 || updated.ImageMaxItemSizeMB != 25 || updated.FileMaxItemSizeMB != 10 {
+		t.Fatalf("unexpected class policy values: %+v", updated)
 	}
 }
 
@@ -148,5 +160,71 @@ func TestServiceBlocklistRoundtrip(t *testing.T) {
 	}
 	if svc.IsBlockedSender(id) {
 		t.Fatal("sender must not be blocked after remove")
+	}
+}
+
+func TestServiceStorageScopeOverrideRoundtripAndResolve(t *testing.T) {
+	bl, err := NewBlocklist(nil)
+	if err != nil {
+		t.Fatalf("new blocklist failed: %v", err)
+	}
+	initial := NormalizePrivacySettings(PrivacySettings{
+		StorageProtection:    StorageProtectionStandard,
+		ContentRetentionMode: RetentionEphemeral,
+		MessageTTLSeconds:    120,
+	})
+	svc := NewService(
+		&fakePrivacyStore{settings: initial},
+		&fakeBlocklistStore{list: bl},
+		nil,
+	)
+	svc.SetState(initial, bl)
+
+	override, err := svc.SetStorageScopeOverride("group", "g1", StoragePolicyOverride{
+		StorageProtection:      StorageProtectionProtected,
+		ContentRetentionMode:   RetentionPersistent,
+		InfiniteTTL:            true,
+		PinRequiredForInfinite: true,
+	})
+	if err != nil {
+		t.Fatalf("set scope override failed: %v", err)
+	}
+	if !override.InfiniteTTL || !override.PinRequiredForInfinite {
+		t.Fatalf("unexpected override flags: %+v", override)
+	}
+
+	stored, exists, err := svc.GetStorageScopeOverride("group", "g1")
+	if err != nil {
+		t.Fatalf("get scope override failed: %v", err)
+	}
+	if !exists || !stored.InfiniteTTL {
+		t.Fatalf("expected stored override, exists=%v override=%+v", exists, stored)
+	}
+
+	if _, err := svc.ResolveStoragePolicy("group", "g1", false); !errors.Is(err, ErrInfiniteTTLRequiresPinned) {
+		t.Fatalf("expected ErrInfiniteTTLRequiresPinned, got: %v", err)
+	}
+	resolved, err := svc.ResolveStoragePolicy("group", "g1", true)
+	if err != nil {
+		t.Fatalf("resolve scope policy for pinned failed: %v", err)
+	}
+	if resolved.StorageProtection != StorageProtectionProtected || resolved.ContentRetentionMode != RetentionPersistent {
+		t.Fatalf("unexpected resolved scoped policy: %+v", resolved)
+	}
+
+	fallback, err := svc.ResolveStoragePolicy("group", "g2", false)
+	if err != nil {
+		t.Fatalf("resolve fallback policy failed: %v", err)
+	}
+	if fallback.StorageProtection != StorageProtectionStandard || fallback.ContentRetentionMode != RetentionEphemeral {
+		t.Fatalf("unexpected fallback policy: %+v", fallback)
+	}
+
+	removed, err := svc.RemoveStorageScopeOverride("group", "g1")
+	if err != nil {
+		t.Fatalf("remove scope override failed: %v", err)
+	}
+	if !removed {
+		t.Fatal("expected removed=true")
 	}
 }

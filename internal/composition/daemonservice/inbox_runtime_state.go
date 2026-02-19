@@ -37,6 +37,13 @@ func (s *Service) persistRequestInboxLocked() error {
 	return s.requestInboxState.Persist(s.requestRuntime.Inbox)
 }
 
+func (s *Service) persistRequestInboxSnapshotLocked(next map[string][]models.Message) error {
+	if s.requestInboxState == nil {
+		return nil
+	}
+	return s.requestInboxState.Persist(next)
+}
+
 func (s *Service) withRequestInboxWriteLock(fn func() error) error {
 	s.requestRuntime.Mu.Lock()
 	defer s.requestRuntime.Mu.Unlock()
@@ -55,11 +62,12 @@ func (s *Service) takeMessageRequestThread(senderID string) ([]models.Message, b
 		}
 		thread = inboxapp.CopyThread(current)
 		found = true
-		delete(s.requestRuntime.Inbox, senderID)
-		if err := s.persistRequestInboxLocked(); err != nil {
-			s.requestRuntime.Inbox[senderID] = thread
+		nextInbox := inboxapp.CopyInboxState(s.requestRuntime.Inbox)
+		delete(nextInbox, senderID)
+		if err := s.persistRequestInboxSnapshotLocked(nextInbox); err != nil {
 			return err
 		}
+		s.requestRuntime.Inbox = nextInbox
 		return nil
 	})
 	if err != nil {
@@ -73,8 +81,13 @@ func (s *Service) restoreMessageRequestThreadIfEmpty(senderID string, thread []m
 		if len(s.requestRuntime.Inbox[senderID]) > 0 {
 			return nil
 		}
-		s.requestRuntime.Inbox[senderID] = inboxapp.CopyThread(thread)
-		return s.persistRequestInboxLocked()
+		nextInbox := inboxapp.CopyInboxState(s.requestRuntime.Inbox)
+		nextInbox[senderID] = inboxapp.CopyThread(thread)
+		if err := s.persistRequestInboxSnapshotLocked(nextInbox); err != nil {
+			return err
+		}
+		s.requestRuntime.Inbox = nextInbox
+		return nil
 	})
 }
 
@@ -84,10 +97,12 @@ func (s *Service) removeMessageRequest(senderID string) (bool, error) {
 		if _, exists := s.requestRuntime.Inbox[senderID]; !exists {
 			return nil
 		}
-		delete(s.requestRuntime.Inbox, senderID)
-		if err := s.persistRequestInboxLocked(); err != nil {
+		nextInbox := inboxapp.CopyInboxState(s.requestRuntime.Inbox)
+		delete(nextInbox, senderID)
+		if err := s.persistRequestInboxSnapshotLocked(nextInbox); err != nil {
 			return err
 		}
+		s.requestRuntime.Inbox = nextInbox
 		removed = true
 		return nil
 	})

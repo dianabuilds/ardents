@@ -16,6 +16,7 @@ type StorageBundle struct {
 	BlocklistPath    string
 	RequestInboxPath string
 	GroupStatePath   string
+	NodeBindingPath  string
 }
 
 func BuildStorageBundle(dataDir, secret string) (StorageBundle, error) {
@@ -41,5 +42,6 @@ func BuildStorageBundle(dataDir, secret string) (StorageBundle, error) {
 		BlocklistPath:    filepath.Join(dataDir, "blocklist.enc"),
 		RequestInboxPath: filepath.Join(dataDir, "requests.enc"),
 		GroupStatePath:   filepath.Join(dataDir, "groups.enc"),
+		NodeBindingPath:  filepath.Join(dataDir, "node_binding.enc"),
 	}, nil
 }

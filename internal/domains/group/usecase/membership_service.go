@@ -2,7 +2,6 @@ package usecase
 
 import (
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -24,9 +23,9 @@ func (s *MembershipService) CreateGroup(
 	if err != nil {
 		return Group{}, GroupEvent{}, err
 	}
-	identityID = strings.TrimSpace(identityID)
-	if identityID == "" {
-		return Group{}, GroupEvent{}, ErrInvalidGroupMemberID
+	identityID, err = NormalizeGroupMemberID(identityID)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
 	}
 	if generateID == nil {
 		return Group{}, GroupEvent{}, errors.New("id generator is required")
@@ -113,8 +112,14 @@ func (s *MembershipService) InviteToGroup(
 	if err != nil {
 		return GroupMember{}, GroupEvent{}, err
 	}
-	actorID = strings.TrimSpace(actorID)
-	memberID = strings.TrimSpace(memberID)
+	actorID, err = NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return GroupMember{}, GroupEvent{}, err
+	}
+	memberID, err = NormalizeGroupMemberID(memberID)
+	if err != nil {
+		return GroupMember{}, GroupEvent{}, err
+	}
 	if memberID == actorID {
 		return GroupMember{}, GroupEvent{}, ErrGroupCannotInviteSelf
 	}
@@ -129,7 +134,7 @@ func (s *MembershipService) InviteToGroup(
 		return GroupMember{}, GroupEvent{}, err
 	}
 	actor := state.Members[actorID]
-	if actor.Role != GroupMemberRoleOwner && actor.Role != GroupMemberRoleAdmin {
+	if !actor.CanManageMembers() {
 		return GroupMember{}, GroupEvent{}, ErrGroupPermissionDenied
 	}
 	if existing, ok := state.Members[memberID]; ok {
@@ -169,9 +174,9 @@ func (s *MembershipService) LeaveGroup(groupID, actorID string, now time.Time, a
 	if err != nil {
 		return false, GroupEvent{}, err
 	}
-	actorID = strings.TrimSpace(actorID)
-	if actorID == "" {
-		return false, GroupEvent{}, ErrInvalidGroupMemberID
+	actorID, err = NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return false, GroupEvent{}, err
 	}
 	if abuse != nil && !abuse.AllowMembership(actorID, now) {
 		return false, GroupEvent{}, ErrGroupRateLimitExceeded
@@ -275,7 +280,10 @@ func (s *MembershipService) loadActorMembershipState(
 	if err != nil {
 		return "", "", GroupState{}, GroupMember{}, false, err
 	}
-	actorID = strings.TrimSpace(actorID)
+	actorID, err = NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return "", "", GroupState{}, GroupMember{}, false, err
+	}
 	if abuse != nil && !abuse.AllowMembership(actorID, now) {
 		return "", "", GroupState{}, GroupMember{}, false, ErrGroupRateLimitExceeded
 	}
@@ -292,8 +300,14 @@ func (s *MembershipService) RemoveGroupMember(groupID, actorID, memberID string,
 	if err != nil {
 		return false, GroupEvent{}, err
 	}
-	actorID = strings.TrimSpace(actorID)
-	memberID = strings.TrimSpace(memberID)
+	actorID, err = NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return false, GroupEvent{}, err
+	}
+	memberID, err = NormalizeGroupMemberID(memberID)
+	if err != nil {
+		return false, GroupEvent{}, err
+	}
 	if abuse != nil && !abuse.AllowMembership(actorID, now) {
 		return false, GroupEvent{}, ErrGroupRateLimitExceeded
 	}
@@ -302,14 +316,14 @@ func (s *MembershipService) RemoveGroupMember(groupID, actorID, memberID string,
 		return false, GroupEvent{}, err
 	}
 	actor := state.Members[actorID]
-	if actor.Role != GroupMemberRoleOwner && actor.Role != GroupMemberRoleAdmin {
+	if !actor.CanManageMembers() {
 		return false, GroupEvent{}, ErrGroupPermissionDenied
 	}
 	target, exists := state.Members[memberID]
 	if !exists {
 		return false, GroupEvent{}, ErrGroupMembershipNotFound
 	}
-	if target.Role == GroupMemberRoleOwner {
+	if target.IsOwner() {
 		return false, GroupEvent{}, ErrGroupPermissionDenied
 	}
 	if target.Status == GroupMemberStatusRemoved {
@@ -342,8 +356,14 @@ func (s *MembershipService) ChangeGroupMemberRole(
 	if err != nil {
 		return GroupMember{}, GroupEvent{}, err
 	}
-	actorID = strings.TrimSpace(actorID)
-	memberID = strings.TrimSpace(memberID)
+	actorID, err = NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return GroupMember{}, GroupEvent{}, err
+	}
+	memberID, err = NormalizeGroupMemberID(memberID)
+	if err != nil {
+		return GroupMember{}, GroupEvent{}, err
+	}
 	if abuse != nil && !abuse.AllowMembership(actorID, now) {
 		return GroupMember{}, GroupEvent{}, ErrGroupRateLimitExceeded
 	}
@@ -352,17 +372,17 @@ func (s *MembershipService) ChangeGroupMemberRole(
 		return GroupMember{}, GroupEvent{}, err
 	}
 	actor := state.Members[actorID]
-	if actor.Role != GroupMemberRoleOwner {
+	if !actor.IsOwner() {
 		return GroupMember{}, GroupEvent{}, ErrGroupPermissionDenied
 	}
 	target, exists := state.Members[memberID]
 	if !exists {
 		return GroupMember{}, GroupEvent{}, ErrGroupMembershipNotFound
 	}
-	if target.Role == GroupMemberRoleOwner {
+	if target.IsOwner() {
 		return GroupMember{}, GroupEvent{}, ErrGroupPermissionDenied
 	}
-	if target.Status != GroupMemberStatusActive && target.Status != GroupMemberStatusInvited {
+	if !target.CanMutateRole() {
 		return GroupMember{}, GroupEvent{}, ErrInvalidGroupMemberState
 	}
 	if target.Role == role {

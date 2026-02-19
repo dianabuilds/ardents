@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"aim-chat/go-backend/internal/domains/contracts"
@@ -31,6 +32,8 @@ type Server struct {
 	groupsEnabled bool
 	rpcLimiter    *rpcRateLimiter
 	streams       *rpcStreamLimiter
+	idempotency   *rpcIdempotencyCache
+	idempotencyMu sync.Mutex
 }
 
 func NewServerWithService(rpcAddr string, svc contracts.DaemonService) *Server {
@@ -65,6 +68,7 @@ func newServerWithService(rpcAddr string, svc contracts.DaemonService, rpcToken 
 		groupsEnabled: groupsEnabled(),
 		rpcLimiter:    newRPCRateLimiter(loadRPCRateLimitConfig()),
 		streams:       newRPCStreamLimiter(loadRPCStreamLimitConfig()),
+		idempotency:   newRPCIdempotencyCache(),
 	}
 	if s.rpcToken == "" && !s.requireRPC {
 		slog.Default().Warn("AIM_RPC_TOKEN is not set; RPC auth disabled")
@@ -231,7 +235,7 @@ func writeSSEEvent(w http.ResponseWriter, evt NotificationEvent) error {
 		"jsonrpc": "2.0",
 		"method":  evt.Method,
 		"params": map[string]any{
-			"version":   1,
+			"version":   rpcNotificationVersion,
 			"seq":       evt.Seq,
 			"timestamp": evt.Timestamp,
 			"payload":   evt.Payload,
@@ -251,8 +255,9 @@ func writeSSEEvent(w http.ResponseWriter, evt NotificationEvent) error {
 }
 
 func (s *Server) applyCORS(w http.ResponseWriter, r *http.Request) bool {
+	applySecurityHeaders(w)
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
-	if origin != "" && !isAllowedOrigin(origin) {
+	if origin != "" && !s.isAllowedRequestOrigin(origin) {
 		http.Error(w, "origin is not allowed", http.StatusForbidden)
 		return false
 	}
@@ -261,7 +266,26 @@ func (s *Server) applyCORS(w http.ResponseWriter, r *http.Request) bool {
 	}
 	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-AIM-RPC-Token")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-AIM-RPC-Token, X-AIM-Request-ID")
+	w.Header().Set("Access-Control-Expose-Headers", "X-AIM-Request-ID")
+	return true
+}
+
+func applySecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+}
+
+func (s *Server) isAllowedRequestOrigin(origin string) bool {
+	if !isAllowedOrigin(origin) {
+		return false
+	}
+	// When RPC auth is disabled in non-prod, block browser origins to reduce CSRF-like local abuse.
+	if s.rpcToken == "" && !s.requireRPC {
+		return false
+	}
 	return true
 }
 
@@ -289,6 +313,14 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 
 	meta, data, err := s.service.GetAttachment(id)
 	if err != nil {
+		if errors.Is(err, contracts.ErrAttachmentAccessDenied) {
+			http.Error(w, "attachment access denied", http.StatusForbidden)
+			return
+		}
+		if errors.Is(err, contracts.ErrAttachmentTemporarilyUnavailable) {
+			http.Error(w, "attachment temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "attachment not found", http.StatusNotFound)
 		return
 	}

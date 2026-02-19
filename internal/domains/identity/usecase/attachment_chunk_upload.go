@@ -50,9 +50,9 @@ func (s *Service) InitAttachmentUpload(name, mimeType string, totalSize int64, t
 	if err != nil {
 		return AttachmentUploadInitResult{}, err
 	}
-	fileSHA256 = strings.ToLower(strings.TrimSpace(fileSHA256))
-	if fileSHA256 != "" && len(fileSHA256) != 64 {
-		return AttachmentUploadInitResult{}, errors.New("invalid file digest")
+	fileSHA256, err = identitypolicy.NormalizeOptionalSHA256Hex(fileSHA256, "file")
+	if err != nil {
+		return AttachmentUploadInitResult{}, err
 	}
 	uploadID, err := newUploadID()
 	if err != nil {
@@ -81,9 +81,9 @@ func (s *Service) InitAttachmentUpload(name, mimeType string, totalSize int64, t
 }
 
 func (s *Service) PutAttachmentChunk(uploadID string, chunkIndex int, dataBase64, chunkSHA256 string) (AttachmentUploadChunkResult, error) {
-	chunkSHA256 = strings.ToLower(strings.TrimSpace(chunkSHA256))
-	if chunkSHA256 != "" && len(chunkSHA256) != 64 {
-		return AttachmentUploadChunkResult{}, errors.New("invalid chunk digest")
+	chunkSHA256, err := identitypolicy.NormalizeOptionalSHA256Hex(chunkSHA256, "chunk")
+	if err != nil {
+		return AttachmentUploadChunkResult{}, err
 	}
 	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(dataBase64))
 	if err != nil {
@@ -181,9 +181,14 @@ func (s *Service) CommitAttachmentUpload(uploadID string) (models.AttachmentMeta
 			return models.AttachmentMeta{}, errors.New("file integrity check failed")
 		}
 	}
+	name, mimeType, normalized, err := identitypolicy.NormalizeChunkedAttachmentPayload(session.Name, session.MimeType, data)
+	if err != nil {
+		s.uploadMu.Unlock()
+		return models.AttachmentMeta{}, err
+	}
 	delete(s.uploads, uploadID)
 	s.uploadMu.Unlock()
-	return s.attachmentStore.Put(session.Name, session.MimeType, data)
+	return s.attachmentStore.Put(name, mimeType, normalized)
 }
 
 func newUploadID() (string, error) {

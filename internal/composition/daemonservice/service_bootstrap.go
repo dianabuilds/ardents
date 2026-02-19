@@ -68,5 +68,9 @@ func newServiceForDaemonWithBundle(wakuCfg waku.Config, bundle daemoncomposition
 	if svc.groupRuntime.ReplaySeen == nil {
 		svc.groupRuntime.ReplaySeen = make(map[string]time.Time)
 	}
+	svc.bindingStore.Configure(bundle.NodeBindingPath, secret)
+	if err := svc.bindingStore.Bootstrap(); err != nil {
+		svc.logger.Warn("node binding bootstrap failed, using empty state", "error", err.Error())
+	}
 	return svc, nil
 }

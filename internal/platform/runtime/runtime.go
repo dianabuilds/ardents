@@ -215,12 +215,25 @@ func GeneratePrefixedID(prefix string) (string, error) {
 }
 
 type ServiceMetricsState struct {
-	mu            sync.RWMutex
-	errorCounters map[string]int
-	groupCounters map[string]int
-	opMetrics     map[string]*OpMetric
-	retryAttempts int
-	lastUpdatedAt time.Time
+	mu                sync.RWMutex
+	errorCounters     map[string]int
+	groupCounters     map[string]int
+	gcEvictionByClass map[string]int
+	opMetrics         map[string]*OpMetric
+	blobFetchMetric   blobFetchMetricState
+	retryAttempts     int
+	lastUpdatedAt     time.Time
+}
+
+type blobFetchMetricState struct {
+	attemptsTotal      int
+	successTotal       int
+	unavailableTotal   int
+	failureTotal       int
+	unavailableReasons map[string]int
+	totalLatencyNs     int64
+	maxLatencyNs       int64
+	lastLatencyNs      int64
 }
 
 func NewServiceMetricsState() *ServiceMetricsState {
@@ -240,11 +253,18 @@ func NewServiceMetricsState() *ServiceMetricsState {
 			"decrypt_fail":  0,
 			"policy_reject": 0,
 		},
+		gcEvictionByClass: map[string]int{
+			"image": 0,
+			"file":  0,
+		},
 		opMetrics: map[string]*OpMetric{},
+		blobFetchMetric: blobFetchMetricState{
+			unavailableReasons: map[string]int{},
+		},
 	}
 }
 
-func (m *ServiceMetricsState) Snapshot() (map[string]int, map[string]int, map[string]models.OperationMetric, int, time.Time) {
+func (m *ServiceMetricsState) Snapshot() (map[string]int, map[string]int, map[string]int, models.BlobFetchMetric, map[string]models.OperationMetric, int, time.Time) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -255,6 +275,10 @@ func (m *ServiceMetricsState) Snapshot() (map[string]int, map[string]int, map[st
 	groupCounters := make(map[string]int, len(m.groupCounters))
 	for k, v := range m.groupCounters {
 		groupCounters[k] = v
+	}
+	gcByClass := make(map[string]int, len(m.gcEvictionByClass))
+	for k, v := range m.gcEvictionByClass {
+		gcByClass[k] = v
 	}
 	opStats := make(map[string]models.OperationMetric, len(m.opMetrics))
 	for name, metric := range m.opMetrics {
@@ -270,7 +294,30 @@ func (m *ServiceMetricsState) Snapshot() (map[string]int, map[string]int, map[st
 			LastLatencyMs: metric.LastNs / int64(time.Millisecond),
 		}
 	}
-	return counters, groupCounters, opStats, m.retryAttempts, m.lastUpdatedAt
+	blobAvgLatencyMs := int64(0)
+	if m.blobFetchMetric.attemptsTotal > 0 {
+		blobAvgLatencyMs = m.blobFetchMetric.totalLatencyNs / int64(m.blobFetchMetric.attemptsTotal) / int64(time.Millisecond)
+	}
+	unavailableRateBps := int64(0)
+	if m.blobFetchMetric.attemptsTotal > 0 {
+		unavailableRateBps = int64(m.blobFetchMetric.unavailableTotal*10000) / int64(m.blobFetchMetric.attemptsTotal)
+	}
+	unavailableReasons := make(map[string]int, len(m.blobFetchMetric.unavailableReasons))
+	for reason, count := range m.blobFetchMetric.unavailableReasons {
+		unavailableReasons[reason] = count
+	}
+	blobStats := models.BlobFetchMetric{
+		AttemptsTotal:      m.blobFetchMetric.attemptsTotal,
+		SuccessTotal:       m.blobFetchMetric.successTotal,
+		UnavailableTotal:   m.blobFetchMetric.unavailableTotal,
+		FailureTotal:       m.blobFetchMetric.failureTotal,
+		UnavailableReasons: unavailableReasons,
+		AvgLatencyMs:       blobAvgLatencyMs,
+		MaxLatencyMs:       m.blobFetchMetric.maxLatencyNs / int64(time.Millisecond),
+		LastLatencyMs:      m.blobFetchMetric.lastLatencyNs / int64(time.Millisecond),
+		UnavailableRateBps: unavailableRateBps,
+	}
+	return counters, groupCounters, gcByClass, blobStats, opStats, m.retryAttempts, m.lastUpdatedAt
 }
 
 func (m *ServiceMetricsState) RecordError(category string) {
@@ -296,6 +343,25 @@ func (m *ServiceMetricsState) RecordGroupAggregate(name string) {
 	m.groupCounters[name] = m.groupCounters[name] + 1
 	m.lastUpdatedAt = time.Now().UTC()
 	m.mu.Unlock()
+}
+
+func (m *ServiceMetricsState) RecordGCEvictions(evictedByClass map[string]int) {
+	if len(evictedByClass) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	updated := false
+	for class, count := range evictedByClass {
+		if count <= 0 {
+			continue
+		}
+		m.gcEvictionByClass[class] = m.gcEvictionByClass[class] + count
+		updated = true
+	}
+	if updated {
+		m.lastUpdatedAt = time.Now().UTC()
+	}
 }
 
 func (m *ServiceMetricsState) RecordOp(operation string, started time.Time) {
@@ -326,4 +392,43 @@ func (m *ServiceMetricsState) RecordOpError(operation string) {
 	}
 	metric.Errors++
 	m.lastUpdatedAt = time.Now().UTC()
+}
+
+func (m *ServiceMetricsState) RecordBlobFetchSuccess(latency time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recordBlobFetchLocked(latency)
+	m.blobFetchMetric.successTotal++
+	m.lastUpdatedAt = time.Now().UTC()
+}
+
+func (m *ServiceMetricsState) RecordBlobFetchUnavailable(reason string, latency time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recordBlobFetchLocked(latency)
+	m.blobFetchMetric.unavailableTotal++
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "unknown"
+	}
+	m.blobFetchMetric.unavailableReasons[reason] = m.blobFetchMetric.unavailableReasons[reason] + 1
+	m.lastUpdatedAt = time.Now().UTC()
+}
+
+func (m *ServiceMetricsState) RecordBlobFetchFailure(latency time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recordBlobFetchLocked(latency)
+	m.blobFetchMetric.failureTotal++
+	m.lastUpdatedAt = time.Now().UTC()
+}
+
+func (m *ServiceMetricsState) recordBlobFetchLocked(latency time.Duration) {
+	latencyNs := latency.Nanoseconds()
+	m.blobFetchMetric.attemptsTotal++
+	m.blobFetchMetric.totalLatencyNs += latencyNs
+	m.blobFetchMetric.lastLatencyNs = latencyNs
+	if latencyNs > m.blobFetchMetric.maxLatencyNs {
+		m.blobFetchMetric.maxLatencyNs = latencyNs
+	}
 }

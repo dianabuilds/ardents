@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -9,6 +10,7 @@ import (
 type MessagePrivacyMode string
 type StorageProtectionMode string
 type ContentRetentionMode string
+type StoragePolicyScope string
 
 const (
 	MessagePrivacyContactsOnly MessagePrivacyMode = "contacts_only"
@@ -21,33 +23,68 @@ const (
 	RetentionPersistent    ContentRetentionMode = "persistent"
 	RetentionEphemeral     ContentRetentionMode = "ephemeral"
 	RetentionZeroRetention ContentRetentionMode = "zero_retention"
+
+	StoragePolicyScopeGlobal  StoragePolicyScope = "global"
+	StoragePolicyScopeGroup   StoragePolicyScope = "group"
+	StoragePolicyScopeChannel StoragePolicyScope = "channel"
+	StoragePolicyScopeChat    StoragePolicyScope = "chat"
 )
 
 const DefaultMessagePrivacyMode = MessagePrivacyEveryone
 const DefaultStorageProtectionMode = StorageProtectionStandard
 const DefaultContentRetentionMode = RetentionPersistent
 const DefaultEphemeralMessageTTLSeconds = 86400
-const DefaultEphemeralFileTTLSeconds = 86400
+
+// DefaultEphemeralFileTTLSeconds Ephemeral mode keeps file blobs unless an explicit file TTL is provided.
+const DefaultEphemeralFileTTLSeconds = 0
 
 var ErrInvalidMessagePrivacyMode = errors.New("invalid message privacy mode")
 var ErrInvalidStorageProtectionMode = errors.New("invalid storage protection mode")
 var ErrInvalidContentRetentionMode = errors.New("invalid content retention mode")
 var ErrInvalidTTLSeconds = errors.New("invalid ttl seconds")
+var ErrInvalidStoragePolicyScope = errors.New("invalid storage policy scope")
+var ErrInvalidStoragePolicyScopeID = errors.New("invalid storage policy scope id")
+var ErrInfiniteTTLRequiresPinned = errors.New("infinite ttl requires pinned blob")
 
 // PrivacySettings stores user-level inbound message privacy preferences.
 type PrivacySettings struct {
-	MessagePrivacyMode   MessagePrivacyMode    `json:"message_privacy_mode"`
-	StorageProtection    StorageProtectionMode `json:"storage_protection_mode"`
-	ContentRetentionMode ContentRetentionMode  `json:"content_retention_mode"`
-	MessageTTLSeconds    int                   `json:"message_ttl_seconds,omitempty"`
-	FileTTLSeconds       int                   `json:"file_ttl_seconds,omitempty"`
+	MessagePrivacyMode    MessagePrivacyMode               `json:"message_privacy_mode"`
+	StorageProtection     StorageProtectionMode            `json:"storage_protection_mode"`
+	ContentRetentionMode  ContentRetentionMode             `json:"content_retention_mode"`
+	MessageTTLSeconds     int                              `json:"message_ttl_seconds,omitempty"`
+	ImageTTLSeconds       int                              `json:"image_ttl_seconds,omitempty"`
+	FileTTLSeconds        int                              `json:"file_ttl_seconds,omitempty"`
+	ImageQuotaMB          int                              `json:"image_quota_mb,omitempty"`
+	FileQuotaMB           int                              `json:"file_quota_mb,omitempty"`
+	ImageMaxItemSizeMB    int                              `json:"image_max_item_size_mb,omitempty"`
+	FileMaxItemSizeMB     int                              `json:"file_max_item_size_mb,omitempty"`
+	StorageScopeOverrides map[string]StoragePolicyOverride `json:"storage_scope_overrides,omitempty"`
 }
 
 type StoragePolicy struct {
 	StorageProtection    StorageProtectionMode `json:"storage_protection_mode"`
 	ContentRetentionMode ContentRetentionMode  `json:"content_retention_mode"`
 	MessageTTLSeconds    int                   `json:"message_ttl_seconds,omitempty"`
+	ImageTTLSeconds      int                   `json:"image_ttl_seconds,omitempty"`
 	FileTTLSeconds       int                   `json:"file_ttl_seconds,omitempty"`
+	ImageQuotaMB         int                   `json:"image_quota_mb,omitempty"`
+	FileQuotaMB          int                   `json:"file_quota_mb,omitempty"`
+	ImageMaxItemSizeMB   int                   `json:"image_max_item_size_mb,omitempty"`
+	FileMaxItemSizeMB    int                   `json:"file_max_item_size_mb,omitempty"`
+}
+
+type StoragePolicyOverride struct {
+	StorageProtection      StorageProtectionMode `json:"storage_protection_mode"`
+	ContentRetentionMode   ContentRetentionMode  `json:"content_retention_mode"`
+	MessageTTLSeconds      int                   `json:"message_ttl_seconds,omitempty"`
+	ImageTTLSeconds        int                   `json:"image_ttl_seconds,omitempty"`
+	FileTTLSeconds         int                   `json:"file_ttl_seconds,omitempty"`
+	ImageQuotaMB           int                   `json:"image_quota_mb,omitempty"`
+	FileQuotaMB            int                   `json:"file_quota_mb,omitempty"`
+	ImageMaxItemSizeMB     int                   `json:"image_max_item_size_mb,omitempty"`
+	FileMaxItemSizeMB      int                   `json:"file_max_item_size_mb,omitempty"`
+	InfiniteTTL            bool                  `json:"infinite_ttl,omitempty"`
+	PinRequiredForInfinite bool                  `json:"pin_required_for_infinite,omitempty"`
 }
 
 func DefaultPrivacySettings() PrivacySettings {
@@ -56,7 +93,12 @@ func DefaultPrivacySettings() PrivacySettings {
 		StorageProtection:    DefaultStorageProtectionMode,
 		ContentRetentionMode: DefaultContentRetentionMode,
 		MessageTTLSeconds:    0,
+		ImageTTLSeconds:      0,
 		FileTTLSeconds:       0,
+		ImageQuotaMB:         0,
+		FileQuotaMB:          0,
+		ImageMaxItemSizeMB:   0,
+		FileMaxItemSizeMB:    0,
 	}
 }
 
@@ -71,9 +113,16 @@ func NormalizePrivacySettings(in PrivacySettings) PrivacySettings {
 		in.ContentRetentionMode = DefaultContentRetentionMode
 	}
 	in.MessageTTLSeconds = normalizeTTLSeconds(in.MessageTTLSeconds)
+	in.ImageTTLSeconds = normalizeTTLSeconds(in.ImageTTLSeconds)
 	in.FileTTLSeconds = normalizeTTLSeconds(in.FileTTLSeconds)
+	in.ImageQuotaMB = normalizeLimitValue(in.ImageQuotaMB)
+	in.FileQuotaMB = normalizeLimitValue(in.FileQuotaMB)
+	in.ImageMaxItemSizeMB = normalizeLimitValue(in.ImageMaxItemSizeMB)
+	in.FileMaxItemSizeMB = normalizeLimitValue(in.FileMaxItemSizeMB)
+	in.StorageScopeOverrides = normalizeStorageScopeOverrides(in.StorageScopeOverrides)
 	if in.ContentRetentionMode != RetentionEphemeral {
 		in.MessageTTLSeconds = 0
+		in.ImageTTLSeconds = 0
 		in.FileTTLSeconds = 0
 	}
 	if in.ContentRetentionMode == RetentionEphemeral {
@@ -114,6 +163,15 @@ func (m ContentRetentionMode) Valid() bool {
 	}
 }
 
+func (s StoragePolicyScope) Valid() bool {
+	switch s {
+	case StoragePolicyScopeGlobal, StoragePolicyScopeGroup, StoragePolicyScopeChannel, StoragePolicyScopeChat:
+		return true
+	default:
+		return false
+	}
+}
+
 func ParseMessagePrivacyMode(raw string) (MessagePrivacyMode, error) {
 	mode := MessagePrivacyMode(strings.TrimSpace(raw))
 	if !mode.Valid() {
@@ -144,17 +202,37 @@ func NormalizeStoragePolicy(in StoragePolicy) StoragePolicy {
 		StorageProtection:    in.StorageProtection,
 		ContentRetentionMode: in.ContentRetentionMode,
 		MessageTTLSeconds:    in.MessageTTLSeconds,
+		ImageTTLSeconds:      in.ImageTTLSeconds,
 		FileTTLSeconds:       in.FileTTLSeconds,
+		ImageQuotaMB:         in.ImageQuotaMB,
+		FileQuotaMB:          in.FileQuotaMB,
+		ImageMaxItemSizeMB:   in.ImageMaxItemSizeMB,
+		FileMaxItemSizeMB:    in.FileMaxItemSizeMB,
 	})
 	return StoragePolicy{
 		StorageProtection:    settings.StorageProtection,
 		ContentRetentionMode: settings.ContentRetentionMode,
 		MessageTTLSeconds:    settings.MessageTTLSeconds,
+		ImageTTLSeconds:      settings.ImageTTLSeconds,
 		FileTTLSeconds:       settings.FileTTLSeconds,
+		ImageQuotaMB:         settings.ImageQuotaMB,
+		FileQuotaMB:          settings.FileQuotaMB,
+		ImageMaxItemSizeMB:   settings.ImageMaxItemSizeMB,
+		FileMaxItemSizeMB:    settings.FileMaxItemSizeMB,
 	}
 }
 
-func ParseStoragePolicy(storageProtection, retention string, messageTTLSeconds, fileTTLSeconds int) (StoragePolicy, error) {
+func ParseStoragePolicy(
+	storageProtection,
+	retention string,
+	messageTTLSeconds,
+	imageTTLSeconds,
+	fileTTLSeconds,
+	imageQuotaMB,
+	fileQuotaMB,
+	imageMaxItemSizeMB,
+	fileMaxItemSizeMB int,
+) (StoragePolicy, error) {
 	protectionMode, err := ParseStorageProtectionMode(storageProtection)
 	if err != nil {
 		return StoragePolicy{}, err
@@ -163,14 +241,22 @@ func ParseStoragePolicy(storageProtection, retention string, messageTTLSeconds, 
 	if err != nil {
 		return StoragePolicy{}, err
 	}
-	if messageTTLSeconds < 0 || fileTTLSeconds < 0 {
+	if messageTTLSeconds < 0 || imageTTLSeconds < 0 || fileTTLSeconds < 0 {
+		return StoragePolicy{}, ErrInvalidTTLSeconds
+	}
+	if imageQuotaMB < 0 || fileQuotaMB < 0 || imageMaxItemSizeMB < 0 || fileMaxItemSizeMB < 0 {
 		return StoragePolicy{}, ErrInvalidTTLSeconds
 	}
 	return NormalizeStoragePolicy(StoragePolicy{
 		StorageProtection:    protectionMode,
 		ContentRetentionMode: retentionMode,
 		MessageTTLSeconds:    messageTTLSeconds,
+		ImageTTLSeconds:      imageTTLSeconds,
 		FileTTLSeconds:       fileTTLSeconds,
+		ImageQuotaMB:         imageQuotaMB,
+		FileQuotaMB:          fileQuotaMB,
+		ImageMaxItemSizeMB:   imageMaxItemSizeMB,
+		FileMaxItemSizeMB:    fileMaxItemSizeMB,
 	}), nil
 }
 
@@ -180,8 +266,95 @@ func StoragePolicyFromSettings(settings PrivacySettings) StoragePolicy {
 		StorageProtection:    settings.StorageProtection,
 		ContentRetentionMode: settings.ContentRetentionMode,
 		MessageTTLSeconds:    settings.MessageTTLSeconds,
+		ImageTTLSeconds:      settings.ImageTTLSeconds,
 		FileTTLSeconds:       settings.FileTTLSeconds,
+		ImageQuotaMB:         settings.ImageQuotaMB,
+		FileQuotaMB:          settings.FileQuotaMB,
+		ImageMaxItemSizeMB:   settings.ImageMaxItemSizeMB,
+		FileMaxItemSizeMB:    settings.FileMaxItemSizeMB,
 	}
+}
+
+func NormalizeStoragePolicyOverride(in StoragePolicyOverride) StoragePolicyOverride {
+	base := NormalizeStoragePolicy(StoragePolicy{
+		StorageProtection:    in.StorageProtection,
+		ContentRetentionMode: in.ContentRetentionMode,
+		MessageTTLSeconds:    in.MessageTTLSeconds,
+		ImageTTLSeconds:      in.ImageTTLSeconds,
+		FileTTLSeconds:       in.FileTTLSeconds,
+		ImageQuotaMB:         in.ImageQuotaMB,
+		FileQuotaMB:          in.FileQuotaMB,
+		ImageMaxItemSizeMB:   in.ImageMaxItemSizeMB,
+		FileMaxItemSizeMB:    in.FileMaxItemSizeMB,
+	})
+	out := StoragePolicyOverride{
+		StorageProtection:      base.StorageProtection,
+		ContentRetentionMode:   base.ContentRetentionMode,
+		MessageTTLSeconds:      base.MessageTTLSeconds,
+		ImageTTLSeconds:        base.ImageTTLSeconds,
+		FileTTLSeconds:         base.FileTTLSeconds,
+		ImageQuotaMB:           base.ImageQuotaMB,
+		FileQuotaMB:            base.FileQuotaMB,
+		ImageMaxItemSizeMB:     base.ImageMaxItemSizeMB,
+		FileMaxItemSizeMB:      base.FileMaxItemSizeMB,
+		InfiniteTTL:            in.InfiniteTTL,
+		PinRequiredForInfinite: in.PinRequiredForInfinite,
+	}
+	if out.InfiniteTTL {
+		out.ContentRetentionMode = RetentionPersistent
+		out.MessageTTLSeconds = 0
+		out.ImageTTLSeconds = 0
+		out.FileTTLSeconds = 0
+	}
+	return out
+}
+
+func (in StoragePolicyOverride) Resolve(isPinned bool) (StoragePolicy, error) {
+	normalized := NormalizeStoragePolicyOverride(in)
+	if normalized.InfiniteTTL && normalized.PinRequiredForInfinite && !isPinned {
+		return StoragePolicy{}, ErrInfiniteTTLRequiresPinned
+	}
+	return NormalizeStoragePolicy(StoragePolicy{
+		StorageProtection:    normalized.StorageProtection,
+		ContentRetentionMode: normalized.ContentRetentionMode,
+		MessageTTLSeconds:    normalized.MessageTTLSeconds,
+		ImageTTLSeconds:      normalized.ImageTTLSeconds,
+		FileTTLSeconds:       normalized.FileTTLSeconds,
+		ImageQuotaMB:         normalized.ImageQuotaMB,
+		FileQuotaMB:          normalized.FileQuotaMB,
+		ImageMaxItemSizeMB:   normalized.ImageMaxItemSizeMB,
+		FileMaxItemSizeMB:    normalized.FileMaxItemSizeMB,
+	}), nil
+}
+
+func ScopeOverrideKey(scopeRaw, scopeIDRaw string) (string, error) {
+	scope, scopeID, err := normalizeScope(scopeRaw, scopeIDRaw)
+	if err != nil {
+		return "", err
+	}
+	if scope == StoragePolicyScopeGlobal {
+		return string(scope), nil
+	}
+	return fmt.Sprintf("%s:%s", scope, scopeID), nil
+}
+
+func ResolveStoragePolicyForScope(settings PrivacySettings, scopeRaw, scopeIDRaw string, isPinned bool) (StoragePolicy, error) {
+	settings = NormalizePrivacySettings(settings)
+	key, err := ScopeOverrideKey(scopeRaw, scopeIDRaw)
+	if err != nil {
+		return StoragePolicy{}, err
+	}
+	if override, ok := settings.StorageScopeOverrides[key]; ok {
+		return override.Resolve(isPinned)
+	}
+	userDefault := StoragePolicyFromSettings(settings)
+	if userDefault.StorageProtection.Valid() && userDefault.ContentRetentionMode.Valid() {
+		return userDefault, nil
+	}
+	return NormalizeStoragePolicy(StoragePolicy{
+		StorageProtection:    DefaultStorageProtectionMode,
+		ContentRetentionMode: DefaultContentRetentionMode,
+	}), nil
 }
 
 func normalizeTTLSeconds(v int) int {
@@ -189,4 +362,41 @@ func normalizeTTLSeconds(v int) int {
 		return 0
 	}
 	return v
+}
+
+func normalizeLimitValue(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
+func normalizeStorageScopeOverrides(in map[string]StoragePolicyOverride) map[string]StoragePolicyOverride {
+	if len(in) == 0 {
+		return map[string]StoragePolicyOverride{}
+	}
+	out := make(map[string]StoragePolicyOverride, len(in))
+	for key, override := range in {
+		key = strings.TrimSpace(strings.ToLower(key))
+		if key == "" {
+			continue
+		}
+		out[key] = NormalizeStoragePolicyOverride(override)
+	}
+	return out
+}
+
+func normalizeScope(scopeRaw, scopeIDRaw string) (StoragePolicyScope, string, error) {
+	scope := StoragePolicyScope(strings.ToLower(strings.TrimSpace(scopeRaw)))
+	if !scope.Valid() {
+		return "", "", ErrInvalidStoragePolicyScope
+	}
+	scopeID := strings.TrimSpace(scopeIDRaw)
+	if scope == StoragePolicyScopeGlobal {
+		return scope, "", nil
+	}
+	if scopeID == "" {
+		return "", "", ErrInvalidStoragePolicyScopeID
+	}
+	return scope, scopeID, nil
 }

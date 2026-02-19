@@ -108,6 +108,15 @@ func (m *SessionManager) Snapshot() ([]SessionState, error) {
 	return m.store.All()
 }
 
+func (m *SessionManager) RestoreSnapshot(states []SessionState) error {
+	for _, state := range states {
+		if err := m.store.Save(state); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *SessionManager) Wipe() error {
 	if m == nil || m.store == nil {
 		return nil

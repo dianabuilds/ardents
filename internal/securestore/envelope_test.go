@@ -33,3 +33,29 @@ func TestDecryptTamperedFailsDeterministically(t *testing.T) {
 		t.Fatalf("expected ErrAuthFailed, got %v", err)
 	}
 }
+
+func TestDecryptEnvelopeRejectsMalformedMetadata(t *testing.T) {
+	enc, err := EncryptEnvelope("pass", []byte("secret"))
+	if err != nil {
+		t.Fatalf("encrypt envelope failed: %v", err)
+	}
+
+	malformed := *enc
+	malformed.Nonce = []byte{1, 2, 3}
+	if _, err := DecryptEnvelope("pass", &malformed); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("expected ErrInvalid for malformed nonce, got %v", err)
+	}
+}
+
+func TestDecryptEnvelopeRejectsKDFDowngrade(t *testing.T) {
+	enc, err := EncryptEnvelope("pass", []byte("secret"))
+	if err != nil {
+		t.Fatalf("encrypt envelope failed: %v", err)
+	}
+
+	downgraded := *enc
+	downgraded.KDFTime = 1
+	if _, err := DecryptEnvelope("pass", &downgraded); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("expected ErrInvalid for downgraded kdf params, got %v", err)
+	}
+}

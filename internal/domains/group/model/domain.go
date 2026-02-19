@@ -31,6 +31,14 @@ var (
 	ErrInvalidGroupMemberStatusTransition = errors.New("invalid group member status transition")
 )
 
+func NormalizeGroupMemberID(memberID string) (string, error) {
+	memberID = strings.TrimSpace(memberID)
+	if memberID == "" {
+		return "", ErrInvalidGroupMemberID
+	}
+	return memberID, nil
+}
+
 // Group is a domain-level aggregate for group chat metadata.
 type Group struct {
 	ID        string    `json:"id"`
@@ -49,6 +57,18 @@ type GroupMember struct {
 	InvitedAt   time.Time         `json:"invited_at"`
 	ActivatedAt time.Time         `json:"activated_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+func (m GroupMember) IsOwner() bool {
+	return m.Role == GroupMemberRoleOwner
+}
+
+func (m GroupMember) CanManageMembers() bool {
+	return m.Role == GroupMemberRoleOwner || m.Role == GroupMemberRoleAdmin
+}
+
+func (m GroupMember) CanMutateRole() bool {
+	return m.Status == GroupMemberStatusActive || m.Status == GroupMemberStatusInvited
 }
 
 func (r GroupMemberRole) Valid() bool {

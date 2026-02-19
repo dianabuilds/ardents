@@ -19,16 +19,10 @@ type InboundGroupMessageParams struct {
 }
 
 type InboundGroupEventParams struct {
-	SenderID          string
-	RecipientID       string
-	ConversationID    string
-	EventID           string
-	EventType         string
-	MembershipVersion uint64
-	SenderDeviceID    string
-	Plain             []byte
-	HasDevice         bool
-	DeviceID          string
+	Event          GroupEvent
+	SenderDeviceID string
+	HasDevice      bool
+	DeviceID       string
 }
 
 type InboundOrchestrationService struct {
@@ -151,32 +145,18 @@ func (s *InboundOrchestrationService) HandleInboundGroupEvent(in InboundGroupEve
 	if s.Now != nil {
 		now = s.Now().UTC()
 	}
-	correlationID := CorrelationID(in.ConversationID, in.EventID)
-	if s.IsBlockedSender != nil && s.IsBlockedSender(in.SenderID) {
+	correlationID := CorrelationID(in.Event.GroupID, in.Event.ID)
+	if s.IsBlockedSender != nil && s.IsBlockedSender(in.Event.ActorID) {
 		s.recordErr("crypto", ErrGroupSenderBlocked)
 		s.recordAggregate("policy_reject")
-		s.warn("group event rejected", "reason", "blocked_sender", "correlation_id", correlationID, "group_id", in.ConversationID, "event_id", in.EventID, "actor_id", in.SenderID)
+		s.warn("group event rejected", "reason", "blocked_sender", "correlation_id", correlationID, "group_id", in.Event.GroupID, "event_id", in.Event.ID, "actor_id", in.Event.ActorID)
 		return
 	}
-	event, err := DecodeInboundGroupEvent(InboundGroupEventWire{
-		EventID:           in.EventID,
-		ConversationID:    in.ConversationID,
-		MembershipVersion: in.MembershipVersion,
-		EventType:         in.EventType,
-		Plain:             in.Plain,
-		SenderID:          in.SenderID,
-		RecipientID:       in.RecipientID,
-	}, now)
-	if err != nil {
-		s.recordErr("api", err)
-		s.recordAggregate("policy_reject")
-		s.warn("group event rejected", "reason", "invalid_payload", "correlation_id", correlationID, "group_id", in.ConversationID, "event_id", in.EventID, "actor_id", in.SenderID)
-		return
-	}
+	event := in.Event
 	if in.HasDevice && strings.TrimSpace(in.SenderDeviceID) != strings.TrimSpace(in.DeviceID) {
 		s.recordErr("crypto", errors.New("sender device mismatch"))
 		s.recordAggregate("policy_reject")
-		s.warn("group event rejected", "reason", "sender_device_mismatch", "correlation_id", correlationID, "group_id", in.ConversationID, "event_id", in.EventID, "actor_id", in.SenderID)
+		s.warn("group event rejected", "reason", "sender_device_mismatch", "correlation_id", correlationID, "group_id", event.GroupID, "event_id", event.ID, "actor_id", event.ActorID)
 		return
 	}
 	if s.GuardReplay != nil {

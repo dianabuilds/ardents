@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +24,8 @@ type PendingMessage struct {
 }
 
 var ErrMessageIDConflict = errors.New("message id conflict")
+
+const messageStoreSchemaVersion = 2
 
 type MessageStore struct {
 	mu       sync.RWMutex
@@ -393,11 +396,23 @@ func (s *MessageStore) load() error {
 	}
 
 	var snapshot struct {
-		Messages map[string]models.Message `json:"messages"`
-		Pending  map[string]PendingMessage `json:"pending"`
+		SchemaVersion int                       `json:"schema_version"`
+		Messages      map[string]models.Message `json:"messages"`
+		Pending       map[string]PendingMessage `json:"pending"`
 	}
 	if err := json.Unmarshal(decoded, &snapshot); err != nil {
 		return err
+	}
+	schemaMigrated := false
+	switch {
+	case snapshot.SchemaVersion == 0:
+		// Legacy snapshots had no explicit versioning.
+		schemaMigrated = true
+	case snapshot.SchemaVersion > messageStoreSchemaVersion:
+		return fmt.Errorf("%w: messages=%d current=%d", ErrUnsupportedStorageSchema, snapshot.SchemaVersion, messageStoreSchemaVersion)
+	case snapshot.SchemaVersion < messageStoreSchemaVersion:
+		// Current schema is backward-compatible with v1 payload shape.
+		schemaMigrated = true
 	}
 	if snapshot.Messages != nil {
 		s.messages = make(map[string]models.Message, len(snapshot.Messages))
@@ -412,6 +427,11 @@ func (s *MessageStore) load() error {
 			s.pending[id] = p
 		}
 	}
+	if schemaMigrated {
+		if err := s.persistSnapshotLocked(s.messages, s.pending); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -423,11 +443,13 @@ func (s *MessageStore) persistSnapshotLocked(messages map[string]models.Message,
 		return err
 	}
 	snapshot := struct {
-		Messages map[string]models.Message `json:"messages"`
-		Pending  map[string]PendingMessage `json:"pending"`
+		SchemaVersion int                       `json:"schema_version"`
+		Messages      map[string]models.Message `json:"messages"`
+		Pending       map[string]PendingMessage `json:"pending"`
 	}{
-		Messages: messages,
-		Pending:  pending,
+		SchemaVersion: messageStoreSchemaVersion,
+		Messages:      messages,
+		Pending:       pending,
 	}
 	data, err := json.Marshal(snapshot)
 	if err != nil {

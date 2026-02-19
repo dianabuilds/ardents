@@ -32,6 +32,7 @@ func newServiceWithOptions(wakuCfg waku.Config, opts contracts.ServiceOptions) (
 	blocklistStore := privacyapp.NewBlocklistStore()
 	requestRuntime := inboxapp.NewRuntimeState()
 	groupRuntime := groupdomain.NewRuntimeState()
+	defaultPreset := defaultBlobNodePresetConfig()
 	svc := &Service{
 		identityManager:   manager,
 		wakuNode:          waku.NewNode(wakuCfg),
@@ -51,6 +52,19 @@ func newServiceWithOptions(wakuCfg waku.Config, opts contracts.ServiceOptions) (
 		groupAbuse:        groupdomain.NewAbuseProtectionFromEnv(),
 		startStopMu:       &sync.Mutex{},
 		metaHardening:     newOutboundMetadataHardeningFromEnv(),
+		replicationMu:     &sync.RWMutex{},
+		replicationMode:   resolveBlobReplicationModeFromEnv(),
+		blobFlags:         resolveBlobFeatureFlagsFromEnv(),
+		presetMu:          &sync.RWMutex{},
+		nodePreset:        defaultPreset,
+		serveLimiter:      newBandwidthLimiter(defaultPreset.ServeBandwidthKBps),
+		fetchLimiter:      newBandwidthLimiter(defaultPreset.FetchBandwidthKBps),
+		blobACLMu:         &sync.RWMutex{},
+		blobACL:           resolveBlobACLPolicyFromEnv(),
+		bindingStore:      newNodeBindingStore(),
+		bindingLinkMu:     &sync.Mutex{},
+		bindingLinks:      map[string]pendingNodeBindingLink{},
+		blobProviders:     newBlobProviderRegistry(),
 	}
 
 	svc.identityCore = identityapp.NewService(

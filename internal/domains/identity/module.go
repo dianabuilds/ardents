@@ -10,6 +10,7 @@ import (
 
 type Service = identityusecase.Service
 type BackupExportResult = identityusecase.BackupExportResult
+type BackupRestoreResult = identityusecase.BackupRestoreResult
 
 type Module struct {
 	Service *Service

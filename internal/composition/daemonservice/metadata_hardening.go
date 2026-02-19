@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"math/rand"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,25 +29,12 @@ func newOutboundMetadataHardeningFromEnv() *outboundMetadataHardening {
 		jitterMax:    boundedDurationFromEnv("AIM_JITTER_MAX_MS", 220, 0, 600),
 		randomSource: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
-	if raw := strings.TrimSpace(strings.ToLower(os.Getenv("AIM_METADATA_HARDENING"))); raw != "" {
-		p.enabled = raw != "0" && raw != "false" && raw != "off"
-	}
+	p.enabled = envBoolWithFallback("AIM_METADATA_HARDENING", p.enabled)
 	return p
 }
 
 func boundedDurationFromEnv(key string, def, min, max int) time.Duration {
-	value := def
-	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil {
-			value = parsed
-		}
-	}
-	if value < min {
-		value = min
-	}
-	if value > max {
-		value = max
-	}
+	value := envBoundedIntWithFallback(key, def, min, max)
 	return time.Duration(value) * time.Millisecond
 }
 

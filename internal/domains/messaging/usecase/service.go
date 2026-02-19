@@ -61,7 +61,7 @@ func (s *Service) sendMessageWithThread(contactID, content, threadID string) (ms
 	draft.ThreadID = threadID
 	wire, werr := s.BuildStoredMessageWire(draft)
 	if werr != nil {
-		s.deps.RecordError("crypto", werr)
+		s.deps.RecordError(contracts.ErrorCategoryCrypto, werr)
 		return "", werr
 	}
 
@@ -74,7 +74,7 @@ func (s *Service) sendMessageWithThread(contactID, content, threadID string) (ms
 		func(msg models.Message) error {
 			err := s.deps.Messages.SaveMessage(msg)
 			if err != nil && (s.deps.IsMessageIDConflict == nil || !s.deps.IsMessageIDConflict(err)) {
-				s.deps.RecordError("storage", err)
+				s.deps.RecordError(contracts.ErrorCategoryStorage, err)
 			}
 			return err
 		},
@@ -103,7 +103,7 @@ func (s *Service) EditMessage(contactID, messageID, content string) (models.Mess
 
 	updated, ok, err := s.deps.Messages.UpdateMessageContent(messageID, []byte(content), msg.ContentType)
 	if err != nil {
-		s.deps.RecordError("storage", err)
+		s.deps.RecordError(contracts.ErrorCategoryStorage, err)
 		return models.Message{}, err
 	}
 	if !ok {
@@ -127,7 +127,7 @@ func (s *Service) DeleteMessage(contactID, messageID string) error {
 	}
 	deleted, err := s.deps.Messages.DeleteMessage(contactID, messageID)
 	if err != nil {
-		s.deps.RecordError("storage", err)
+		s.deps.RecordError(contracts.ErrorCategoryStorage, err)
 		return err
 	}
 	if !deleted {
@@ -147,7 +147,7 @@ func (s *Service) ClearMessages(contactID string) (int, error) {
 	}
 	deleted, err := s.deps.Messages.ClearMessages(contactID)
 	if err != nil {
-		s.deps.RecordError("storage", err)
+		s.deps.RecordError(contracts.ErrorCategoryStorage, err)
 		return 0, err
 	}
 	s.deps.Notify("notify.message.cleared", map[string]any{
@@ -216,7 +216,7 @@ func (s *Service) BuildStoredMessageWire(msg models.Message) (contracts.WirePayl
 	if errors.Is(err, messagingpolicy.ErrOutboundSessionRequired) {
 		card, cardErr := s.deps.Identity.SelfContactCard(s.deps.Identity.GetIdentity().ID)
 		if cardErr != nil {
-			return contracts.WirePayload{}, &contracts.CategorizedError{Category: "crypto", Err: err}
+			return contracts.WirePayload{}, contracts.WrapCategorizedError(contracts.ErrorCategoryCrypto, err)
 		}
 		plainWire := NewPlainWire(msg.Content)
 		plainWire.ThreadID = strings.TrimSpace(msg.ThreadID)
@@ -224,7 +224,7 @@ func (s *Service) BuildStoredMessageWire(msg models.Message) (contracts.WirePayl
 		return plainWire, nil
 	}
 	if err != nil {
-		return contracts.WirePayload{}, &contracts.CategorizedError{Category: "crypto", Err: err}
+		return contracts.WirePayload{}, contracts.WrapCategorizedError(contracts.ErrorCategoryCrypto, err)
 	}
 	wire.ThreadID = strings.TrimSpace(msg.ThreadID)
 	return wire, nil
@@ -241,7 +241,7 @@ func (s *Service) InitSession(contactID string, peerPublicKey []byte) (session m
 	localIdentity := s.deps.Identity.GetIdentity()
 	state, err := s.deps.Sessions.InitSession(localIdentity.ID, contactID, peerPublicKey)
 	if err != nil {
-		s.deps.RecordError("crypto", err)
+		s.deps.RecordError(contracts.ErrorCategoryCrypto, err)
 		return models.SessionState{}, err
 	}
 	return MapSessionState(state), nil
@@ -256,7 +256,7 @@ func (s *Service) RevokeDevice(deviceID string) (models.DeviceRevocation, error)
 	contacts := s.deps.Identity.Contacts()
 	payloadBytes, err := BuildDeviceRevocationPayload(rev)
 	if err != nil {
-		s.deps.RecordError("api", err)
+		s.deps.RecordError(contracts.ErrorCategoryAPI, err)
 		return models.DeviceRevocation{}, err
 	}
 	localIdentity := s.deps.Identity.GetIdentity()

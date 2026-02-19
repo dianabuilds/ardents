@@ -8,6 +8,27 @@ import (
 	"testing"
 )
 
+func rpcCall(t *testing.T, s *Server, body string, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/rpc", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("X-AIM-RPC-Token", token)
+	}
+	rec := httptest.NewRecorder()
+	s.HandleRPC(rec, req)
+	return rec
+}
+
+func decodeRPCResponse(t *testing.T, rec *httptest.ResponseRecorder) rpcResponse {
+	t.Helper()
+	var resp rpcResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode rpc response: %v", err)
+	}
+	return resp
+}
+
 func TestRPCHealthzContract(t *testing.T) {
 	s := newServerWithService(DefaultRPCAddr, nil, "", false)
 
@@ -36,10 +57,7 @@ func TestRPCRejectsUnauthorizedRequest(t *testing.T) {
 		t.Fatalf("unexpected init error: %v", s.initErr)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/rpc", bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"health_check","params":{}}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	s.HandleRPC(rec, req)
+	rec := rpcCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"health_check","params":{}}`, "")
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
@@ -55,23 +73,76 @@ func TestRPCAuthAcceptedButServiceMissing(t *testing.T) {
 		t.Fatalf("unexpected init error: %v", s.initErr)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/rpc", bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"health_check","params":{}}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-AIM-RPC-Token", "secret-token")
-	rec := httptest.NewRecorder()
-	s.HandleRPC(rec, req)
+	rec := rpcCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"health_check","params":{}}`, "secret-token")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
 	}
-	var resp rpcResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode rpc response: %v", err)
-	}
+	resp := decodeRPCResponse(t, rec)
 	if resp.Error == nil {
 		t.Fatalf("expected rpc error, got nil")
 	}
 	if resp.Error.Code != -32099 {
 		t.Fatalf("expected rpc code -32099, got %d", resp.Error.Code)
+	}
+}
+
+func TestRPCVersionMethodWorksWithoutServiceInitialization(t *testing.T) {
+	s := newServerWithService(DefaultRPCAddr, nil, "", false)
+
+	rec := rpcCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"rpc.version","params":{}}`, "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	resp := decodeRPCResponse(t, rec)
+	if resp.Error != nil {
+		t.Fatalf("unexpected rpc error: %+v", resp.Error)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map result, got %#v", resp.Result)
+	}
+	current, ok := result["current_version"].(float64)
+	if !ok || int(current) != rpcAPICurrentVersion {
+		t.Fatalf("unexpected current_version: %#v", result["current_version"])
+	}
+	minSupported, ok := result["min_supported_version"].(float64)
+	if !ok || int(minSupported) != rpcAPIMinSupportedVersion {
+		t.Fatalf("unexpected min_supported_version: %#v", result["min_supported_version"])
+	}
+}
+
+func TestRPCRejectsUnsupportedFutureAPIVersion(t *testing.T) {
+	s := newServerWithService(DefaultRPCAddr, nil, "", false)
+
+	rec := rpcCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"health_check","api_version":999,"params":{}}`, "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	resp := decodeRPCResponse(t, rec)
+	if resp.Error == nil {
+		t.Fatalf("expected rpc error, got nil")
+	}
+	if resp.Error.Code != -32080 {
+		t.Fatalf("expected rpc code -32080, got %d", resp.Error.Code)
+	}
+}
+
+func TestRPCRejectsDeprecatedAPIVersion(t *testing.T) {
+	s := newServerWithService(DefaultRPCAddr, nil, "", false)
+
+	rec := rpcCall(t, s, `{"jsonrpc":"2.0","id":1,"method":"health_check","api_version":0,"params":{}}`, "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	resp := decodeRPCResponse(t, rec)
+	if resp.Error == nil {
+		t.Fatalf("expected rpc error, got nil")
+	}
+	if resp.Error.Code != -32081 {
+		t.Fatalf("expected rpc code -32081, got %d", resp.Error.Code)
 	}
 }

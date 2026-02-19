@@ -160,3 +160,42 @@ func TestValidateGroupMemberStatusTransition(t *testing.T) {
 		t.Fatal("invalid target status must fail with ErrInvalidGroupMemberStatus")
 	}
 }
+
+func TestNormalizeGroupMemberID(t *testing.T) {
+	id, err := NormalizeGroupMemberID("  aim1member  ")
+	if err != nil {
+		t.Fatalf("normalize member id failed: %v", err)
+	}
+	if id != "aim1member" {
+		t.Fatalf("unexpected normalized id: %q", id)
+	}
+	if _, err := NormalizeGroupMemberID("   "); !errors.Is(err, ErrInvalidGroupMemberID) {
+		t.Fatalf("expected ErrInvalidGroupMemberID, got %v", err)
+	}
+}
+
+func TestGroupMemberCapabilities(t *testing.T) {
+	owner := GroupMember{Role: GroupMemberRoleOwner, Status: GroupMemberStatusActive}
+	admin := GroupMember{Role: GroupMemberRoleAdmin, Status: GroupMemberStatusInvited}
+	user := GroupMember{Role: GroupMemberRoleUser, Status: GroupMemberStatusActive}
+	leftUser := GroupMember{Role: GroupMemberRoleUser, Status: GroupMemberStatusLeft}
+
+	if !owner.IsOwner() {
+		t.Fatal("owner must report IsOwner=true")
+	}
+	if !owner.CanManageMembers() || !admin.CanManageMembers() {
+		t.Fatal("owner/admin must be able to manage members")
+	}
+	if user.CanManageMembers() {
+		t.Fatal("regular user must not manage members")
+	}
+	if !user.CanMutateRole() {
+		t.Fatal("active user role should be mutable")
+	}
+	if !admin.CanMutateRole() {
+		t.Fatal("invited admin role should be mutable")
+	}
+	if leftUser.CanMutateRole() {
+		t.Fatal("left member role must not be mutable")
+	}
+}

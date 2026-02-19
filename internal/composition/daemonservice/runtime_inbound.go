@@ -15,10 +15,10 @@ import (
 )
 
 func (s *Service) handleIncomingPrivateMessage(msg waku.PrivateMessage) {
-	s.inboundMessagingCore.HandleIncomingPrivateMessage(msg)
+	s.inboundMessagingCore.HandleIncomingPrivateMessage(toInboundPrivateMessage(msg))
 }
 
-func (s *Service) handleInboundGroupMessage(msg waku.PrivateMessage, wire contracts.WirePayload) {
+func (s *Service) handleInboundGroupMessage(msg messagingapp.InboundPrivateMessage, wire contracts.WirePayload) {
 	s.groupRuntime.StateMu.RLock()
 	state, ok := s.groupRuntime.States[strings.TrimSpace(wire.ConversationID)]
 	s.groupRuntime.StateMu.RUnlock()
@@ -62,7 +62,30 @@ func (s *Service) handleInboundGroupMessage(msg waku.PrivateMessage, wire contra
 	})
 }
 
-func (s *Service) handleInboundGroupEvent(msg waku.PrivateMessage, wire contracts.WirePayload) {
+func (s *Service) handleInboundGroupEvent(msg messagingapp.InboundPrivateMessage, wire contracts.WirePayload) {
+	now := time.Now().UTC()
+	event, err := groupdomain.DecodeInboundGroupEvent(groupdomain.InboundGroupEventWire{
+		EventID:           wire.EventID,
+		ConversationID:    wire.ConversationID,
+		MembershipVersion: wire.MembershipVersion,
+		EventType:         wire.EventType,
+		Plain:             wire.Plain,
+		SenderID:          msg.SenderID,
+		RecipientID:       msg.Recipient,
+	}, now)
+	if err != nil {
+		s.recordError(contracts.ErrorCategoryAPI, err)
+		s.recordGroupAggregate("policy_reject")
+		s.logger.Warn(
+			"group event rejected",
+			"reason", "invalid_payload",
+			"group_id", wire.ConversationID,
+			"event_id", wire.EventID,
+			"actor_id", msg.SenderID,
+		)
+		return
+	}
+
 	s.groupRuntime.StateMu.Lock()
 	defer s.groupRuntime.StateMu.Unlock()
 	svc := &groupdomain.InboundOrchestrationService{
@@ -74,7 +97,7 @@ func (s *Service) handleInboundGroupEvent(msg waku.PrivateMessage, wire contract
 			}
 			return s.groupStateStore.Persist(states, eventLog)
 		},
-		Now:             time.Now,
+		Now:             func() time.Time { return now },
 		IdentityID:      func() string { return s.identityManager.GetIdentity().ID },
 		IsBlockedSender: s.privacyCore.IsBlockedSender,
 		GuardReplay:     s.guardInboundGroupReplay,
@@ -93,15 +116,9 @@ func (s *Service) handleInboundGroupEvent(msg waku.PrivateMessage, wire contract
 		Debug:                s.logger.Debug,
 	}
 	svc.HandleInboundGroupEvent(groupdomain.InboundGroupEventParams{
-		SenderID:          msg.SenderID,
-		RecipientID:       msg.Recipient,
-		ConversationID:    wire.ConversationID,
-		EventID:           wire.EventID,
-		EventType:         wire.EventType,
-		MembershipVersion: wire.MembershipVersion,
-		SenderDeviceID:    wire.SenderDeviceID,
-		Plain:             wire.Plain,
-		HasDevice:         wire.Device != nil,
+		Event:          event,
+		SenderDeviceID: wire.SenderDeviceID,
+		HasDevice:      wire.Device != nil,
 		DeviceID: func() string {
 			if wire.Device == nil {
 				return ""
@@ -109,6 +126,15 @@ func (s *Service) handleInboundGroupEvent(msg waku.PrivateMessage, wire contract
 			return wire.Device.ID
 		}(),
 	})
+}
+
+func toInboundPrivateMessage(msg waku.PrivateMessage) messagingapp.InboundPrivateMessage {
+	return messagingapp.InboundPrivateMessage{
+		ID:        msg.ID,
+		SenderID:  msg.SenderID,
+		Recipient: msg.Recipient,
+		Payload:   append([]byte(nil), msg.Payload...),
+	}
 }
 
 func (s *Service) notifyGroupUpdated(event groupdomain.GroupEvent) {
@@ -148,10 +174,6 @@ func (s *Service) guardInboundGroupReplay(kind, groupID, senderDeviceID, uniqueI
 	return nil
 }
 
-func (s *Service) handleInboundMessageRequest(msg waku.PrivateMessage) {
-	s.inboundMessagingCore.HandleInboundMessageRequest(msg)
-}
-
 func (s *Service) evaluateInboundPolicy(senderID string) privacydomain.InboundMessagePolicyDecision {
 	return privacydomain.EvaluateInboundMessagePolicy(privacydomain.InboundMessagePolicyInput{
 		IsKnownContact: s.identityManager.HasContact(senderID),
@@ -165,15 +187,16 @@ func (s *Service) applyInboundReceiptStatus(receiptHandling messagingapp.Inbound
 }
 
 func (s *Service) persistInboundMessage(in models.Message, senderID string) bool {
+	correlationID := messageCorrelationID(in.ID, in.ContactID)
 	if err := s.messageStore.SaveMessage(in); err != nil {
 		if errors.Is(err, storage.ErrMessageIDConflict) {
-			s.logger.Warn("inbound message id conflict ignored", "message_id", in.ID, "contact_id", in.ContactID)
+			s.logWarn("message.inbound_conflict", correlationID, "inbound message id conflict ignored", "message_id", in.ID, "contact_id", in.ContactID)
 			return false
 		}
-		s.recordError("storage", err)
+		s.recordErrorWithContext(contracts.ErrorCategoryStorage, err, "message.inbound_persist", correlationID, "message_id", in.ID, "contact_id", in.ContactID)
 		return false
 	}
-	s.logger.Info("message received", "message_id", in.ID, "contact_id", in.ContactID, "content_type", in.ContentType)
+	s.logInfo("message.inbound_received", correlationID, "message received", "message_id", in.ID, "contact_id", in.ContactID, "content_type", in.ContentType)
 	s.notify("notify.message.new", map[string]any{
 		"contact_id": senderID,
 		"message":    in,
@@ -182,27 +205,24 @@ func (s *Service) persistInboundMessage(in models.Message, senderID string) bool
 }
 
 func (s *Service) persistInboundRequest(in models.Message) bool {
+	correlationID := messageCorrelationID(in.ID, in.ContactID)
 	s.requestRuntime.Mu.Lock()
 
 	thread := s.requestRuntime.Inbox[in.ContactID]
 	if inboxapp.ThreadHasMessage(thread, in.ID) {
 		s.requestRuntime.Mu.Unlock()
-		s.logger.Warn("inbound request message id conflict ignored", "message_id", in.ID, "contact_id", in.ContactID)
+		s.logWarn("request.inbound_conflict", correlationID, "inbound request message id conflict ignored", "message_id", in.ID, "contact_id", in.ContactID)
 		return false
 	}
 	in.Timestamp = inboxapp.NormalizeInboundTimestamp(in.Timestamp)
-	s.requestRuntime.Inbox[in.ContactID] = append(thread, in)
-	if err := s.persistRequestInboxLocked(); err != nil {
-		// Best-effort rollback for append failure.
-		if len(thread) == 0 {
-			delete(s.requestRuntime.Inbox, in.ContactID)
-		} else {
-			s.requestRuntime.Inbox[in.ContactID] = thread
-		}
+	nextInbox := inboxapp.CopyInboxState(s.requestRuntime.Inbox)
+	nextInbox[in.ContactID] = append(nextInbox[in.ContactID], in)
+	if err := s.persistRequestInboxSnapshotLocked(nextInbox); err != nil {
 		s.requestRuntime.Mu.Unlock()
-		s.recordError("storage", err)
+		s.recordErrorWithContext(contracts.ErrorCategoryStorage, err, "request.inbound_persist", correlationID, "message_id", in.ID, "contact_id", in.ContactID)
 		return false
 	}
+	s.requestRuntime.Inbox = nextInbox
 	s.requestRuntime.Mu.Unlock()
 	s.notify("notify.request.new", map[string]any{
 		"contact_id": in.ContactID,

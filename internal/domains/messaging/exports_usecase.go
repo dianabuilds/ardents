@@ -18,6 +18,7 @@ type InboundContactTrustViolation = messagingusecase.InboundContactTrustViolatio
 type InboundReceiptHandling = messagingusecase.InboundReceiptHandling
 type RevocationFailure = messagingusecase.RevocationFailure
 type PendingMessage = messagingusecase.PendingMessage
+type InboundPrivateMessage = messagingusecase.InboundPrivateMessage
 type InboundPolicyAction = messagingusecase.InboundPolicyAction
 type InboundPolicyDecision = messagingusecase.InboundPolicyDecision
 type InboundServiceDeps = messagingusecase.InboundServiceDeps
@@ -44,23 +45,23 @@ func ValidateInboundContactTrust(senderID string, wire contracts.WirePayload, id
 	return messagingusecase.ValidateInboundContactTrust(senderID, wire, identity)
 }
 
-func ValidateInboundDeviceAuth(msg waku.PrivateMessage, wire contracts.WirePayload, identity interface {
+func ValidateInboundDeviceAuth(msg InboundPrivateMessage, wire contracts.WirePayload, identity interface {
 	VerifyInboundDevice(contactID string, device models.Device, payload, sig []byte) error
 }) error {
 	return messagingusecase.ValidateInboundDeviceAuth(msg, wire, identity)
 }
 
-func ResolveInboundContent(msg waku.PrivateMessage, wire contracts.WirePayload, sessions interface {
+func ResolveInboundContent(msg InboundPrivateMessage, wire contracts.WirePayload, sessions interface {
 	Decrypt(contactID string, env crypto.MessageEnvelope) ([]byte, error)
 }) (content []byte, contentType string, decryptErr error) {
 	return messagingusecase.ResolveInboundContent(msg, wire, sessions)
 }
 
-func BuildInboundStoredMessage(msg waku.PrivateMessage, threadID string, content []byte, contentType string, now time.Time) models.Message {
+func BuildInboundStoredMessage(msg InboundPrivateMessage, threadID string, content []byte, contentType string, now time.Time) models.Message {
 	return messagingusecase.BuildInboundStoredMessage(msg, threadID, content, contentType, now)
 }
 
-func BuildInboundGroupStoredMessage(msg waku.PrivateMessage, conversationID, threadID string, content []byte, contentType string, now time.Time) models.Message {
+func BuildInboundGroupStoredMessage(msg InboundPrivateMessage, conversationID, threadID string, content []byte, contentType string, now time.Time) models.Message {
 	return messagingusecase.BuildInboundGroupStoredMessage(msg, conversationID, threadID, content, contentType, now)
 }
 

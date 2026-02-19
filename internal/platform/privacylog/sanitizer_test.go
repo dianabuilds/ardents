@@ -66,3 +66,39 @@ func TestSanitizingHandlerImplementsSlogHandlerContract(t *testing.T) {
 		t.Fatalf("expected sanitized group_id key, got %s", buf.String())
 	}
 }
+
+func TestSanitizingHandlerRedactsSensitiveValuesInErrorFields(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, nil)
+	logger := slog.New(WrapHandler(base))
+	logger.Error("rpc failed", "error", "Authorization: Bearer top-secret-token")
+
+	raw := buf.String()
+	if strings.Contains(strings.ToLower(raw), "top-secret-token") {
+		t.Fatalf("sensitive token leaked in logs: %s", raw)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &payload); err != nil {
+		t.Fatalf("decode log json: %v", err)
+	}
+	if got, _ := payload["error"].(string); got != redactedValue {
+		t.Fatalf("expected redacted error value, got %q", got)
+	}
+}
+
+func TestSanitizeArgsRedactsSensitiveStringValues(t *testing.T) {
+	args := SanitizeArgs(
+		"error", "mnemonic phrase leaked",
+		"status", "ok",
+	)
+	if len(args) != 4 {
+		t.Fatalf("unexpected args length: %d", len(args))
+	}
+	if got, _ := args[1].(string); got != redactedValue {
+		t.Fatalf("expected redacted sensitive value, got %q", got)
+	}
+	if got, _ := args[3].(string); got != "ok" {
+		t.Fatalf("expected non-sensitive value untouched, got %q", got)
+	}
+}

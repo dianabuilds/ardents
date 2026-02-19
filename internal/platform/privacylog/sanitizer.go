@@ -21,7 +21,20 @@ var (
 		"event_id":    {},
 		"identity_id": {},
 	}
-	sensitiveKeyParts = []string{"token", "secret", "password", "passphrase", "authorization", "auth"}
+	sensitiveKeyParts   = []string{"token", "secret", "password", "passphrase", "authorization", "auth"}
+	sensitiveValueParts = []string{
+		"token",
+		"secret",
+		"password",
+		"passphrase",
+		"authorization",
+		"bearer ",
+		"api_key",
+		"apikey",
+		"private key",
+		"mnemonic",
+		"seed phrase",
+	}
 )
 
 type SanitizingHandler struct {
@@ -70,6 +83,9 @@ func SanitizeAttr(attr slog.Attr) slog.Attr {
 		group := attr.Value.Group()
 		return slog.Any(key, sanitizeGroupValue(group))
 	}
+	if shouldRedactValue(attr.Value) {
+		return slog.String(key, redactedValue)
+	}
 	return attr
 }
 
@@ -92,6 +108,8 @@ func SanitizeArgs(args ...any) []any {
 			out = append(out, key, redactedValue)
 		case shouldFingerprintKey(lowerKey):
 			out = append(out, fingerprintKeyName(key), FingerprintID(fmt.Sprint(value)))
+		case isSensitiveValue(fmt.Sprint(value)):
+			out = append(out, key, redactedValue)
 		default:
 			out = append(out, key, value)
 		}
@@ -158,6 +176,23 @@ func fingerprintKeyName(key string) string {
 func isSensitiveKey(key string) bool {
 	for _, part := range sensitiveKeyParts {
 		if strings.Contains(key, part) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldRedactValue(v slog.Value) bool {
+	return isSensitiveValue(valueToString(v))
+}
+
+func isSensitiveValue(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+	for _, part := range sensitiveValueParts {
+		if strings.Contains(lower, part) {
 			return true
 		}
 	}

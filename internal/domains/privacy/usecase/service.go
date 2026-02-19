@@ -70,10 +70,10 @@ func (s *Service) BootstrapPartial() (privacymodel.PrivacySettings, privacymodel
 	settings := privacymodel.DefaultPrivacySettings()
 	list, _ := privacymodel.NewBlocklist(nil)
 
-	settings, err := s.privacyState.Bootstrap()
+	bootstrappedSettings, err := s.privacyState.Bootstrap()
 	settingsErr := err
 	if settingsErr == nil {
-		settings = privacymodel.NormalizePrivacySettings(settings)
+		settings = privacymodel.NormalizePrivacySettings(bootstrappedSettings)
 	}
 
 	bootstrappedList, err := s.blocklistState.Bootstrap()
@@ -144,9 +144,24 @@ func (s *Service) UpdateStoragePolicy(
 	storageProtection string,
 	retention string,
 	messageTTLSeconds int,
+	imageTTLSeconds int,
 	fileTTLSeconds int,
+	imageQuotaMB int,
+	fileQuotaMB int,
+	imageMaxItemSizeMB int,
+	fileMaxItemSizeMB int,
 ) (privacymodel.StoragePolicy, error) {
-	policy, err := privacymodel.ParseStoragePolicy(storageProtection, retention, messageTTLSeconds, fileTTLSeconds)
+	policy, err := privacymodel.ParseStoragePolicy(
+		storageProtection,
+		retention,
+		messageTTLSeconds,
+		imageTTLSeconds,
+		fileTTLSeconds,
+		imageQuotaMB,
+		fileQuotaMB,
+		imageMaxItemSizeMB,
+		fileMaxItemSizeMB,
+	)
 	if err != nil {
 		return privacymodel.StoragePolicy{}, err
 	}
@@ -158,7 +173,12 @@ func (s *Service) UpdateStoragePolicy(
 	updated.StorageProtection = policy.StorageProtection
 	updated.ContentRetentionMode = policy.ContentRetentionMode
 	updated.MessageTTLSeconds = policy.MessageTTLSeconds
+	updated.ImageTTLSeconds = policy.ImageTTLSeconds
 	updated.FileTTLSeconds = policy.FileTTLSeconds
+	updated.ImageQuotaMB = policy.ImageQuotaMB
+	updated.FileQuotaMB = policy.FileQuotaMB
+	updated.ImageMaxItemSizeMB = policy.ImageMaxItemSizeMB
+	updated.FileMaxItemSizeMB = policy.FileMaxItemSizeMB
 	updated = privacymodel.NormalizePrivacySettings(updated)
 	if err := s.privacyState.Persist(updated); err != nil {
 		if s.recordError != nil {
@@ -171,6 +191,83 @@ func (s *Service) UpdateStoragePolicy(
 	s.privacy = updated
 	s.mu.Unlock()
 	return privacymodel.StoragePolicyFromSettings(updated), nil
+}
+
+func (s *Service) SetStorageScopeOverride(scope, scopeID string, override privacymodel.StoragePolicyOverride) (privacymodel.StoragePolicyOverride, error) {
+	key, err := privacymodel.ScopeOverrideKey(scope, scopeID)
+	if err != nil {
+		return privacymodel.StoragePolicyOverride{}, err
+	}
+	normalized := privacymodel.NormalizeStoragePolicyOverride(override)
+	current, err := s.GetPrivacySettings()
+	if err != nil {
+		return privacymodel.StoragePolicyOverride{}, err
+	}
+	if current.StorageScopeOverrides == nil {
+		current.StorageScopeOverrides = map[string]privacymodel.StoragePolicyOverride{}
+	}
+	current.StorageScopeOverrides[key] = normalized
+	current = privacymodel.NormalizePrivacySettings(current)
+	if err := s.privacyState.Persist(current); err != nil {
+		if s.recordError != nil {
+			s.recordError("storage", err)
+		}
+		return privacymodel.StoragePolicyOverride{}, err
+	}
+	s.mu.Lock()
+	s.privacy = current
+	s.mu.Unlock()
+	return normalized, nil
+}
+
+func (s *Service) GetStorageScopeOverride(scope, scopeID string) (privacymodel.StoragePolicyOverride, bool, error) {
+	key, err := privacymodel.ScopeOverrideKey(scope, scopeID)
+	if err != nil {
+		return privacymodel.StoragePolicyOverride{}, false, err
+	}
+	current, err := s.GetPrivacySettings()
+	if err != nil {
+		return privacymodel.StoragePolicyOverride{}, false, err
+	}
+	override, ok := current.StorageScopeOverrides[key]
+	return override, ok, nil
+}
+
+func (s *Service) RemoveStorageScopeOverride(scope, scopeID string) (bool, error) {
+	key, err := privacymodel.ScopeOverrideKey(scope, scopeID)
+	if err != nil {
+		return false, err
+	}
+	current, err := s.GetPrivacySettings()
+	if err != nil {
+		return false, err
+	}
+	if current.StorageScopeOverrides == nil {
+		return false, nil
+	}
+	if _, ok := current.StorageScopeOverrides[key]; !ok {
+		return false, nil
+	}
+	delete(current.StorageScopeOverrides, key)
+	current = privacymodel.NormalizePrivacySettings(current)
+	if err := s.privacyState.Persist(current); err != nil {
+		if s.recordError != nil {
+			s.recordError("storage", err)
+		}
+		return false, err
+	}
+	s.mu.Lock()
+	s.privacy = current
+	s.mu.Unlock()
+	return true, nil
+}
+
+func (s *Service) ResolveStoragePolicy(scope, scopeID string, isPinned bool) (privacymodel.StoragePolicy, error) {
+	current, err := s.GetPrivacySettings()
+	if err != nil {
+		return privacymodel.StoragePolicy{}, err
+	}
+	return privacymodel.ResolveStoragePolicyForScope(current, scope, scopeID, isPinned)
 }
 
 func (s *Service) GetBlocklist() ([]string, error) {

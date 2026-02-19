@@ -73,16 +73,16 @@ type inboundSessionDecryptor interface {
 	Decrypt(contactID string, env crypto.MessageEnvelope) ([]byte, error)
 }
 
-func ValidateInboundDeviceAuth(msg waku.PrivateMessage, wire contracts.WirePayload, identity inboundDeviceVerifier) error {
+func ValidateInboundDeviceAuth(msg InboundPrivateMessage, wire contracts.WirePayload, identity inboundDeviceVerifier) error {
 	authPayload, err := BuildWireAuthPayload(msg.ID, msg.SenderID, msg.Recipient, wire)
 	if err != nil {
-		return &contracts.CategorizedError{Category: "api", Err: err}
+		return contracts.WrapCategorizedError(contracts.ErrorCategoryAPI, err)
 	}
 	if wire.Device == nil || len(wire.DeviceSig) == 0 {
-		return &contracts.CategorizedError{Category: "crypto", Err: errors.New("missing device authentication")}
+		return contracts.WrapCategorizedError(contracts.ErrorCategoryCrypto, errors.New("missing device authentication"))
 	}
 	if err := identity.VerifyInboundDevice(msg.SenderID, *wire.Device, authPayload, wire.DeviceSig); err != nil {
-		return &contracts.CategorizedError{Category: "crypto", Err: err}
+		return contracts.WrapCategorizedError(contracts.ErrorCategoryCrypto, err)
 	}
 	return nil
 }
@@ -91,7 +91,7 @@ func ShouldApplyReceiptStatus(status string) bool {
 	return status == "delivered" || status == "read"
 }
 
-func ResolveInboundContent(msg waku.PrivateMessage, wire contracts.WirePayload, sessions inboundSessionDecryptor) (content []byte, contentType string, decryptErr error) {
+func ResolveInboundContent(msg InboundPrivateMessage, wire contracts.WirePayload, sessions inboundSessionDecryptor) (content []byte, contentType string, decryptErr error) {
 	content = append([]byte(nil), msg.Payload...)
 	contentType = "text"
 	switch wire.Kind {
@@ -108,11 +108,11 @@ func ResolveInboundContent(msg waku.PrivateMessage, wire contracts.WirePayload, 
 	return content, contentType, nil
 }
 
-func BuildInboundStoredMessage(msg waku.PrivateMessage, threadID string, content []byte, contentType string, now time.Time) models.Message {
+func BuildInboundStoredMessage(msg InboundPrivateMessage, threadID string, content []byte, contentType string, now time.Time) models.Message {
 	return models.Message{ID: msg.ID, ContactID: msg.SenderID, ConversationID: msg.SenderID, ConversationType: models.ConversationTypeDirect, ThreadID: strings.TrimSpace(threadID), Content: content, Timestamp: now.UTC(), Direction: "in", Status: "delivered", ContentType: contentType}
 }
 
-func BuildInboundGroupStoredMessage(msg waku.PrivateMessage, conversationID, threadID string, content []byte, contentType string, now time.Time) models.Message {
+func BuildInboundGroupStoredMessage(msg InboundPrivateMessage, conversationID, threadID string, content []byte, contentType string, now time.Time) models.Message {
 	return models.Message{ID: msg.ID, ContactID: msg.SenderID, ConversationID: strings.TrimSpace(conversationID), ConversationType: models.ConversationTypeGroup, ThreadID: strings.TrimSpace(threadID), Content: content, Timestamp: now.UTC(), Direction: "in", Status: "delivered", ContentType: contentType}
 }
 
@@ -243,32 +243,28 @@ type composeMessageIdentityAccess interface {
 
 func ComposeSignedPrivateMessage(messageID, recipient string, wire contracts.WirePayload, identity composeMessageIdentityAccess) (waku.PrivateMessage, error) {
 	if err := messagingpolicy.ValidateWirePayload(wire); err != nil {
-		return waku.PrivateMessage{}, &contracts.CategorizedError{Category: "api", Err: err}
+		return waku.PrivateMessage{}, contracts.WrapCategorizedError(contracts.ErrorCategoryAPI, err)
 	}
 	localIdentity := identity.GetIdentity()
 	authPayload, err := BuildWireAuthPayload(messageID, localIdentity.ID, recipient, wire)
 	if err != nil {
-		return waku.PrivateMessage{}, &contracts.CategorizedError{Category: "api", Err: err}
+		return waku.PrivateMessage{}, contracts.WrapCategorizedError(contracts.ErrorCategoryAPI, err)
 	}
 	device, deviceSig, err := identity.ActiveDeviceAuth(authPayload)
 	if err != nil {
-		return waku.PrivateMessage{}, &contracts.CategorizedError{Category: "crypto", Err: err}
+		return waku.PrivateMessage{}, contracts.WrapCategorizedError(contracts.ErrorCategoryCrypto, err)
 	}
 	wire.Device = &device
 	wire.DeviceSig = append([]byte(nil), deviceSig...)
 	payloadBytes, err := json.Marshal(wire)
 	if err != nil {
-		return waku.PrivateMessage{}, &contracts.CategorizedError{Category: "api", Err: err}
+		return waku.PrivateMessage{}, contracts.WrapCategorizedError(contracts.ErrorCategoryAPI, err)
 	}
 	return waku.PrivateMessage{ID: messageID, SenderID: localIdentity.ID, Recipient: recipient, Payload: payloadBytes}, nil
 }
 
 func ErrorCategory(err error) string {
-	var classified *contracts.CategorizedError
-	if errors.As(err, &classified) {
-		return classified.Category
-	}
-	return "api"
+	return contracts.ErrorCategory(err)
 }
 
 func NextRetryTime(retryCount int) time.Time {
@@ -302,12 +298,12 @@ func DispatchDeviceRevocation(localIdentityID string, contacts []models.Contact,
 	for _, c := range contacts {
 		msgID, err := nextID()
 		if err != nil {
-			failures = append(failures, RevocationFailure{ContactID: c.ID, Category: "api", Err: err})
+			failures = append(failures, RevocationFailure{ContactID: c.ID, Category: contracts.ErrorCategoryAPI, Err: err})
 			continue
 		}
 		msg := waku.PrivateMessage{ID: msgID, SenderID: localIdentityID, Recipient: c.ID, Payload: payload}
 		if err := publish(msg); err != nil {
-			failures = append(failures, RevocationFailure{ContactID: c.ID, Category: "network", Err: err})
+			failures = append(failures, RevocationFailure{ContactID: c.ID, Category: contracts.ErrorCategoryNetwork, Err: err})
 		}
 	}
 	return failures

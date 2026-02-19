@@ -8,14 +8,17 @@ import (
 type MessagePrivacyMode = privacymodel.MessagePrivacyMode
 type StorageProtectionMode = privacymodel.StorageProtectionMode
 type ContentRetentionMode = privacymodel.ContentRetentionMode
+type StoragePolicyScope = privacymodel.StoragePolicyScope
 
 const (
 	MessagePrivacyContactsOnly        = privacymodel.MessagePrivacyContactsOnly
 	MessagePrivacyRequests            = privacymodel.MessagePrivacyRequests
 	MessagePrivacyEveryone            = privacymodel.MessagePrivacyEveryone
 	DefaultMessagePrivacyMode         = privacymodel.DefaultMessagePrivacyMode
+	StorageProtectionStandard         = privacymodel.StorageProtectionStandard
 	StorageProtectionProtected        = privacymodel.StorageProtectionProtected
 	DefaultStorageProtectionMode      = privacymodel.DefaultStorageProtectionMode
+	RetentionPersistent               = privacymodel.RetentionPersistent
 	RetentionEphemeral                = privacymodel.RetentionEphemeral
 	RetentionZeroRetention            = privacymodel.RetentionZeroRetention
 	DefaultContentRetentionMode       = privacymodel.DefaultContentRetentionMode
@@ -26,11 +29,13 @@ const (
 var (
 	ErrInvalidMessagePrivacyMode = privacymodel.ErrInvalidMessagePrivacyMode
 	ErrInvalidIdentityID         = privacymodel.ErrInvalidIdentityID
+	ErrInfiniteTTLRequiresPinned = privacymodel.ErrInfiniteTTLRequiresPinned
 )
 
 // noinspection GoNameStartsWithPackageName
 type PrivacySettings = privacymodel.PrivacySettings
 type StoragePolicy = privacymodel.StoragePolicy
+type StoragePolicyOverride = privacymodel.StoragePolicyOverride
 type Blocklist = privacymodel.Blocklist
 
 func DefaultPrivacySettings() PrivacySettings {
@@ -45,8 +50,28 @@ func ParseMessagePrivacyMode(raw string) (MessagePrivacyMode, error) {
 	return privacymodel.ParseMessagePrivacyMode(raw)
 }
 
-func ParseStoragePolicy(storageProtection, retention string, messageTTLSeconds, fileTTLSeconds int) (StoragePolicy, error) {
-	return privacymodel.ParseStoragePolicy(storageProtection, retention, messageTTLSeconds, fileTTLSeconds)
+func ParseStoragePolicy(
+	storageProtection,
+	retention string,
+	messageTTLSeconds,
+	imageTTLSeconds,
+	fileTTLSeconds,
+	imageQuotaMB,
+	fileQuotaMB,
+	imageMaxItemSizeMB,
+	fileMaxItemSizeMB int,
+) (StoragePolicy, error) {
+	return privacymodel.ParseStoragePolicy(
+		storageProtection,
+		retention,
+		messageTTLSeconds,
+		imageTTLSeconds,
+		fileTTLSeconds,
+		imageQuotaMB,
+		fileQuotaMB,
+		imageMaxItemSizeMB,
+		fileMaxItemSizeMB,
+	)
 }
 
 func NormalizeStoragePolicy(in StoragePolicy) StoragePolicy {
@@ -55,6 +80,14 @@ func NormalizeStoragePolicy(in StoragePolicy) StoragePolicy {
 
 func StoragePolicyFromSettings(settings PrivacySettings) StoragePolicy {
 	return privacymodel.StoragePolicyFromSettings(settings)
+}
+
+func ScopeOverrideKey(scopeRaw, scopeIDRaw string) (string, error) {
+	return privacymodel.ScopeOverrideKey(scopeRaw, scopeIDRaw)
+}
+
+func ResolveStoragePolicyForScope(settings PrivacySettings, scopeRaw, scopeIDRaw string, isPinned bool) (StoragePolicy, error) {
+	return privacymodel.ResolveStoragePolicyForScope(settings, scopeRaw, scopeIDRaw, isPinned)
 }
 
 func NormalizeIdentityID(identityID string) (string, error) {

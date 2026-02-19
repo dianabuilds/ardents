@@ -114,6 +114,20 @@ func (s *Service) ExportBackup(consentToken, passphrase string) (string, error) 
 	return result.Blob, nil
 }
 
+func (s *Service) RestoreBackup(consentToken, passphrase, backupBlob string) (models.Identity, error) {
+	result, err := RestoreBackup(consentToken, passphrase, backupBlob, s.identityManager, s.messageStore, s.sessionManager)
+	if err != nil {
+		return models.Identity{}, err
+	}
+	if err := s.identityState.Persist(s.identityManager); err != nil {
+		return models.Identity{}, err
+	}
+	if s.logger != nil {
+		s.logger.Warn("backup restore executed", "identity_id", result.IdentityID, "messages", result.MessageCount, "sessions", result.SessionCount)
+	}
+	return s.identityManager.GetIdentity(), nil
+}
+
 func (s *Service) ImportIdentity(mnemonic, password string) (models.Identity, error) {
 	return ImportIdentity(mnemonic, password, s.identityManager, func() error {
 		return s.identityState.Persist(s.identityManager)

@@ -54,20 +54,12 @@ func NormalizeGroupID(groupID string) (string, error) {
 	return groupmodel.NormalizeGroupID(groupID)
 }
 
+func NormalizeGroupMemberID(memberID string) (string, error) {
+	return groupmodel.NormalizeGroupMemberID(memberID)
+}
+
 func NormalizeGroupTitle(title string) (string, error) {
 	return groupmodel.NormalizeGroupTitle(title)
-}
-
-func ParseGroupEventType(raw string) (GroupEventType, error) {
-	return groupmodel.ParseGroupEventType(raw)
-}
-
-func ParseGroupMemberRole(raw string) (GroupMemberRole, error) {
-	return groupmodel.ParseGroupMemberRole(raw)
-}
-
-func ValidateGroupEvent(event GroupEvent) error {
-	return groupmodel.ValidateGroupEvent(event)
 }
 
 func NewGroupState(group Group) GroupState {

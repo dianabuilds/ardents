@@ -80,6 +80,33 @@ func TestAttachmentChunkUploadFailsOnDigestMismatch(t *testing.T) {
 	}
 }
 
+func TestAttachmentChunkUploadRejectsInvalidChunkDigestFormat(t *testing.T) {
+	payload := []byte("chunked-payload")
+	svc := &Service{
+		attachmentStore: &chunkTestAttachmentStore{},
+		uploads:         make(map[string]attachmentUploadSession),
+	}
+	initRes, err := svc.InitAttachmentUpload("doc.txt", "text/plain", int64(len(payload)), 1, 16*1024, "")
+	if err != nil {
+		t.Fatalf("init upload failed: %v", err)
+	}
+	chunk := base64.StdEncoding.EncodeToString(payload)
+	if _, err := svc.PutAttachmentChunk(initRes.UploadID, 0, chunk, strings.Repeat("z", 64)); err == nil {
+		t.Fatal("expected invalid chunk digest format error")
+	}
+}
+
+func TestAttachmentChunkUploadRejectsInvalidFileDigestFormat(t *testing.T) {
+	payload := []byte("chunked-payload")
+	svc := &Service{
+		attachmentStore: &chunkTestAttachmentStore{},
+		uploads:         make(map[string]attachmentUploadSession),
+	}
+	if _, err := svc.InitAttachmentUpload("doc.txt", "text/plain", int64(len(payload)), 1, 16*1024, strings.Repeat("g", 64)); err == nil {
+		t.Fatal("expected invalid file digest format error")
+	}
+}
+
 func TestAttachmentChunkUploadStatusAndExpiry(t *testing.T) {
 	payload := []byte("1234567890abcdef")
 	svc := &Service{
@@ -106,5 +133,24 @@ func TestAttachmentChunkUploadStatusAndExpiry(t *testing.T) {
 
 	if _, err := svc.GetAttachmentUploadStatus(initRes.UploadID); err == nil {
 		t.Fatal("expected expired session")
+	}
+}
+
+func TestAttachmentChunkUploadCommitRejectsSpoofedImage(t *testing.T) {
+	payload := []byte("not-an-image")
+	svc := &Service{
+		attachmentStore: &chunkTestAttachmentStore{},
+		uploads:         make(map[string]attachmentUploadSession),
+	}
+	initRes, err := svc.InitAttachmentUpload("photo.png", "image/png", int64(len(payload)), 1, 16*1024, "")
+	if err != nil {
+		t.Fatalf("init upload failed: %v", err)
+	}
+	chunk := base64.StdEncoding.EncodeToString(payload)
+	if _, err := svc.PutAttachmentChunk(initRes.UploadID, 0, chunk, ""); err != nil {
+		t.Fatalf("put chunk failed: %v", err)
+	}
+	if _, err := svc.CommitAttachmentUpload(initRes.UploadID); err == nil {
+		t.Fatal("expected commit to fail for spoofed image payload")
 	}
 }

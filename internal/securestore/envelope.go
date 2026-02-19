@@ -14,6 +14,9 @@ const (
 	envelopeVersion = 1
 	saltSize        = 16
 	filePrefix      = "AIMENC1\n"
+	argonTime       = uint32(2)
+	argonMemoryKB   = uint32(64 * 1024)
+	argonThreads    = uint8(1)
 )
 
 var (
@@ -66,9 +69,9 @@ func EncryptEnvelope(passphrase string, plaintext []byte) (*Envelope, error) {
 	return &Envelope{
 		Version:     envelopeVersion,
 		KDF:         "argon2id",
-		KDFTime:     2,
-		KDFMemoryKB: 64 * 1024,
-		KDFThreads:  1,
+		KDFTime:     argonTime,
+		KDFMemoryKB: argonMemoryKB,
+		KDFThreads:  argonThreads,
 		Salt:        salt,
 		Nonce:       nonce,
 		Ciphertext:  ciphertext,
@@ -88,7 +91,7 @@ func Decrypt(passphrase string, data []byte) ([]byte, error) {
 }
 
 func DecryptEnvelope(passphrase string, env *Envelope) ([]byte, error) {
-	if env == nil || env.Version != envelopeVersion || env.KDF != "argon2id" {
+	if !isValidEnvelope(env) {
 		return nil, ErrInvalid
 	}
 	key := deriveKey(passphrase, env.Salt)
@@ -106,7 +109,23 @@ func DecryptEnvelope(passphrase string, env *Envelope) ([]byte, error) {
 }
 
 func deriveKey(passphrase string, salt []byte) []byte {
-	return argon2.IDKey([]byte(passphrase), salt, 2, 64*1024, 1, chacha20poly1305.KeySize)
+	return argon2.IDKey([]byte(passphrase), salt, argonTime, argonMemoryKB, argonThreads, chacha20poly1305.KeySize)
+}
+
+func isValidEnvelope(env *Envelope) bool {
+	if env == nil {
+		return false
+	}
+	if env.Version != envelopeVersion || env.KDF != "argon2id" {
+		return false
+	}
+	if env.KDFTime != argonTime || env.KDFMemoryKB != argonMemoryKB || env.KDFThreads != argonThreads {
+		return false
+	}
+	if len(env.Salt) != saltSize || len(env.Nonce) != chacha20poly1305.NonceSizeX || len(env.Ciphertext) == 0 {
+		return false
+	}
+	return true
 }
 
 func zeroBytes(b []byte) {

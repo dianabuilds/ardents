@@ -90,10 +90,10 @@ func buildInboundMessagingDeps(svc *Service) messagingapp.InboundServiceDeps {
 		ApplyDeviceRevocation: func(senderID string, rev models.DeviceRevocation) error {
 			return svc.identityManager.ApplyDeviceRevocation(senderID, rev)
 		},
-		ValidateInboundDeviceAuth: func(msg waku.PrivateMessage, wire contracts.WirePayload) error {
+		ValidateInboundDeviceAuth: func(msg messagingapp.InboundPrivateMessage, wire contracts.WirePayload) error {
 			return messagingapp.ValidateInboundDeviceAuth(msg, wire, svc.identityManager)
 		},
-		ResolveInboundContent: func(msg waku.PrivateMessage, wire contracts.WirePayload) ([]byte, string, error) {
+		ResolveInboundContent: func(msg messagingapp.InboundPrivateMessage, wire contracts.WirePayload) ([]byte, string, error) {
 			return messagingapp.ResolveInboundContent(msg, wire, svc.sessionManager)
 		},
 		HandleInboundGroupMessage: svc.handleInboundGroupMessage,

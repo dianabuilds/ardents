@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"time"
+
 	"aim-chat/go-backend/internal/crypto"
 	identitypolicy "aim-chat/go-backend/internal/domains/identity/policy"
 	identityusecase "aim-chat/go-backend/internal/domains/identity/usecase"
@@ -21,6 +23,8 @@ func ExportBackup(
 	identity interface {
 		GetIdentity() models.Identity
 		Contacts() []models.Contact
+		SnapshotIdentityKeys() (publicKey []byte, privateKey []byte)
+		SnapshotSeedEnvelopeJSON() []byte
 	},
 	messageStore interface {
 		Snapshot() (map[string]models.Message, map[string]storage.PendingMessage)
@@ -30,6 +34,24 @@ func ExportBackup(
 	},
 ) (BackupExportResult, error) {
 	return identityusecase.ExportBackup(consentToken, passphrase, identity, messageStore, sessionManager)
+}
+
+func RestoreBackup(
+	consentToken, passphrase, blob string,
+	identity interface {
+		GetIdentity() models.Identity
+		RestoreIdentityPrivateKey(privateKey []byte) error
+		AddContactByIdentityID(contactID, displayName string) error
+	},
+	messageStore interface {
+		SaveMessage(msg models.Message) error
+		AddOrUpdatePending(message models.Message, retryCount int, nextRetry time.Time, lastErr string) error
+	},
+	sessionManager interface {
+		RestoreSnapshot(states []crypto.SessionState) error
+	},
+) (identityusecase.BackupRestoreResult, error) {
+	return identityusecase.RestoreBackup(consentToken, passphrase, blob, identity, messageStore, sessionManager)
 }
 
 func CreateAccount(password string, identity interface {

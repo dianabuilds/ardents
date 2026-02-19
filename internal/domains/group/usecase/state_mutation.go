@@ -1,9 +1,5 @@
 package usecase
 
-import (
-	"strings"
-)
-
 type SnapshotPersist func(states map[string]GroupState, eventLog map[string][]GroupEvent) error
 
 func LoadStateForActor(
@@ -16,10 +12,11 @@ func LoadStateForActor(
 	if !ok {
 		return GroupState{}, ErrGroupNotFound
 	}
-	if strings.TrimSpace(actorID) == "" {
-		return GroupState{}, ErrInvalidGroupMemberID
+	normalizedActorID, err := NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return GroupState{}, err
 	}
-	actor, exists := state.Members[actorID]
+	actor, exists := state.Members[normalizedActorID]
 	if !exists {
 		return GroupState{}, ErrGroupMembershipNotFound
 	}

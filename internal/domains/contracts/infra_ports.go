@@ -14,6 +14,7 @@ import (
 
 type SessionDomain interface {
 	Snapshot() ([]crypto.SessionState, error)
+	RestoreSnapshot(states []crypto.SessionState) error
 	GetSession(contactID string) (crypto.SessionState, bool, error)
 	Encrypt(contactID string, plaintext []byte) (crypto.MessageEnvelope, error)
 	Decrypt(contactID string, env crypto.MessageEnvelope) ([]byte, error)

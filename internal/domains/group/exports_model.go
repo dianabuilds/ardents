@@ -44,6 +44,10 @@ type Group = groupmodel.Group
 //goland:noinspection GoNameStartsWithPackageName
 type GroupMember = groupmodel.GroupMember
 
+func NormalizeGroupMemberID(memberID string) (string, error) {
+	return groupmodel.NormalizeGroupMemberID(memberID)
+}
+
 func ParseGroupMemberRole(raw string) (GroupMemberRole, error) {
 	return groupmodel.ParseGroupMemberRole(raw)
 }

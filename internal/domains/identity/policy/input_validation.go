@@ -31,7 +31,7 @@ func DecodeAttachmentInput(name, mimeType, dataBase64 string) (string, string, [
 	if len(data) > maxAttachmentBytes {
 		return "", "", nil, errors.New("attachment exceeds maximum size")
 	}
-	return name, mimeType, data, nil
+	return NormalizeDirectAttachmentPayload(name, mimeType, data)
 }
 
 func ValidateAttachmentID(attachmentID string) (string, error) {
@@ -96,4 +96,23 @@ func ValidateLoginInput(accountID, password, currentIdentityID string) error {
 		return errors.New("account id mismatch")
 	}
 	return nil
+}
+
+func NormalizeOptionalSHA256Hex(raw, field string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "", nil
+	}
+	if len(value) != 64 {
+		return "", errors.New("invalid " + field + " digest")
+	}
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		isDigit := ch >= '0' && ch <= '9'
+		isLowerHex := ch >= 'a' && ch <= 'f'
+		if !isDigit && !isLowerHex {
+			return "", errors.New("invalid " + field + " digest")
+		}
+	}
+	return value, nil
 }
