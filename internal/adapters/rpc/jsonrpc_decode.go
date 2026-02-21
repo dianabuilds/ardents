@@ -83,6 +83,14 @@ func decodeThreeStringParams(raw json.RawMessage) (string, string, string, error
 	return "", "", "", errInvalidParams
 }
 
+func decodeFourStringParams(raw json.RawMessage) (string, string, string, string, error) {
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err != nil || len(arr) != 4 || arr[0] == "" || arr[1] == "" {
+		return "", "", "", "", errInvalidParams
+	}
+	return arr[0], arr[1], arr[2], arr[3], nil
+}
+
 func decodeSessionInitParams(raw json.RawMessage) (string, []byte, error) {
 	var arr []string
 	if err := json.Unmarshal(raw, &arr); err != nil || len(arr) != 2 || arr[0] == "" || arr[1] == "" {

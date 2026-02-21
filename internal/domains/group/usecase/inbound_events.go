@@ -65,6 +65,14 @@ func AuthorizeInboundGroupEvent(state GroupState, event GroupEvent) error {
 			return ErrGroupPermissionDenied
 		}
 		return nil
+	case GroupEventTypeProfileChange:
+		if !actorExists || actor.Status != GroupMemberStatusActive {
+			return ErrGroupPermissionDenied
+		}
+		if actor.Role != GroupMemberRoleOwner && actor.Role != GroupMemberRoleAdmin {
+			return ErrGroupPermissionDenied
+		}
+		return nil
 	case GroupEventTypeKeyRotate:
 		if !actorExists || actor.Status != GroupMemberStatusActive {
 			return ErrGroupPermissionDenied

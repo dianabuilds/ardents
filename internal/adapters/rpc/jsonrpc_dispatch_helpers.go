@@ -188,3 +188,15 @@ func callWithThreeStringParams(rawParams json.RawMessage, serviceErrCode int, ca
 	}
 	return result, nil
 }
+
+func callWithFourStringParams(rawParams json.RawMessage, serviceErrCode int, call func(string, string, string, string) (any, error)) (any, *rpcError) {
+	a, b, c, d, err := decodeFourStringParams(rawParams)
+	if err != nil {
+		return nil, rpcInvalidParams()
+	}
+	result, callErr := call(a, b, c, d)
+	if callErr != nil {
+		return nil, rpcServiceError(serviceErrCode, callErr)
+	}
+	return result, nil
+}

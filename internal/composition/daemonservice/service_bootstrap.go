@@ -18,14 +18,14 @@ func NewServiceForDaemon(wakuCfg waku.Config) (*Service, error) {
 }
 
 func NewServiceForDaemonWithDataDir(wakuCfg waku.Config, dataDir string) (*Service, error) {
-	_, secret, bundle, err := daemoncomposition.ResolveStorage(dataDir)
+	resolvedDir, secret, bundle, err := daemoncomposition.ResolveStorage(dataDir)
 	if err != nil {
 		return nil, err
 	}
-	return newServiceForDaemonWithBundle(wakuCfg, bundle, secret)
+	return newServiceForDaemonWithBundle(wakuCfg, bundle, secret, resolvedDir)
 }
 
-func newServiceForDaemonWithBundle(wakuCfg waku.Config, bundle daemoncomposition.StorageBundle, secret string) (*Service, error) {
+func newServiceForDaemonWithBundle(wakuCfg waku.Config, bundle daemoncomposition.StorageBundle, secret, dataDir string) (*Service, error) {
 	svc, err := newServiceWithOptions(wakuCfg, contracts.ServiceOptions{
 		SessionStore:    bundle.SessionStore,
 		MessageStore:    bundle.MessageStore,
@@ -71,6 +71,15 @@ func newServiceForDaemonWithBundle(wakuCfg waku.Config, bundle daemoncomposition
 	svc.bindingStore.Configure(bundle.NodeBindingPath, secret)
 	if err := svc.bindingStore.Bootstrap(); err != nil {
 		svc.logger.Warn("node binding bootstrap failed, using empty state", "error", err.Error())
+	}
+	svc.storageSecret = secret
+	svc.dataDir = dataDir
+	svc.currentProfileID = legacyAccountID
+	if err := svc.initializeAccountRegistry(secret); err != nil {
+		return nil, err
+	}
+	if err := svc.configureEnrollmentTokenFlow(); err != nil {
+		return nil, err
 	}
 	return svc, nil
 }

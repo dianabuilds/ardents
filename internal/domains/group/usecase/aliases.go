@@ -16,11 +16,12 @@ type GroupMessageRecipientStatus = groupmodel.GroupMessageRecipientStatus
 type GroupMessageFanoutResult = groupmodel.GroupMessageFanoutResult
 
 const (
-	GroupEventTypeMemberAdd    = groupmodel.GroupEventTypeMemberAdd
-	GroupEventTypeMemberRemove = groupmodel.GroupEventTypeMemberRemove
-	GroupEventTypeMemberLeave  = groupmodel.GroupEventTypeMemberLeave
-	GroupEventTypeTitleChange  = groupmodel.GroupEventTypeTitleChange
-	GroupEventTypeKeyRotate    = groupmodel.GroupEventTypeKeyRotate
+	GroupEventTypeMemberAdd     = groupmodel.GroupEventTypeMemberAdd
+	GroupEventTypeMemberRemove  = groupmodel.GroupEventTypeMemberRemove
+	GroupEventTypeMemberLeave   = groupmodel.GroupEventTypeMemberLeave
+	GroupEventTypeTitleChange   = groupmodel.GroupEventTypeTitleChange
+	GroupEventTypeProfileChange = groupmodel.GroupEventTypeProfileChange
+	GroupEventTypeKeyRotate     = groupmodel.GroupEventTypeKeyRotate
 )
 
 const (

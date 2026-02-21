@@ -89,11 +89,18 @@ func TestNodeRuntimeStateTransitionsByPeerCount(t *testing.T) {
 
 func TestNormalizeConfigAppliesSafeDefaults(t *testing.T) {
 	cfg := normalizeConfig(Config{
-		Transport:           "",
-		MinPeers:            -1,
-		StoreQueryFanout:    0,
-		ReconnectInterval:   0,
-		ReconnectBackoffMax: 10 * time.Millisecond,
+		Transport:                  "",
+		MinPeers:                   -1,
+		StoreQueryFanout:           0,
+		ReconnectInterval:          0,
+		ReconnectBackoffMax:        10 * time.Millisecond,
+		ManifestRefreshInterval:    0,
+		ManifestStaleWindow:        0,
+		ManifestRefreshTimeout:     0,
+		ManifestBackoffBase:        0,
+		ManifestBackoffMax:         100 * time.Millisecond,
+		ManifestBackoffFactor:      0.5,
+		ManifestBackoffJitterRatio: 2.0,
 	})
 
 	if cfg.Transport == "" {
@@ -110,6 +117,27 @@ func TestNormalizeConfigAppliesSafeDefaults(t *testing.T) {
 	}
 	if cfg.ReconnectBackoffMax < cfg.ReconnectInterval {
 		t.Fatalf("reconnectBackoffMax must be >= reconnectInterval, got max=%s interval=%s", cfg.ReconnectBackoffMax, cfg.ReconnectInterval)
+	}
+	if cfg.ManifestRefreshInterval <= 0 {
+		t.Fatalf("manifestRefreshInterval must be > 0, got %s", cfg.ManifestRefreshInterval)
+	}
+	if cfg.ManifestStaleWindow <= 0 {
+		t.Fatalf("manifestStaleWindow must be > 0, got %s", cfg.ManifestStaleWindow)
+	}
+	if cfg.ManifestRefreshTimeout <= 0 {
+		t.Fatalf("manifestRefreshTimeout must be > 0, got %s", cfg.ManifestRefreshTimeout)
+	}
+	if cfg.ManifestBackoffBase <= 0 {
+		t.Fatalf("manifestBackoffBase must be > 0, got %s", cfg.ManifestBackoffBase)
+	}
+	if cfg.ManifestBackoffMax < cfg.ManifestBackoffBase {
+		t.Fatalf("manifestBackoffMax must be >= manifestBackoffBase, got max=%s base=%s", cfg.ManifestBackoffMax, cfg.ManifestBackoffBase)
+	}
+	if cfg.ManifestBackoffFactor < 1 {
+		t.Fatalf("manifestBackoffFactor must be >= 1, got %v", cfg.ManifestBackoffFactor)
+	}
+	if cfg.ManifestBackoffJitterRatio > 1 || cfg.ManifestBackoffJitterRatio < 0 {
+		t.Fatalf("manifestBackoffJitterRatio must be in [0..1], got %v", cfg.ManifestBackoffJitterRatio)
 	}
 }
 
@@ -173,6 +201,7 @@ type fakeGoWakuBackend struct {
 func (f *fakeGoWakuBackend) Start(_ context.Context, _ Config) error { return nil }
 func (f *fakeGoWakuBackend) Stop()                                   {}
 func (f *fakeGoWakuBackend) NetworkMetrics() map[string]int          { return map[string]int{} }
+func (f *fakeGoWakuBackend) ApplyConfig(_ Config)                    {}
 func (f *fakeGoWakuBackend) SetIdentity(_ string)                    {}
 func (f *fakeGoWakuBackend) ListenAddresses() []string               { return nil }
 func (f *fakeGoWakuBackend) SubscribePrivate(_ func(PrivateMessage)) error {

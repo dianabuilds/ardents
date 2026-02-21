@@ -7,11 +7,13 @@ import (
 )
 
 type inboundGroupEventPayload struct {
-	MemberID   string `json:"member_id"`
-	Role       string `json:"role"`
-	Title      string `json:"title"`
-	KeyVersion uint32 `json:"key_version"`
-	OccurredAt string `json:"occurred_at"`
+	MemberID    string `json:"member_id"`
+	Role        string `json:"role"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Avatar      string `json:"avatar"`
+	KeyVersion  uint32 `json:"key_version"`
+	OccurredAt  string `json:"occurred_at"`
 }
 
 type InboundGroupEventWire struct {
@@ -39,15 +41,17 @@ func DecodeInboundGroupEvent(
 		}
 	}
 	event := GroupEvent{
-		ID:         strings.TrimSpace(wire.EventID),
-		GroupID:    strings.TrimSpace(wire.ConversationID),
-		Version:    wire.MembershipVersion,
-		Type:       eventType,
-		ActorID:    strings.TrimSpace(wire.SenderID),
-		OccurredAt: occurredAt,
-		MemberID:   strings.TrimSpace(details.MemberID),
-		Title:      strings.TrimSpace(details.Title),
-		KeyVersion: details.KeyVersion,
+		ID:          strings.TrimSpace(wire.EventID),
+		GroupID:     strings.TrimSpace(wire.ConversationID),
+		Version:     wire.MembershipVersion,
+		Type:        eventType,
+		ActorID:     strings.TrimSpace(wire.SenderID),
+		OccurredAt:  occurredAt,
+		MemberID:    strings.TrimSpace(details.MemberID),
+		Title:       strings.TrimSpace(details.Title),
+		Description: strings.TrimSpace(details.Description),
+		Avatar:      strings.TrimSpace(details.Avatar),
+		KeyVersion:  details.KeyVersion,
 	}
 	if parsedRole, err := ParseGroupMemberRole(details.Role); err == nil {
 		event.Role = parsedRole

@@ -43,6 +43,25 @@ func (s *Server) dispatchGroupMembershipRPC(method string, rawParams json.RawMes
 			return map[string]bool{"left": left}, nil
 		})
 		return result, rpcErr, true
+	case "group.update_title":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32105, func(groupID, title string) (any, error) {
+			return s.service.UpdateGroupTitle(groupID, title)
+		})
+		return result, rpcErr, true
+	case "group.update_profile":
+		result, rpcErr := callWithFourStringParams(rawParams, -32107, func(groupID, title, description, avatar string) (any, error) {
+			return s.service.UpdateGroupProfile(groupID, title, description, avatar)
+		})
+		return result, rpcErr, true
+	case "group.delete":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32106, func(groupID string) (any, error) {
+			deleted, err := s.service.DeleteGroup(groupID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"deleted": deleted}, nil
+		})
+		return result, rpcErr, true
 	case "group.invite":
 		result, rpcErr := callWithTwoStringParams(rawParams, -32110, func(groupID, memberID string) (any, error) {
 			return s.service.InviteToGroup(groupID, memberID)

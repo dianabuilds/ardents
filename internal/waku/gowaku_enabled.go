@@ -136,6 +136,22 @@ func (g *goWakuNode) NetworkMetrics() map[string]int {
 	}
 }
 
+func (g *goWakuNode) ApplyConfig(cfg Config) {
+	g.mu.Lock()
+	g.cfg.MinPeers = cfg.MinPeers
+	g.cfg.ReconnectInterval = cfg.ReconnectInterval
+	g.cfg.ReconnectBackoffMax = cfg.ReconnectBackoffMax
+	g.cfg.FailoverV1 = cfg.FailoverV1
+	g.bootstrapNodes = append([]string(nil), cfg.BootstrapNodes...)
+	g.mu.Unlock()
+
+	if cfg.FailoverV1 {
+		g.startPeerMaintenance()
+		return
+	}
+	g.stopPeerMaintenance()
+}
+
 func (g *goWakuNode) SetIdentity(identityID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

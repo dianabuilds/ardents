@@ -41,9 +41,17 @@ func (s *Server) ensureChannelGroup(groupID string) (groupdomain.Group, error) {
 func (s *Server) dispatchChannelRPC(method string, rawParams json.RawMessage) (any, *rpcError, bool) {
 	switch method {
 	case "channel.create":
-		result, rpcErr := callWithChannelCreateParams(rawParams, -32200, func(name, visibility, _ string) (any, error) {
+		result, rpcErr := callWithChannelCreateParams(rawParams, -32200, func(name, visibility, description string) (any, error) {
 			title := encodeChannelGroupTitle(name, visibility)
-			return s.service.CreateGroup(title)
+			group, err := s.service.CreateGroup(title)
+			if err != nil {
+				return nil, err
+			}
+			description = strings.TrimSpace(description)
+			if description == "" {
+				return group, nil
+			}
+			return s.service.UpdateGroupProfile(group.ID, group.Title, description, group.Avatar)
 		})
 		return result, rpcErr, true
 	case "channel.get":
@@ -82,6 +90,44 @@ func (s *Server) dispatchChannelMembershipRPC(method string, rawParams json.RawM
 				return nil, err
 			}
 			return s.service.ListGroupMembers(groupID)
+		})
+		return result, rpcErr, true
+	case "channel.rename":
+		result, rpcErr := callWithTwoStringParams(rawParams, -32205, func(groupID, name string) (any, error) {
+			channelGroup, err := s.ensureChannelGroup(groupID)
+			if err != nil {
+				return nil, err
+			}
+			visibility := "public"
+			if matches := channelGroupTitlePrefixRe.FindStringSubmatch(strings.TrimSpace(channelGroup.Title)); len(matches) > 1 && strings.TrimSpace(matches[1]) != "" {
+				visibility = normalizeChannelVisibility(matches[1])
+			}
+			return s.service.UpdateGroupTitle(groupID, encodeChannelGroupTitle(name, visibility))
+		})
+		return result, rpcErr, true
+	case "channel.update_profile":
+		result, rpcErr := callWithFourStringParams(rawParams, -32207, func(groupID, name, description, avatar string) (any, error) {
+			channelGroup, err := s.ensureChannelGroup(groupID)
+			if err != nil {
+				return nil, err
+			}
+			visibility := "public"
+			if matches := channelGroupTitlePrefixRe.FindStringSubmatch(strings.TrimSpace(channelGroup.Title)); len(matches) > 1 && strings.TrimSpace(matches[1]) != "" {
+				visibility = normalizeChannelVisibility(matches[1])
+			}
+			return s.service.UpdateGroupProfile(groupID, encodeChannelGroupTitle(name, visibility), description, avatar)
+		})
+		return result, rpcErr, true
+	case "channel.delete":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32206, func(groupID string) (any, error) {
+			if _, err := s.ensureChannelGroup(groupID); err != nil {
+				return nil, err
+			}
+			deleted, err := s.service.DeleteGroup(groupID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"deleted": deleted}, nil
 		})
 		return result, rpcErr, true
 	case "channel.leave":

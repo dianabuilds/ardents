@@ -12,6 +12,13 @@ network:
   storeQueryFanout: 3
   reconnectInterval: 1s
   reconnectBackoffMax: 30s
+  manifestRefreshInterval: 60s
+  manifestStaleWindow: 5m
+  manifestRefreshTimeout: 5s
+  manifestBackoffBase: 1s
+  manifestBackoffMax: 30s
+  manifestBackoffFactor: 2.0
+  manifestBackoffJitterRatio: 0.2
 
 storage:
   driver: badger

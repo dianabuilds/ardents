@@ -9,11 +9,12 @@ import (
 type GroupEventType string
 
 const (
-	GroupEventTypeMemberAdd    GroupEventType = "member_add"
-	GroupEventTypeMemberRemove GroupEventType = "member_remove"
-	GroupEventTypeMemberLeave  GroupEventType = "member_leave"
-	GroupEventTypeTitleChange  GroupEventType = "title_change"
-	GroupEventTypeKeyRotate    GroupEventType = "key_rotate"
+	GroupEventTypeMemberAdd     GroupEventType = "member_add"
+	GroupEventTypeMemberRemove  GroupEventType = "member_remove"
+	GroupEventTypeMemberLeave   GroupEventType = "member_leave"
+	GroupEventTypeTitleChange   GroupEventType = "title_change"
+	GroupEventTypeProfileChange GroupEventType = "profile_change"
+	GroupEventTypeKeyRotate     GroupEventType = "key_rotate"
 )
 
 var (
@@ -34,9 +35,11 @@ type GroupEvent struct {
 	ActorID    string         `json:"actor_id"`
 	OccurredAt time.Time      `json:"occurred_at"`
 
-	MemberID string          `json:"member_id,omitempty"`
-	Role     GroupMemberRole `json:"role,omitempty"`
-	Title    string          `json:"title,omitempty"`
+	MemberID    string          `json:"member_id,omitempty"`
+	Role        GroupMemberRole `json:"role,omitempty"`
+	Title       string          `json:"title,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Avatar      string          `json:"avatar,omitempty"`
 
 	KeyVersion uint32 `json:"key_version,omitempty"`
 }
@@ -61,7 +64,7 @@ func NewGroupState(group Group) GroupState {
 
 func (t GroupEventType) Valid() bool {
 	switch t {
-	case GroupEventTypeMemberAdd, GroupEventTypeMemberRemove, GroupEventTypeMemberLeave, GroupEventTypeTitleChange, GroupEventTypeKeyRotate:
+	case GroupEventTypeMemberAdd, GroupEventTypeMemberRemove, GroupEventTypeMemberLeave, GroupEventTypeTitleChange, GroupEventTypeProfileChange, GroupEventTypeKeyRotate:
 		return true
 	default:
 		return false
@@ -113,6 +116,10 @@ func ValidateGroupEvent(event GroupEvent) error {
 			return ErrInvalidGroupEventPayload
 		}
 	case GroupEventTypeTitleChange:
+		if strings.TrimSpace(event.Title) == "" {
+			return ErrInvalidGroupEventPayload
+		}
+	case GroupEventTypeProfileChange:
 		if strings.TrimSpace(event.Title) == "" {
 			return ErrInvalidGroupEventPayload
 		}
@@ -213,6 +220,11 @@ func ApplyGroupEvent(state *GroupState, event GroupEvent) (bool, error) {
 		state.Members[memberID] = member
 	case GroupEventTypeTitleChange:
 		state.Group.Title = strings.TrimSpace(event.Title)
+		state.Group.UpdatedAt = event.OccurredAt.UTC()
+	case GroupEventTypeProfileChange:
+		state.Group.Title = strings.TrimSpace(event.Title)
+		state.Group.Description = strings.TrimSpace(event.Description)
+		state.Group.Avatar = strings.TrimSpace(event.Avatar)
 		state.Group.UpdatedAt = event.OccurredAt.UTC()
 	case GroupEventTypeKeyRotate:
 		state.LastKeyVersion = event.KeyVersion

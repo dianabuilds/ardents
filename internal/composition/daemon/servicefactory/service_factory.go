@@ -8,5 +8,5 @@ import (
 
 // BuildDaemonService composes daemon-ready service from config path and data dir.
 func BuildDaemonService(configPath, dataDir string) (contracts.DaemonService, error) {
-	return daemonservice.NewServiceForDaemonWithDataDir(wakuconfig.LoadFromPath(configPath), dataDir)
+	return daemonservice.NewServiceForDaemonWithDataDir(wakuconfig.LoadFromPathWithDataDir(configPath, dataDir), dataDir)
 }

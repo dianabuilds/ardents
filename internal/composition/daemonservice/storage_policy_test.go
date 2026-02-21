@@ -215,8 +215,6 @@ func TestEnforceRetentionPoliciesEphemeralPurgesImagesAndKeepsFilesIndependently
 
 func TestEnforceRetentionPoliciesRecordsGCEvictionsByClass(t *testing.T) {
 	t.Parallel()
-	now := time.Now().UTC()
-
 	cfg := waku.DefaultConfig()
 	cfg.Transport = waku.TransportMock
 
@@ -224,13 +222,14 @@ func TestEnforceRetentionPoliciesRecordsGCEvictionsByClass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	if _, err := svc.attachmentStore.Put("old.txt", "text/plain", []byte("old")); err != nil {
+	att, err := svc.attachmentStore.Put("old.txt", "text/plain", []byte("old"))
+	if err != nil {
 		t.Fatalf("put attachment: %v", err)
 	}
 	if _, err := svc.UpdateStoragePolicy("standard", "ephemeral", 1, 0, 1, 0, 0, 0, 0); err != nil {
 		t.Fatalf("update storage policy: %v", err)
 	}
-	svc.enforceRetentionPolicies(now.Add(2 * time.Second))
+	svc.enforceRetentionPolicies(att.CreatedAt.Add(2 * time.Second))
 
 	metrics := svc.GetMetrics()
 	if metrics.GCEvictionCountByClass["file"] < 1 {

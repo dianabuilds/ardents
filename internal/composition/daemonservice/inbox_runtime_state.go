@@ -30,13 +30,6 @@ func (s *Service) snapshotRequestInbox() map[string][]models.Message {
 	return inboxapp.CopyInboxState(s.requestRuntime.Inbox)
 }
 
-func (s *Service) persistRequestInboxLocked() error {
-	if s.requestInboxState == nil {
-		return nil
-	}
-	return s.requestInboxState.Persist(s.requestRuntime.Inbox)
-}
-
 func (s *Service) persistRequestInboxSnapshotLocked(next map[string][]models.Message) error {
 	if s.requestInboxState == nil {
 		return nil

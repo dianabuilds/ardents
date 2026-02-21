@@ -16,6 +16,7 @@ func TestGroupEventTypeParseAndValid(t *testing.T) {
 		{raw: "member_remove", want: GroupEventTypeMemberRemove, ok: true},
 		{raw: "member_leave", want: GroupEventTypeMemberLeave, ok: true},
 		{raw: "title_change", want: GroupEventTypeTitleChange, ok: true},
+		{raw: "profile_change", want: GroupEventTypeProfileChange, ok: true},
 		{raw: "key_rotate", want: GroupEventTypeKeyRotate, ok: true},
 		{raw: "bad", ok: false},
 	}

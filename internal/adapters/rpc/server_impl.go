@@ -356,6 +356,12 @@ func (s *Server) extractRPCToken(r *http.Request) string {
 	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
 		return strings.TrimSpace(auth[len("bearer "):])
 	}
+	if r.Method == http.MethodGet && strings.HasPrefix(path.Clean(r.URL.Path), "/files/") {
+		queryToken := strings.TrimSpace(r.URL.Query().Get("rpc_token"))
+		if queryToken != "" {
+			return queryToken
+		}
+	}
 	return ""
 }
 

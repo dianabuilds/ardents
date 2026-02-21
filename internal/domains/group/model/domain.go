@@ -41,11 +41,13 @@ func NormalizeGroupMemberID(memberID string) (string, error) {
 
 // Group is a domain-level aggregate for group chat metadata.
 type Group struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	CreatedBy string    `json:"created_by"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	Avatar      string    `json:"avatar,omitempty"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // GroupMember describes member role and lifecycle state inside a group.

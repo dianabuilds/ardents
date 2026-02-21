@@ -20,25 +20,41 @@ const (
 var runtimeStatusPollInterval = 1 * time.Second
 
 type Config struct {
-	Transport           string        `yaml:"transport"`
-	Port                int           `yaml:"port"`
-	AdvertiseAddress    string        `yaml:"advertiseAddress"`
-	EnableRelay         bool          `yaml:"enableRelay"`
-	EnableStore         bool          `yaml:"enableStore"`
-	EnableFilter        bool          `yaml:"enableFilter"`
-	EnableLightPush     bool          `yaml:"enableLightPush"`
-	BootstrapNodes      []string      `yaml:"bootstrapNodes"`
-	FailoverV1          bool          `yaml:"failoverV1"`
-	MinPeers            int           `yaml:"minPeers"`
-	StoreQueryFanout    int           `yaml:"storeQueryFanout"`
-	ReconnectInterval   time.Duration `yaml:"reconnectInterval"`
-	ReconnectBackoffMax time.Duration `yaml:"reconnectBackoffMax"`
+	Transport                  string        `yaml:"transport"`
+	Port                       int           `yaml:"port"`
+	AdvertiseAddress           string        `yaml:"advertiseAddress"`
+	EnableRelay                bool          `yaml:"enableRelay"`
+	EnableStore                bool          `yaml:"enableStore"`
+	EnableFilter               bool          `yaml:"enableFilter"`
+	EnableLightPush            bool          `yaml:"enableLightPush"`
+	BootstrapNodes             []string      `yaml:"bootstrapNodes"`
+	FailoverV1                 bool          `yaml:"failoverV1"`
+	MinPeers                   int           `yaml:"minPeers"`
+	StoreQueryFanout           int           `yaml:"storeQueryFanout"`
+	ReconnectInterval          time.Duration `yaml:"reconnectInterval"`
+	ReconnectBackoffMax        time.Duration `yaml:"reconnectBackoffMax"`
+	ManifestRefreshInterval    time.Duration `yaml:"manifestRefreshInterval"`
+	ManifestStaleWindow        time.Duration `yaml:"manifestStaleWindow"`
+	ManifestRefreshTimeout     time.Duration `yaml:"manifestRefreshTimeout"`
+	ManifestBackoffBase        time.Duration `yaml:"manifestBackoffBase"`
+	ManifestBackoffMax         time.Duration `yaml:"manifestBackoffMax"`
+	ManifestBackoffFactor      float64       `yaml:"manifestBackoffFactor"`
+	ManifestBackoffJitterRatio float64       `yaml:"manifestBackoffJitterRatio"`
+	BootstrapSource            string        `yaml:"-"`
+	BootstrapManifestVersion   int           `yaml:"-"`
+	BootstrapManifestKeyID     string        `yaml:"-"`
+	BootstrapManifestPath      string        `yaml:"-"`
+	BootstrapTrustBundlePath   string        `yaml:"-"`
+	BootstrapCachePath         string        `yaml:"-"`
 }
 
 type Status struct {
-	State     string
-	PeerCount int
-	LastSync  time.Time
+	State                    string
+	PeerCount                int
+	LastSync                 time.Time
+	BootstrapSource          string
+	BootstrapManifestVersion int
+	BootstrapManifestKeyID   string
 }
 
 type Node struct {
@@ -59,6 +75,7 @@ type goWakuBackend interface {
 	Stop()
 	PeerCount() int
 	NetworkMetrics() map[string]int
+	ApplyConfig(cfg Config)
 	SetIdentity(identityID string)
 	ListenAddresses() []string
 	SubscribePrivate(handler func(PrivateMessage)) error
@@ -68,18 +85,25 @@ type goWakuBackend interface {
 
 func DefaultConfig() Config {
 	return Config{
-		Transport:           TransportMock,
-		Port:                60000,
-		EnableRelay:         true,
-		EnableStore:         true,
-		EnableFilter:        true,
-		EnableLightPush:     true,
-		BootstrapNodes:      nil,
-		FailoverV1:          true,
-		MinPeers:            2,
-		StoreQueryFanout:    3,
-		ReconnectInterval:   1 * time.Second,
-		ReconnectBackoffMax: 30 * time.Second,
+		Transport:                  TransportMock,
+		Port:                       60000,
+		EnableRelay:                true,
+		EnableStore:                true,
+		EnableFilter:               true,
+		EnableLightPush:            true,
+		BootstrapNodes:             nil,
+		FailoverV1:                 true,
+		MinPeers:                   2,
+		StoreQueryFanout:           3,
+		ReconnectInterval:          1 * time.Second,
+		ReconnectBackoffMax:        30 * time.Second,
+		ManifestRefreshInterval:    60 * time.Second,
+		ManifestStaleWindow:        5 * time.Minute,
+		ManifestRefreshTimeout:     5 * time.Second,
+		ManifestBackoffBase:        1 * time.Second,
+		ManifestBackoffMax:         30 * time.Second,
+		ManifestBackoffFactor:      2.0,
+		ManifestBackoffJitterRatio: 0.2,
 	}
 }
 
@@ -88,8 +112,9 @@ func NewNode(cfg Config) *Node {
 	return &Node{
 		cfg: cfg,
 		status: Status{
-			State:     StateDisconnected,
-			PeerCount: 0,
+			State:           StateDisconnected,
+			PeerCount:       0,
+			BootstrapSource: cfg.BootstrapSource,
 		},
 	}
 }
@@ -110,6 +135,32 @@ func normalizeConfig(cfg Config) Config {
 	}
 	if cfg.ReconnectBackoffMax < cfg.ReconnectInterval {
 		cfg.ReconnectBackoffMax = cfg.ReconnectInterval
+	}
+	if cfg.ManifestRefreshInterval <= 0 {
+		cfg.ManifestRefreshInterval = def.ManifestRefreshInterval
+	}
+	if cfg.ManifestStaleWindow <= 0 {
+		cfg.ManifestStaleWindow = def.ManifestStaleWindow
+	}
+	if cfg.ManifestRefreshTimeout <= 0 {
+		cfg.ManifestRefreshTimeout = def.ManifestRefreshTimeout
+	}
+	if cfg.ManifestBackoffBase <= 0 {
+		cfg.ManifestBackoffBase = def.ManifestBackoffBase
+	}
+	if cfg.ManifestBackoffMax <= 0 {
+		cfg.ManifestBackoffMax = def.ManifestBackoffMax
+	}
+	if cfg.ManifestBackoffMax < cfg.ManifestBackoffBase {
+		cfg.ManifestBackoffMax = cfg.ManifestBackoffBase
+	}
+	if cfg.ManifestBackoffFactor < 1 {
+		cfg.ManifestBackoffFactor = def.ManifestBackoffFactor
+	}
+	if cfg.ManifestBackoffJitterRatio < 0 {
+		cfg.ManifestBackoffJitterRatio = 0
+	} else if cfg.ManifestBackoffJitterRatio > 1 {
+		cfg.ManifestBackoffJitterRatio = 1
 	}
 	if cfg.MinPeers < 0 {
 		cfg.MinPeers = 0
@@ -192,6 +243,11 @@ func (n *Node) Status() Status {
 	if n.gw != nil {
 		s.PeerCount = n.gw.PeerCount()
 	}
+	if s.BootstrapSource == "" {
+		s.BootstrapSource = n.cfg.BootstrapSource
+	}
+	s.BootstrapManifestVersion = n.cfg.BootstrapManifestVersion
+	s.BootstrapManifestKeyID = n.cfg.BootstrapManifestKeyID
 	return s
 }
 
@@ -201,6 +257,29 @@ func (n *Node) SetIdentity(identityID string) {
 	n.selfID = identityID
 	if n.gw != nil {
 		n.gw.SetIdentity(identityID)
+	}
+}
+
+func (n *Node) ApplyBootstrapConfig(cfg Config) {
+	cfg = normalizeConfig(cfg)
+
+	n.mu.Lock()
+	n.cfg.BootstrapNodes = append([]string(nil), cfg.BootstrapNodes...)
+	n.cfg.MinPeers = cfg.MinPeers
+	n.cfg.ReconnectInterval = cfg.ReconnectInterval
+	n.cfg.ReconnectBackoffMax = cfg.ReconnectBackoffMax
+	n.cfg.BootstrapSource = cfg.BootstrapSource
+	n.cfg.BootstrapManifestVersion = cfg.BootstrapManifestVersion
+	n.cfg.BootstrapManifestKeyID = cfg.BootstrapManifestKeyID
+	n.status.BootstrapSource = cfg.BootstrapSource
+	n.status.BootstrapManifestVersion = cfg.BootstrapManifestVersion
+	n.status.BootstrapManifestKeyID = cfg.BootstrapManifestKeyID
+	gw := n.gw
+	nodeCfg := n.cfg
+	n.mu.Unlock()
+
+	if gw != nil {
+		gw.ApplyConfig(nodeCfg)
 	}
 }
 

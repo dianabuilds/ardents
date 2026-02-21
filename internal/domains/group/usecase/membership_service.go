@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -205,6 +206,118 @@ func (s *MembershipService) LeaveGroup(groupID, actorID string, now time.Time, a
 		return false, GroupEvent{}, err
 	}
 	return true, event, nil
+}
+
+func (s *MembershipService) UpdateGroupTitle(groupID, actorID, title string, now time.Time, abuse *AbuseProtection) (Group, GroupEvent, error) {
+	groupID, err := NormalizeGroupID(groupID)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
+	}
+	actorID, err = NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
+	}
+	if abuse != nil && !abuse.AllowMembership(actorID, now) {
+		return Group{}, GroupEvent{}, ErrGroupRateLimitExceeded
+	}
+	state, err := LoadStateForActor(s.States, groupID, actorID, true)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
+	}
+	return s.UpdateGroupProfile(groupID, actorID, title, state.Group.Description, state.Group.Avatar, now, nil)
+}
+
+func (s *MembershipService) UpdateGroupProfile(
+	groupID,
+	actorID,
+	title,
+	description,
+	avatar string,
+	now time.Time,
+	abuse *AbuseProtection,
+) (Group, GroupEvent, error) {
+	groupID, err := NormalizeGroupID(groupID)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
+	}
+	actorID, err = NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
+	}
+	title, err = NormalizeGroupTitle(title)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
+	}
+	description = strings.TrimSpace(description)
+	avatar = strings.TrimSpace(avatar)
+	if abuse != nil && !abuse.AllowMembership(actorID, now) {
+		return Group{}, GroupEvent{}, ErrGroupRateLimitExceeded
+	}
+	state, err := LoadStateForActor(s.States, groupID, actorID, true)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
+	}
+	actor := state.Members[actorID]
+	if !actor.CanManageMembers() {
+		return Group{}, GroupEvent{}, ErrGroupPermissionDenied
+	}
+	if state.Group.Title == title && state.Group.Description == description && state.Group.Avatar == avatar {
+		return state.Group, GroupEvent{}, nil
+	}
+	event := GroupEvent{
+		ID:          s.generateEventID(),
+		GroupID:     groupID,
+		Version:     state.Version + 1,
+		Type:        GroupEventTypeProfileChange,
+		ActorID:     actorID,
+		OccurredAt:  now,
+		Title:       title,
+		Description: description,
+		Avatar:      avatar,
+	}
+	next, err := s.applyEvent(state, event)
+	if err != nil {
+		return Group{}, GroupEvent{}, err
+	}
+	return next.Group, event, nil
+}
+
+func (s *MembershipService) DeleteGroup(groupID, actorID string, now time.Time, abuse *AbuseProtection) (bool, error) {
+	groupID, err := NormalizeGroupID(groupID)
+	if err != nil {
+		return false, err
+	}
+	actorID, err = NormalizeGroupMemberID(actorID)
+	if err != nil {
+		return false, err
+	}
+	if abuse != nil && !abuse.AllowMembership(actorID, now) {
+		return false, ErrGroupRateLimitExceeded
+	}
+	state, err := LoadStateForActor(s.States, groupID, actorID, true)
+	if err != nil {
+		return false, err
+	}
+	actor := state.Members[actorID]
+	if !actor.IsOwner() {
+		return false, ErrGroupPermissionDenied
+	}
+	previousState, hadState := s.States[groupID]
+	previousLog, hadLog := s.EventLog[groupID]
+	delete(s.States, groupID)
+	delete(s.EventLog, groupID)
+	if s.Persist != nil {
+		if err := s.Persist(s.States, s.EventLog); err != nil {
+			if hadState {
+				s.States[groupID] = previousState
+			}
+			if hadLog {
+				s.EventLog[groupID] = previousLog
+			}
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (s *MembershipService) AcceptGroupInvite(groupID, actorID string, now time.Time, abuse *AbuseProtection) (bool, GroupEvent, error) {

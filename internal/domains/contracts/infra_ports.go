@@ -39,6 +39,8 @@ type MessageRepository interface {
 }
 
 type AttachmentRepository = contractports.AttachmentRepository
+type AccountProfile = contractports.AccountProfile
+type AccountAPI = contractports.AccountAPI
 
 type TransportNode interface {
 	Start(ctx context.Context) error

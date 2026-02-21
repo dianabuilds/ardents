@@ -22,6 +22,9 @@ type channelMockService struct {
 	createGroupFn              func(title string) (groupdomain.Group, error)
 	getGroupFn                 func(groupID string) (groupdomain.Group, error)
 	listGroupsFn               func() ([]groupdomain.Group, error)
+	updateGroupTitleFn         func(groupID, title string) (groupdomain.Group, error)
+	updateGroupProfileFn       func(groupID, title, description, avatar string) (groupdomain.Group, error)
+	deleteGroupFn              func(groupID string) (bool, error)
 	listMembersFn              func(groupID string) ([]groupdomain.GroupMember, error)
 	sendGroupMessageFn         func(groupID, content string) (groupdomain.GroupMessageFanoutResult, error)
 	sendGroupMessageInThreadFn func(groupID, content, threadID string) (groupdomain.GroupMessageFanoutResult, error)
@@ -77,6 +80,9 @@ type channelMockService struct {
 	completeNodeBindingFn        func(linkCode, nodeID, nodePublicKeyBase64, nodeSignatureBase64 string, allowRebind bool) (models.NodeBindingRecord, error)
 	getNodeBindingFn             func() (models.NodeBindingRecord, bool, error)
 	unbindNodeFn                 func(nodeID string, confirm bool) (bool, error)
+	listAccountsFn               func() ([]contracts.AccountProfile, error)
+	getCurrentAccountFn          func() (contracts.AccountProfile, error)
+	switchAccountFn              func(accountID string) (models.Identity, error)
 }
 
 func (m *channelMockService) Logout() error { return nil }
@@ -108,6 +114,24 @@ func (m *channelMockService) ImportIdentity(_, _ string) (models.Identity, error
 func (m *channelMockService) ValidateMnemonic(_ string) bool { return true }
 func (m *channelMockService) ChangePassword(_, _ string) error {
 	return nil
+}
+func (m *channelMockService) ListAccounts() ([]contracts.AccountProfile, error) {
+	if m.listAccountsFn != nil {
+		return m.listAccountsFn()
+	}
+	return nil, nil
+}
+func (m *channelMockService) GetCurrentAccount() (contracts.AccountProfile, error) {
+	if m.getCurrentAccountFn != nil {
+		return m.getCurrentAccountFn()
+	}
+	return contracts.AccountProfile{}, nil
+}
+func (m *channelMockService) SwitchAccount(accountID string) (models.Identity, error) {
+	if m.switchAccountFn != nil {
+		return m.switchAccountFn(accountID)
+	}
+	return models.Identity{}, nil
 }
 func (m *channelMockService) AddContactCard(_ models.ContactCard) error { return nil }
 func (m *channelMockService) VerifyContactCard(_ models.ContactCard) (bool, error) {
@@ -300,6 +324,24 @@ func (m *channelMockService) ListGroups() ([]groupdomain.Group, error) {
 		return m.listGroupsFn()
 	}
 	return nil, nil
+}
+func (m *channelMockService) UpdateGroupTitle(groupID, title string) (groupdomain.Group, error) {
+	if m.updateGroupTitleFn != nil {
+		return m.updateGroupTitleFn(groupID, title)
+	}
+	return groupdomain.Group{ID: groupID, Title: title}, nil
+}
+func (m *channelMockService) UpdateGroupProfile(groupID, title, description, avatar string) (groupdomain.Group, error) {
+	if m.updateGroupProfileFn != nil {
+		return m.updateGroupProfileFn(groupID, title, description, avatar)
+	}
+	return groupdomain.Group{ID: groupID, Title: title, Description: description, Avatar: avatar}, nil
+}
+func (m *channelMockService) DeleteGroup(groupID string) (bool, error) {
+	if m.deleteGroupFn != nil {
+		return m.deleteGroupFn(groupID)
+	}
+	return true, nil
 }
 func (m *channelMockService) ListGroupMembers(groupID string) ([]groupdomain.GroupMember, error) {
 	if m.listMembersFn != nil {
@@ -1440,5 +1482,58 @@ func TestRPCIdempotencyKeyRejectsPayloadMismatch(t *testing.T) {
 	}
 	if createCalls != 1 {
 		t.Fatalf("expected createGroup to be called once, got %d", createCalls)
+	}
+}
+
+func TestRPCAccountListDispatchesToService(t *testing.T) {
+	svc := &channelMockService{
+		listAccountsFn: func() ([]contracts.AccountProfile, error) {
+			return []contracts.AccountProfile{
+				{ID: "legacy", Active: false},
+				{ID: "acct_1", Active: true},
+			}, nil
+		},
+	}
+	s := newServerWithService(DefaultRPCAddr, svc, "", false)
+
+	result, rpcErr := s.dispatchRPC("account.list", nil)
+	if rpcErr != nil {
+		t.Fatalf("unexpected rpc error: %+v", rpcErr)
+	}
+	accounts, ok := result.([]contracts.AccountProfile)
+	if !ok {
+		t.Fatalf("unexpected result type: %#v", result)
+	}
+	if len(accounts) != 2 || !accounts[1].Active || accounts[1].ID != "acct_1" {
+		t.Fatalf("unexpected accounts payload: %#v", accounts)
+	}
+}
+
+func TestRPCAccountSwitchReturnsIdentityPayload(t *testing.T) {
+	svc := &channelMockService{
+		switchAccountFn: func(accountID string) (models.Identity, error) {
+			if accountID != "acct_2" {
+				t.Fatalf("unexpected account id: %q", accountID)
+			}
+			return models.Identity{ID: "aim1new"}, nil
+		},
+	}
+	s := newServerWithService(DefaultRPCAddr, svc, "", false)
+
+	params, _ := json.Marshal([]string{"acct_2"})
+	result, rpcErr := s.dispatchRPC("account.switch", params)
+	if rpcErr != nil {
+		t.Fatalf("unexpected rpc error: %+v", rpcErr)
+	}
+	payload, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected result type: %#v", result)
+	}
+	identity, ok := payload["identity"].(models.Identity)
+	if !ok {
+		t.Fatalf("unexpected identity payload: %#v", payload)
+	}
+	if identity.ID != "aim1new" {
+		t.Fatalf("unexpected identity id: %q", identity.ID)
 	}
 }

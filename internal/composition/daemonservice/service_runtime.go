@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"aim-chat/go-backend/internal/bootstrap/bootstrapmanager"
 	"aim-chat/go-backend/internal/domains/contracts"
 	messagingapp "aim-chat/go-backend/internal/domains/messaging"
 	runtimeapp "aim-chat/go-backend/internal/platform/runtime"
@@ -45,6 +46,7 @@ func (s *Service) StartNetworking(ctx context.Context) error {
 		networkCancel()
 		return nil
 	}
+	s.startBootstrapRefreshLoop(networkCtx)
 	go func() {
 		defer s.runtime.RetryLoopDone()
 		s.runRetryLoop(retryCtx)
@@ -80,6 +82,7 @@ func (s *Service) StopNetworking(ctx context.Context) error {
 		retryCancel()
 		s.runtime.WaitRetryLoop()
 	}
+	s.stopBootstrapRefreshLoop()
 	if networkCancel != nil {
 		networkCancel()
 	}
@@ -118,6 +121,55 @@ func (s *Service) notifyNetworkStatus(force bool) {
 	shouldNotify := s.runtime.UpdateLastNetworkStatus(current, force)
 	if shouldNotify {
 		s.notify("notify.network", current)
+	}
+}
+
+func (s *Service) startBootstrapRefreshLoop(ctx context.Context) {
+	if s.wakuCfg == nil {
+		return
+	}
+	if s.wakuCfg.BootstrapManifestPath == "" || s.wakuCfg.BootstrapTrustBundlePath == "" {
+		return
+	}
+	if s.bootstrapCancel != nil {
+		return
+	}
+	baked := bootstrapmanager.BootstrapSet{
+		Source:         bootstrapmanager.SourceBaked,
+		BootstrapNodes: append([]string(nil), s.wakuCfg.BootstrapNodes...),
+		MinPeers:       s.wakuCfg.MinPeers,
+		ReconnectPolicy: bootstrapmanager.ReconnectPolicy{
+			BaseIntervalMS: int(s.wakuCfg.ReconnectInterval / time.Millisecond),
+			MaxIntervalMS:  int(s.wakuCfg.ReconnectBackoffMax / time.Millisecond),
+			JitterRatio:    0.2,
+		},
+	}
+	s.bootstrapManager = bootstrapmanager.New(
+		s.wakuCfg.BootstrapManifestPath,
+		s.wakuCfg.BootstrapTrustBundlePath,
+		s.wakuCfg.BootstrapCachePath,
+		baked,
+	)
+	s.bootstrapRefresher = bootstrapmanager.NewRefresher(s.bootstrapManager, s.wakuCfg, func(cfg waku.Config) {
+		if applier, ok := s.wakuNode.(interface{ ApplyBootstrapConfig(waku.Config) }); ok {
+			applier.ApplyBootstrapConfig(cfg)
+		}
+	})
+	refreshCtx, cancel := context.WithCancel(ctx)
+	s.bootstrapCancel = cancel
+	s.bootstrapWG.Add(1)
+	go func() {
+		defer s.bootstrapWG.Done()
+		s.bootstrapRefresher.Run(refreshCtx)
+	}()
+}
+
+func (s *Service) stopBootstrapRefreshLoop() {
+	cancel := s.bootstrapCancel
+	s.bootstrapCancel = nil
+	if cancel != nil {
+		cancel()
+		s.bootstrapWG.Wait()
 	}
 }
 
@@ -179,9 +231,12 @@ func (s *Service) networkContext(category string) (context.Context, error) {
 func (s *Service) GetNetworkStatus() models.NetworkStatus {
 	status := s.wakuNode.Status()
 	return models.NetworkStatus{
-		Status:    status.State,
-		PeerCount: status.PeerCount,
-		LastSync:  status.LastSync,
+		Status:                   status.State,
+		PeerCount:                status.PeerCount,
+		LastSync:                 status.LastSync,
+		BootstrapSource:          status.BootstrapSource,
+		BootstrapManifestVersion: status.BootstrapManifestVersion,
+		BootstrapManifestKeyID:   status.BootstrapManifestKeyID,
 	}
 }
 

@@ -53,9 +53,12 @@ type Settings struct {
 }
 
 type NetworkStatus struct {
-	Status    string    `json:"status"`
-	PeerCount int       `json:"peer_count"`
-	LastSync  time.Time `json:"last_sync"`
+	Status                   string    `json:"status"`
+	PeerCount                int       `json:"peer_count"`
+	LastSync                 time.Time `json:"last_sync"`
+	BootstrapSource          string    `json:"bootstrap_source,omitempty"`
+	BootstrapManifestVersion int       `json:"bootstrap_manifest_version,omitempty"`
+	BootstrapManifestKeyID   string    `json:"bootstrap_manifest_key_id,omitempty"`
 }
 
 type SessionState struct {

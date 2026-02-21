@@ -69,11 +69,12 @@ type GroupEventType = groupmodel.GroupEventType
 
 //goland:noinspection GoNameStartsWithPackageName
 const (
-	GroupEventTypeMemberAdd    = groupmodel.GroupEventTypeMemberAdd
-	GroupEventTypeMemberRemove = groupmodel.GroupEventTypeMemberRemove
-	GroupEventTypeMemberLeave  = groupmodel.GroupEventTypeMemberLeave
-	GroupEventTypeTitleChange  = groupmodel.GroupEventTypeTitleChange
-	GroupEventTypeKeyRotate    = groupmodel.GroupEventTypeKeyRotate
+	GroupEventTypeMemberAdd     = groupmodel.GroupEventTypeMemberAdd
+	GroupEventTypeMemberRemove  = groupmodel.GroupEventTypeMemberRemove
+	GroupEventTypeMemberLeave   = groupmodel.GroupEventTypeMemberLeave
+	GroupEventTypeTitleChange   = groupmodel.GroupEventTypeTitleChange
+	GroupEventTypeProfileChange = groupmodel.GroupEventTypeProfileChange
+	GroupEventTypeKeyRotate     = groupmodel.GroupEventTypeKeyRotate
 )
 
 //goland:noinspection GoNameStartsWithPackageName

@@ -3,6 +3,8 @@ package rpc
 import (
 	"encoding/json"
 	"errors"
+
+	"aim-chat/go-backend/internal/domains/contracts"
 )
 
 func (s *Server) dispatchIdentityRPC(method string, rawParams json.RawMessage) (any, *rpcError, bool) {
@@ -88,6 +90,37 @@ func (s *Server) dispatchIdentityRPC(method string, rawParams json.RawMessage) (
 				return nil, err
 			}
 			return map[string]bool{"changed": true}, nil
+		})
+		return result, rpcErr, true
+	case "account.list":
+		result, rpcErr := callWithoutParams(-32040, func() (any, error) {
+			accountSvc, ok := s.service.(contracts.AccountAPI)
+			if !ok {
+				return nil, errors.New("account profiles are not supported")
+			}
+			return accountSvc.ListAccounts()
+		})
+		return result, rpcErr, true
+	case "account.current":
+		result, rpcErr := callWithoutParams(-32041, func() (any, error) {
+			accountSvc, ok := s.service.(contracts.AccountAPI)
+			if !ok {
+				return nil, errors.New("account profiles are not supported")
+			}
+			return accountSvc.GetCurrentAccount()
+		})
+		return result, rpcErr, true
+	case "account.switch":
+		result, rpcErr := callWithSingleStringParam(rawParams, -32042, func(accountID string) (any, error) {
+			accountSvc, ok := s.service.(contracts.AccountAPI)
+			if !ok {
+				return nil, errors.New("account profiles are not supported")
+			}
+			identity, err := accountSvc.SwitchAccount(accountID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"identity": identity}, nil
 		})
 		return result, rpcErr, true
 	default:

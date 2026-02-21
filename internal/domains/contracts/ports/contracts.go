@@ -55,6 +55,9 @@ type GroupAPI interface {
 	CreateGroup(title string) (groupdomain.Group, error)
 	GetGroup(groupID string) (groupdomain.Group, error)
 	ListGroups() ([]groupdomain.Group, error)
+	UpdateGroupTitle(groupID, title string) (groupdomain.Group, error)
+	UpdateGroupProfile(groupID, title, description, avatar string) (groupdomain.Group, error)
+	DeleteGroup(groupID string) (bool, error)
 	ListGroupMembers(groupID string) ([]groupdomain.GroupMember, error)
 	LeaveGroup(groupID string) (bool, error)
 	InviteToGroup(groupID, memberID string) (groupdomain.GroupMember, error)
@@ -93,6 +96,18 @@ type PrivacyAPI interface {
 type NetworkAPI interface {
 	GetNetworkStatus() models.NetworkStatus
 	GetMetrics() models.MetricsSnapshot
+}
+
+type AccountProfile struct {
+	ID     string `json:"id"`
+	Active bool   `json:"active"`
+}
+
+// AccountAPI is an optional multi-profile account contract.
+type AccountAPI interface {
+	ListAccounts() ([]AccountProfile, error)
+	GetCurrentAccount() (AccountProfile, error)
+	SwitchAccount(accountID string) (models.Identity, error)
 }
 
 // CoreAPI is a compatibility aggregate for transport-neutral contracts.

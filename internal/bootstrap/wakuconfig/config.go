@@ -1,7 +1,10 @@
 package wakuconfig
 
 import (
+	"aim-chat/go-backend/internal/bootstrap/bootstrapmanager"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,22 +19,33 @@ type DaemonConfig struct {
 }
 
 type DaemonNetworkConfig struct {
-	Transport           string        `yaml:"transport"`
-	Port                int           `yaml:"port"`
-	AdvertiseAddress    string        `yaml:"advertiseAddress"`
-	EnableRelay         *bool         `yaml:"enableRelay"`
-	EnableStore         *bool         `yaml:"enableStore"`
-	EnableFilter        *bool         `yaml:"enableFilter"`
-	EnableLightPush     *bool         `yaml:"enableLightPush"`
-	BootstrapNodes      []string      `yaml:"bootstrapNodes"`
-	FailoverV1          *bool         `yaml:"failoverV1"`
-	MinPeers            int           `yaml:"minPeers"`
-	StoreQueryFanout    int           `yaml:"storeQueryFanout"`
-	ReconnectInterval   time.Duration `yaml:"reconnectInterval"`
-	ReconnectBackoffMax time.Duration `yaml:"reconnectBackoffMax"`
+	Transport                  string        `yaml:"transport"`
+	Port                       int           `yaml:"port"`
+	AdvertiseAddress           string        `yaml:"advertiseAddress"`
+	EnableRelay                *bool         `yaml:"enableRelay"`
+	EnableStore                *bool         `yaml:"enableStore"`
+	EnableFilter               *bool         `yaml:"enableFilter"`
+	EnableLightPush            *bool         `yaml:"enableLightPush"`
+	BootstrapNodes             []string      `yaml:"bootstrapNodes"`
+	FailoverV1                 *bool         `yaml:"failoverV1"`
+	MinPeers                   int           `yaml:"minPeers"`
+	StoreQueryFanout           int           `yaml:"storeQueryFanout"`
+	ReconnectInterval          time.Duration `yaml:"reconnectInterval"`
+	ReconnectBackoffMax        time.Duration `yaml:"reconnectBackoffMax"`
+	ManifestRefreshInterval    time.Duration `yaml:"manifestRefreshInterval"`
+	ManifestStaleWindow        time.Duration `yaml:"manifestStaleWindow"`
+	ManifestRefreshTimeout     time.Duration `yaml:"manifestRefreshTimeout"`
+	ManifestBackoffBase        time.Duration `yaml:"manifestBackoffBase"`
+	ManifestBackoffMax         time.Duration `yaml:"manifestBackoffMax"`
+	ManifestBackoffFactor      float64       `yaml:"manifestBackoffFactor"`
+	ManifestBackoffJitterRatio float64       `yaml:"manifestBackoffJitterRatio"`
 }
 
-func LoadFromPath(configPath string) waku.Config {
+//func LoadFromPath(configPath string) waku.Config {
+//	return LoadFromPathWithDataDir(configPath, "")
+//}
+
+func LoadFromPathWithDataDir(configPath, dataDir string) waku.Config {
 	cfg := waku.DefaultConfig()
 
 	candidates := make([]string, 0, 2)
@@ -58,10 +72,12 @@ func LoadFromPath(configPath string) waku.Config {
 		merged := cfg
 		Merge(&merged, parsed.Network)
 		ApplyEnvOverrides(&merged)
+		applyBootstrapManager(&merged, dataDir)
 		return merged
 	}
 
 	ApplyEnvOverrides(&cfg)
+	applyBootstrapManager(&cfg, dataDir)
 	return cfg
 }
 
@@ -105,6 +121,27 @@ func Merge(dst *waku.Config, src DaemonNetworkConfig) {
 	if src.ReconnectBackoffMax != 0 {
 		dst.ReconnectBackoffMax = src.ReconnectBackoffMax
 	}
+	if src.ManifestRefreshInterval != 0 {
+		dst.ManifestRefreshInterval = src.ManifestRefreshInterval
+	}
+	if src.ManifestStaleWindow != 0 {
+		dst.ManifestStaleWindow = src.ManifestStaleWindow
+	}
+	if src.ManifestRefreshTimeout != 0 {
+		dst.ManifestRefreshTimeout = src.ManifestRefreshTimeout
+	}
+	if src.ManifestBackoffBase != 0 {
+		dst.ManifestBackoffBase = src.ManifestBackoffBase
+	}
+	if src.ManifestBackoffMax != 0 {
+		dst.ManifestBackoffMax = src.ManifestBackoffMax
+	}
+	if src.ManifestBackoffFactor != 0 {
+		dst.ManifestBackoffFactor = src.ManifestBackoffFactor
+	}
+	if src.ManifestBackoffJitterRatio != 0 {
+		dst.ManifestBackoffJitterRatio = src.ManifestBackoffJitterRatio
+	}
 }
 
 func ApplyEnvOverrides(cfg *waku.Config) {
@@ -113,12 +150,108 @@ func ApplyEnvOverrides(cfg *waku.Config) {
 	}
 
 	raw := strings.TrimSpace(os.Getenv("AIM_NETWORK_FAILOVER_V1"))
-	if raw == "" {
+	if raw != "" {
+		if v, err := strconv.ParseBool(raw); err == nil {
+			cfg.FailoverV1 = v
+		}
+	}
+
+	if refreshInterval := strings.TrimSpace(os.Getenv("AIM_MANIFEST_REFRESH_INTERVAL")); refreshInterval != "" {
+		if d, err := time.ParseDuration(refreshInterval); err == nil {
+			cfg.ManifestRefreshInterval = d
+		}
+	}
+	if staleWindow := strings.TrimSpace(os.Getenv("AIM_MANIFEST_STALE_WINDOW")); staleWindow != "" {
+		if d, err := time.ParseDuration(staleWindow); err == nil {
+			cfg.ManifestStaleWindow = d
+		}
+	}
+	if refreshTimeout := strings.TrimSpace(os.Getenv("AIM_MANIFEST_REFRESH_TIMEOUT")); refreshTimeout != "" {
+		if d, err := time.ParseDuration(refreshTimeout); err == nil {
+			cfg.ManifestRefreshTimeout = d
+		}
+	}
+	if backoffBase := strings.TrimSpace(os.Getenv("AIM_MANIFEST_BACKOFF_BASE")); backoffBase != "" {
+		if d, err := time.ParseDuration(backoffBase); err == nil {
+			cfg.ManifestBackoffBase = d
+		}
+	}
+	if backoffMax := strings.TrimSpace(os.Getenv("AIM_MANIFEST_BACKOFF_MAX")); backoffMax != "" {
+		if d, err := time.ParseDuration(backoffMax); err == nil {
+			cfg.ManifestBackoffMax = d
+		}
+	}
+	if backoffFactor := strings.TrimSpace(os.Getenv("AIM_MANIFEST_BACKOFF_FACTOR")); backoffFactor != "" {
+		if v, err := strconv.ParseFloat(backoffFactor, 64); err == nil {
+			cfg.ManifestBackoffFactor = v
+		}
+	}
+	if backoffJitter := strings.TrimSpace(os.Getenv("AIM_MANIFEST_BACKOFF_JITTER_RATIO")); backoffJitter != "" {
+		if v, err := strconv.ParseFloat(backoffJitter, 64); err == nil {
+			cfg.ManifestBackoffJitterRatio = v
+		}
+	}
+}
+
+func applyBootstrapManager(cfg *waku.Config, dataDir string) {
+	baked := bootstrapmanager.BootstrapSet{
+		Source:         bootstrapmanager.SourceBaked,
+		BootstrapNodes: append([]string(nil), cfg.BootstrapNodes...),
+		MinPeers:       cfg.MinPeers,
+		ReconnectPolicy: bootstrapmanager.ReconnectPolicy{
+			BaseIntervalMS: int(cfg.ReconnectInterval / time.Millisecond),
+			MaxIntervalMS:  int(cfg.ReconnectBackoffMax / time.Millisecond),
+			JitterRatio:    0.2,
+		},
+	}
+
+	manifestPath := strings.TrimSpace(os.Getenv("AIM_NETWORK_MANIFEST_PATH"))
+	trustBundlePath := strings.TrimSpace(os.Getenv("AIM_TRUST_BUNDLE_PATH"))
+	cachePath := resolveBootstrapCachePath(dataDir)
+	if override := strings.TrimSpace(os.Getenv("AIM_BOOTSTRAP_CACHE_PATH")); override != "" {
+		cachePath = override
+	}
+
+	manager := bootstrapmanager.New(manifestPath, trustBundlePath, cachePath, baked)
+	cfg.BootstrapManifestPath = manifestPath
+	cfg.BootstrapTrustBundlePath = trustBundlePath
+	cfg.BootstrapCachePath = cachePath
+	load := manager.LoadBootstrapSet()
+	if !load.OK || load.Set == nil {
+		cfg.BootstrapSource = "unavailable"
+		slog.Warn("manifest.verify.rejected",
+			"event_type", "manifest.verify.rejected",
+			"result", "rejected",
+			"reject_code", manager.LastRejectCode(),
+			"reason", manager.LastReason(),
+		)
 		return
 	}
-	v, err := strconv.ParseBool(raw)
-	if err != nil {
+	apply := manager.ApplyBootstrapSet(cfg, *load.Set)
+	if !apply.Applied {
+		cfg.BootstrapSource = "unavailable"
+		slog.Warn("bootstrap.apply.failed",
+			"event_type", "bootstrap.apply",
+			"result", "rejected",
+			"error_code", apply.ErrorCode,
+			"reason", apply.Reason,
+		)
 		return
 	}
-	cfg.FailoverV1 = v
+	if load.Set.Source == bootstrapmanager.SourceManifest && load.Set.ManifestMeta != nil {
+		slog.Info("manifest.verify.accepted",
+			"event_type", "manifest.verify.accepted",
+			"result", "accepted",
+			"manifest_version", load.Set.ManifestMeta.Version,
+			"manifest_key_id", load.Set.ManifestMeta.KeyID,
+		)
+	}
+}
+
+func resolveBootstrapCachePath(dataDir string) string {
+	baseDir := strings.TrimSpace(dataDir)
+	if baseDir == "" {
+		baseDir = "."
+	}
+	return filepath.Join(baseDir, "network", "bootstrap-cache.json")
 }

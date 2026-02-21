@@ -63,6 +63,27 @@ func TestExtractRPCToken_UsesBearerHeader(t *testing.T) {
 	}
 }
 
+func TestExtractRPCToken_UsesFilesQueryTokenWhenHeadersMissing(t *testing.T) {
+	req := httptest.NewRequest("GET", "/files/att1?rpc_token=query-token", nil)
+
+	s := &Server{}
+	got := s.extractRPCToken(req)
+	if got != "query-token" {
+		t.Fatalf("expected query token, got %q", got)
+	}
+}
+
+func TestExtractRPCToken_FilesQueryTokenDoesNotOverrideHeader(t *testing.T) {
+	req := httptest.NewRequest("GET", "/files/att1?rpc_token=query-token", nil)
+	req.Header.Set("X-AIM-RPC-Token", "header-token")
+
+	s := &Server{}
+	got := s.extractRPCToken(req)
+	if got != "header-token" {
+		t.Fatalf("expected header token to win, got %q", got)
+	}
+}
+
 func TestIsAllowedOrigin_LocalhostOnly(t *testing.T) {
 	t.Setenv("AIM_ALLOW_NULL_ORIGIN", "false")
 	cases := []struct {

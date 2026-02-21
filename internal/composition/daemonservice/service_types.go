@@ -1,9 +1,12 @@
 package daemonservice
 
 import (
+	"crypto/ed25519"
 	"log/slog"
 	"sync"
 
+	"aim-chat/go-backend/internal/bootstrap/bootstrapmanager"
+	"aim-chat/go-backend/internal/bootstrap/enrollmenttoken"
 	"aim-chat/go-backend/internal/domains/contracts"
 	groupdomain "aim-chat/go-backend/internal/domains/group"
 	identityapp "aim-chat/go-backend/internal/domains/identity"
@@ -11,6 +14,7 @@ import (
 	messagingapp "aim-chat/go-backend/internal/domains/messaging"
 	privacyapp "aim-chat/go-backend/internal/domains/privacy"
 	runtimeapp "aim-chat/go-backend/internal/platform/runtime"
+	"aim-chat/go-backend/internal/waku"
 	"aim-chat/go-backend/pkg/models"
 )
 
@@ -22,6 +26,9 @@ type groupCore interface {
 	CreateGroup(title string) (groupdomain.Group, error)
 	GetGroup(groupID string) (groupdomain.Group, error)
 	ListGroups() ([]groupdomain.Group, error)
+	UpdateGroupTitle(groupID, title string) (groupdomain.Group, error)
+	UpdateGroupProfile(groupID, title, description, avatar string) (groupdomain.Group, error)
+	DeleteGroup(groupID string) (bool, error)
 	ListGroupMembers(groupID string) ([]groupdomain.GroupMember, error)
 	LeaveGroup(groupID string) (bool, error)
 	InviteToGroup(groupID, memberID string) (groupdomain.GroupMember, error)
@@ -60,28 +67,39 @@ type Service struct {
 	*inboundMessagingCore
 	groupCore
 	inboxCore
-	metrics           *runtimeapp.ServiceMetricsState
-	runtime           *runtimeapp.ServiceRuntime
-	requestRuntime    *inboxapp.RuntimeState
-	groupRuntime      *groupdomain.RuntimeState
-	identityState     *identityapp.StateStore
-	privacyState      *privacyapp.SettingsStore
-	requestInboxState *inboxapp.RequestStore
-	groupStateStore   *groupdomain.SnapshotStore
-	groupAbuse        *groupdomain.AbuseProtection
-	startStopMu       *sync.Mutex
-	metaHardening     *outboundMetadataHardening
-	replicationMu     *sync.RWMutex
-	replicationMode   blobReplicationMode
-	blobFlags         blobFeatureFlags
-	presetMu          *sync.RWMutex
-	nodePreset        blobNodePresetConfig
-	serveLimiter      *bandwidthLimiter
-	fetchLimiter      *bandwidthLimiter
-	blobACLMu         *sync.RWMutex
-	blobACL           blobACLPolicy
-	bindingStore      *nodeBindingStore
-	bindingLinkMu     *sync.Mutex
-	bindingLinks      map[string]pendingNodeBindingLink
-	blobProviders     *blobProviderRegistry
+	metrics            *runtimeapp.ServiceMetricsState
+	runtime            *runtimeapp.ServiceRuntime
+	requestRuntime     *inboxapp.RuntimeState
+	groupRuntime       *groupdomain.RuntimeState
+	identityState      *identityapp.StateStore
+	privacyState       *privacyapp.SettingsStore
+	requestInboxState  *inboxapp.RequestStore
+	groupStateStore    *groupdomain.SnapshotStore
+	groupAbuse         *groupdomain.AbuseProtection
+	startStopMu        *sync.Mutex
+	metaHardening      *outboundMetadataHardening
+	replicationMu      *sync.RWMutex
+	replicationMode    blobReplicationMode
+	blobFlags          blobFeatureFlags
+	presetMu           *sync.RWMutex
+	nodePreset         blobNodePresetConfig
+	serveLimiter       *bandwidthLimiter
+	fetchLimiter       *bandwidthLimiter
+	blobACLMu          *sync.RWMutex
+	blobACL            blobACLPolicy
+	bindingStore       *nodeBindingStore
+	bindingLinkMu      *sync.Mutex
+	bindingLinks       map[string]pendingNodeBindingLink
+	blobProviders      *blobProviderRegistry
+	wakuCfg            *waku.Config
+	bootstrapManager   *bootstrapmanager.Manager
+	bootstrapRefresher *bootstrapmanager.Refresher
+	bootstrapCancel    func()
+	bootstrapWG        sync.WaitGroup
+	dataDir            string
+	storageSecret      string
+	currentProfileID   string
+	profileMu          *sync.Mutex
+	enrollmentStore    *enrollmenttoken.FileStore
+	enrollmentKeys     map[string]ed25519.PublicKey
 }

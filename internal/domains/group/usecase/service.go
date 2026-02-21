@@ -108,6 +108,83 @@ func (s *Service) LeaveGroup(groupID string) (bool, error) {
 	return ok, err
 }
 
+func (s *Service) UpdateGroupTitle(groupID, title string) (Group, error) {
+	var (
+		group Group
+		event GroupEvent
+	)
+	err := s.WithMembership(func(ms *MembershipService) error {
+		var err error
+		group, event, err = ms.UpdateGroupTitle(groupID, s.actorID(), title, s.nowUTC(), s.Abuse)
+		return err
+	})
+	if err != nil {
+		return Group{}, err
+	}
+	if strings.TrimSpace(event.ID) != "" {
+		s.recordAggregate("rename")
+		s.logInfo(
+			"group title updated",
+			"correlation_id", CorrelationID(groupID, event.ID),
+			"group_id", groupID,
+			"actor_id", s.actorID(),
+		)
+	}
+	return group, nil
+}
+
+func (s *Service) UpdateGroupProfile(groupID, title, description, avatar string) (Group, error) {
+	var (
+		group Group
+		event GroupEvent
+	)
+	err := s.WithMembership(func(ms *MembershipService) error {
+		var err error
+		group, event, err = ms.UpdateGroupProfile(groupID, s.actorID(), title, description, avatar, s.nowUTC(), s.Abuse)
+		return err
+	})
+	if err != nil {
+		return Group{}, err
+	}
+	if strings.TrimSpace(event.ID) != "" {
+		s.recordAggregate("profile_update")
+		s.logInfo(
+			"group profile updated",
+			"correlation_id", CorrelationID(groupID, event.ID),
+			"group_id", groupID,
+			"actor_id", s.actorID(),
+		)
+	}
+	return group, nil
+}
+
+func (s *Service) DeleteGroup(groupID string) (bool, error) {
+	var deleted bool
+	err := s.WithMembership(func(ms *MembershipService) error {
+		var err error
+		deleted, err = ms.DeleteGroup(groupID, s.actorID(), s.nowUTC(), s.Abuse)
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	if deleted {
+		s.recordAggregate("delete")
+		s.logInfo(
+			"group deleted",
+			"group_id", groupID,
+			"actor_id", s.actorID(),
+		)
+		if s.Notify != nil {
+			s.Notify("notify.group.deleted", map[string]any{
+				"group_id": groupID,
+				"actor_id": s.actorID(),
+			})
+		}
+	}
+	return deleted, nil
+}
+
 func (s *Service) InviteToGroup(groupID, memberID string) (GroupMember, error) {
 	normalizedMemberID, err := privacydomain.NormalizeIdentityID(memberID)
 	if err != nil {

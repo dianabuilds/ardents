@@ -65,6 +65,8 @@ func newServiceWithOptions(wakuCfg waku.Config, opts contracts.ServiceOptions) (
 		bindingLinkMu:     &sync.Mutex{},
 		bindingLinks:      map[string]pendingNodeBindingLink{},
 		blobProviders:     newBlobProviderRegistry(),
+		wakuCfg:           &wakuCfg,
+		profileMu:         &sync.Mutex{},
 	}
 
 	svc.identityCore = identityapp.NewService(
