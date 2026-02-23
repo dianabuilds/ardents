@@ -12,12 +12,21 @@ import (
 )
 
 const (
-	rpcRateLimitEnabledEnv = "AIM_RPC_RATE_LIMIT_ENABLED"
-	rpcRateLimitRPSEnv     = "AIM_RPC_RATE_LIMIT_RPS"
-	rpcRateLimitBurstEnv   = "AIM_RPC_RATE_LIMIT_BURST"
+	rpcRateLimitEnabledEnv  = "AIM_RPC_RATE_LIMIT_ENABLED"
+	rpcRateLimitRPSEnv      = "AIM_RPC_RATE_LIMIT_RPS"
+	rpcRateLimitBurstEnv    = "AIM_RPC_RATE_LIMIT_BURST"
+	fileRateLimitEnabledEnv = "AIM_FILE_RATE_LIMIT_ENABLED"
+	fileRateLimitRPSEnv     = "AIM_FILE_RATE_LIMIT_RPS"
+	fileRateLimitBurstEnv   = "AIM_FILE_RATE_LIMIT_BURST"
 )
 
 type rpcRateLimitConfig struct {
+	Enabled bool
+	RPS     float64
+	Burst   int
+}
+
+type fileRateLimitConfig struct {
 	Enabled bool
 	RPS     float64
 	Burst   int
@@ -28,33 +37,67 @@ type rpcRateLimiter struct {
 }
 
 func loadRPCRateLimitConfig() rpcRateLimitConfig {
-	cfg := rpcRateLimitConfig{
-		Enabled: true,
-		RPS:     30,
-		Burst:   60,
-	}
-	if env, ok := parseBoolEnv(rpcRateLimitEnabledEnv); ok {
-		cfg.Enabled = env
+	enabled, rps, burst := loadRateLimitConfig(
+		rpcRateLimitEnabledEnv,
+		rpcRateLimitRPSEnv,
+		rpcRateLimitBurstEnv,
+		true,
+		30,
+		60,
+	)
+	return rpcRateLimitConfig{Enabled: enabled, RPS: rps, Burst: burst}
+}
+
+func loadFileRateLimitConfig() fileRateLimitConfig {
+	enabled, rps, burst := loadRateLimitConfig(
+		fileRateLimitEnabledEnv,
+		fileRateLimitRPSEnv,
+		fileRateLimitBurstEnv,
+		true,
+		12,
+		24,
+	)
+	return fileRateLimitConfig{Enabled: enabled, RPS: rps, Burst: burst}
+}
+
+func loadRateLimitConfig(enabledEnv, rpsEnv, burstEnv string, defaultEnabled bool, defaultRPS float64, defaultBurst int) (bool, float64, int) {
+	enabled := defaultEnabled
+	if env, ok := parseBoolEnv(enabledEnv); ok {
+		enabled = env
 	} else {
 		switch strings.ToLower(strings.TrimSpace(os.Getenv("AIM_ENV"))) {
 		case "test", "testing":
-			cfg.Enabled = false
+			enabled = false
 		}
 	}
-	if raw := strings.TrimSpace(os.Getenv(rpcRateLimitRPSEnv)); raw != "" {
+
+	rps := defaultRPS
+	if raw := strings.TrimSpace(os.Getenv(rpsEnv)); raw != "" {
 		if parsed, err := strconv.ParseFloat(raw, 64); err == nil && parsed > 0 {
-			cfg.RPS = parsed
+			rps = parsed
 		}
 	}
-	if raw := strings.TrimSpace(os.Getenv(rpcRateLimitBurstEnv)); raw != "" {
+
+	burst := defaultBurst
+	if raw := strings.TrimSpace(os.Getenv(burstEnv)); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			cfg.Burst = parsed
+			burst = parsed
 		}
 	}
-	return cfg
+
+	return enabled, rps, burst
 }
 
 func newRPCRateLimiter(cfg rpcRateLimitConfig) *rpcRateLimiter {
+	if !cfg.Enabled {
+		return nil
+	}
+	return &rpcRateLimiter{
+		limiter: ratelimiter.New(cfg.RPS, cfg.Burst, 10*time.Minute),
+	}
+}
+
+func newFileRateLimiter(cfg fileRateLimitConfig) *rpcRateLimiter {
 	if !cfg.Enabled {
 		return nil
 	}

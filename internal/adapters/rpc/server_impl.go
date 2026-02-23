@@ -31,6 +31,7 @@ type Server struct {
 	requireRPC    bool
 	groupsEnabled bool
 	rpcLimiter    *rpcRateLimiter
+	fileLimiter   *rpcRateLimiter
 	streams       *rpcStreamLimiter
 	idempotency   *rpcIdempotencyCache
 	idempotencyMu sync.Mutex
@@ -67,6 +68,7 @@ func newServerWithService(rpcAddr string, svc contracts.DaemonService, rpcToken 
 		requireRPC:    requireRPC,
 		groupsEnabled: groupsEnabled(),
 		rpcLimiter:    newRPCRateLimiter(loadRPCRateLimitConfig()),
+		fileLimiter:   newFileRateLimiter(loadFileRateLimitConfig()),
 		streams:       newRPCStreamLimiter(loadRPCStreamLimitConfig()),
 		idempotency:   newRPCIdempotencyCache(),
 	}
@@ -295,6 +297,11 @@ func (s *Server) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !s.fileLimiter.allow(rpcRateLimitKey(r, s.extractRPCToken(r)), time.Now()) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 	if !s.authorizeRPC(w, r) {

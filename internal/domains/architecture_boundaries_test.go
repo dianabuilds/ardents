@@ -17,9 +17,6 @@ func TestArchitecture_DomainPackagesDisallowAdapterCompositionInfraImports(t *te
 		t.Fatal("failed to resolve current test file path")
 	}
 	domainsDir := filepath.Dir(currentFile)
-	allowedLegacyImports := map[string]struct{}{
-		filepath.Join(domainsDir, "identity", "legacy_manager.go") + "|aim-chat/go-backend/internal/identity": {},
-	}
 	forbiddenPrefixes := []string{
 		"aim-chat/go-backend/internal/adapters",
 		"aim-chat/go-backend/internal/composition",
@@ -52,10 +49,6 @@ func TestArchitecture_DomainPackagesDisallowAdapterCompositionInfraImports(t *te
 			for _, prefix := range forbiddenPrefixes {
 				if !hasPrefixImport(importPath, prefix) {
 					continue
-				}
-				allowKey := filepath.Clean(path) + "|" + prefix
-				if _, allowed := allowedLegacyImports[allowKey]; allowed {
-					break
 				}
 				pos := fset.Position(imp.Path.Pos())
 				relPath, relErr := filepath.Rel(domainsDir, path)

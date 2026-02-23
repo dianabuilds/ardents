@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"reflect"
 	"strings"
 
 	"aim-chat/go-backend/internal/securestore"
@@ -50,7 +51,13 @@ func (s *SettingsStore) Bootstrap() (PrivacySettings, error) {
 	if state.Version != 1 {
 		return PrivacySettings{}, errors.New("privacy settings persistence payload is invalid")
 	}
-	return NormalizePrivacySettings(state.Settings), nil
+	normalized := NormalizePrivacySettings(state.Settings)
+	if requiresPrivacySettingsMigration(state.Settings, normalized) {
+		if err := s.Persist(normalized); err != nil {
+			return PrivacySettings{}, err
+		}
+	}
+	return normalized, nil
 }
 
 func (s *SettingsStore) Persist(settings PrivacySettings) error {
@@ -77,4 +84,14 @@ func (s *SettingsStore) Wipe() error {
 type persistedPrivacySettingsState struct {
 	Version  int             `json:"version"`
 	Settings PrivacySettings `json:"settings"`
+}
+
+func requiresPrivacySettingsMigration(before, after PrivacySettings) bool {
+	if before.ProfileSchemaVersion < CurrentProfileSchemaVersion {
+		return true
+	}
+	if before.NodePolicies == nil {
+		return true
+	}
+	return !reflect.DeepEqual(before, after)
 }

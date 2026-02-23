@@ -57,17 +57,40 @@ func newServiceWithOptions(wakuCfg waku.Config, opts contracts.ServiceOptions) (
 		blobFlags:         resolveBlobFeatureFlagsFromEnv(),
 		presetMu:          &sync.RWMutex{},
 		nodePreset:        defaultPreset,
-		serveLimiter:      newBandwidthLimiter(defaultPreset.ServeBandwidthKBps),
+		serveSoftLimiter:  newBandwidthLimiter(defaultPreset.ServeBandwidthSoftKBps),
+		serveLimiter:      newBandwidthLimiter(defaultPreset.ServeBandwidthHardKBps),
 		fetchLimiter:      newBandwidthLimiter(defaultPreset.FetchBandwidthKBps),
-		blobACLMu:         &sync.RWMutex{},
-		blobACL:           resolveBlobACLPolicyFromEnv(),
-		bindingStore:      newNodeBindingStore(),
-		bindingLinkMu:     &sync.Mutex{},
-		bindingLinks:      map[string]pendingNodeBindingLink{},
-		blobProviders:     newBlobProviderRegistry(),
-		wakuCfg:           &wakuCfg,
-		profileMu:         &sync.Mutex{},
+		serveGuardMu:      &sync.Mutex{},
+		serveMaxConcurrent: func() int {
+			if defaultPreset.ServeMaxConcurrent < 0 {
+				return 0
+			}
+			return defaultPreset.ServeMaxConcurrent
+		}(),
+		servePerPeerPerMin: func() int {
+			if defaultPreset.ServeRequestsPerMinPerPeer < 0 {
+				return 0
+			}
+			return defaultPreset.ServeRequestsPerMinPerPeer
+		}(),
+		publicBlobCache: newPublicEphemeralBlobCache(
+			defaultPreset.PublicEphemeralCacheMaxMB,
+			defaultPreset.PublicEphemeralCacheTTLMin,
+		),
+		degradeMu:     &sync.Mutex{},
+		degradeCfg:    resolvePublicServingDegradeConfigFromEnv(),
+		diagEventsMu:  &sync.Mutex{},
+		diagEvents:    make([]diagnosticEventEntry, 0, 128),
+		blobACLMu:     &sync.RWMutex{},
+		blobACL:       resolveBlobACLPolicyFromEnv(),
+		bindingStore:  newNodeBindingStore(),
+		bindingLinkMu: &sync.Mutex{},
+		bindingLinks:  map[string]pendingNodeBindingLink{},
+		blobProviders: newBlobProviderRegistry(),
+		wakuCfg:       &wakuCfg,
+		profileMu:     &sync.Mutex{},
 	}
+	svc.configurePublicServingLimits(defaultPreset)
 
 	svc.identityCore = identityapp.NewService(
 		svc.identityManager,

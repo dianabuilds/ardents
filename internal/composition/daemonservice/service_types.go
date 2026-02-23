@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"log/slog"
 	"sync"
+	"time"
 
 	"aim-chat/go-backend/internal/bootstrap/bootstrapmanager"
 	"aim-chat/go-backend/internal/bootstrap/enrollmenttoken"
@@ -13,6 +14,7 @@ import (
 	inboxapp "aim-chat/go-backend/internal/domains/inbox"
 	messagingapp "aim-chat/go-backend/internal/domains/messaging"
 	privacyapp "aim-chat/go-backend/internal/domains/privacy"
+	"aim-chat/go-backend/internal/platform/ratelimiter"
 	runtimeapp "aim-chat/go-backend/internal/platform/runtime"
 	"aim-chat/go-backend/internal/waku"
 	"aim-chat/go-backend/pkg/models"
@@ -83,8 +85,20 @@ type Service struct {
 	blobFlags          blobFeatureFlags
 	presetMu           *sync.RWMutex
 	nodePreset         blobNodePresetConfig
+	serveSoftLimiter   *bandwidthLimiter
 	serveLimiter       *bandwidthLimiter
 	fetchLimiter       *bandwidthLimiter
+	serveGuardMu       *sync.Mutex
+	serveInFlight      int
+	serveMaxConcurrent int
+	servePerPeerPerMin int
+	servePeerLimiter   *ratelimiter.MapLimiter
+	publicBlobCache    *publicEphemeralBlobCache
+	degradeMu          *sync.Mutex
+	degradeState       publicServingDegradeState
+	degradeCfg         publicServingDegradeConfig
+	diagEventsMu       *sync.Mutex
+	diagEvents         []diagnosticEventEntry
 	blobACLMu          *sync.RWMutex
 	blobACL            blobACLPolicy
 	bindingStore       *nodeBindingStore
@@ -102,4 +116,36 @@ type Service struct {
 	profileMu          *sync.Mutex
 	enrollmentStore    *enrollmenttoken.FileStore
 	enrollmentKeys     map[string]ed25519.PublicKey
+}
+
+type publicServingDegradeConfig struct {
+	Enabled                   bool
+	OverloadWindow            time.Duration
+	RecoveryWindow            time.Duration
+	RetryLoopLagThreshold     time.Duration
+	PendingQueueThreshold     int
+	RAMAllocThresholdMB       int
+	DegradedServeFactorPct    int
+	DegradedConcurrentServes  int
+	DegradedPerPeerRequestsPM int
+}
+
+type publicServingDegradeState struct {
+	OverloadSince     time.Time
+	StableSince       time.Time
+	SoftCapExceeded   bool
+	Degraded          bool
+	LastReason        string
+	BaseServeSoftKBps int
+	BaseServeHardKBps int
+	BaseConcurrent    int
+	BasePerPeerPerMin int
+	DegradedAppliedAt time.Time
+}
+
+type diagnosticEventEntry struct {
+	Level      string
+	OccurredAt time.Time
+	Operation  string
+	Message    string
 }

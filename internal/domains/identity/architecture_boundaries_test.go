@@ -38,9 +38,6 @@ func TestArchitecture_IdentityLegacyImportLocation(t *testing.T) {
 			if !strings.HasPrefix(importPath, "aim-chat/go-backend/internal/identity") {
 				continue
 			}
-			if base == "legacy_manager.go" {
-				continue
-			}
 			pos := fset.Position(imp.Path.Pos())
 			violations = append(violations, fmt.Sprintf("%s:%d imports %q", base, pos.Line, importPath))
 		}
@@ -49,5 +46,5 @@ func TestArchitecture_IdentityLegacyImportLocation(t *testing.T) {
 	if len(violations) == 0 {
 		return
 	}
-	t.Fatalf("internal/identity import is allowed only in legacy_manager.go:\n- %s", strings.Join(violations, "\n- "))
+	t.Fatalf("internal/identity imports are forbidden in domains/identity:\n- %s", strings.Join(violations, "\n- "))
 }

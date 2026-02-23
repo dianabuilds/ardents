@@ -85,9 +85,7 @@ func Merge(dst *waku.Config, src DaemonNetworkConfig) {
 	if src.Transport != "" {
 		dst.Transport = src.Transport
 	}
-	if src.Port != 0 {
-		dst.Port = src.Port
-	}
+	mergeIfSet(&dst.Port, src.Port)
 	if src.AdvertiseAddress != "" {
 		dst.AdvertiseAddress = src.AdvertiseAddress
 	}
@@ -109,38 +107,23 @@ func Merge(dst *waku.Config, src DaemonNetworkConfig) {
 	if src.FailoverV1 != nil {
 		dst.FailoverV1 = *src.FailoverV1
 	}
-	if src.MinPeers != 0 {
-		dst.MinPeers = src.MinPeers
-	}
-	if src.StoreQueryFanout != 0 {
-		dst.StoreQueryFanout = src.StoreQueryFanout
-	}
-	if src.ReconnectInterval != 0 {
-		dst.ReconnectInterval = src.ReconnectInterval
-	}
-	if src.ReconnectBackoffMax != 0 {
-		dst.ReconnectBackoffMax = src.ReconnectBackoffMax
-	}
-	if src.ManifestRefreshInterval != 0 {
-		dst.ManifestRefreshInterval = src.ManifestRefreshInterval
-	}
-	if src.ManifestStaleWindow != 0 {
-		dst.ManifestStaleWindow = src.ManifestStaleWindow
-	}
-	if src.ManifestRefreshTimeout != 0 {
-		dst.ManifestRefreshTimeout = src.ManifestRefreshTimeout
-	}
-	if src.ManifestBackoffBase != 0 {
-		dst.ManifestBackoffBase = src.ManifestBackoffBase
-	}
-	if src.ManifestBackoffMax != 0 {
-		dst.ManifestBackoffMax = src.ManifestBackoffMax
-	}
-	if src.ManifestBackoffFactor != 0 {
-		dst.ManifestBackoffFactor = src.ManifestBackoffFactor
-	}
-	if src.ManifestBackoffJitterRatio != 0 {
-		dst.ManifestBackoffJitterRatio = src.ManifestBackoffJitterRatio
+	mergeIfSet(&dst.MinPeers, src.MinPeers)
+	mergeIfSet(&dst.StoreQueryFanout, src.StoreQueryFanout)
+	mergeIfSet(&dst.ReconnectInterval, src.ReconnectInterval)
+	mergeIfSet(&dst.ReconnectBackoffMax, src.ReconnectBackoffMax)
+	mergeIfSet(&dst.ManifestRefreshInterval, src.ManifestRefreshInterval)
+	mergeIfSet(&dst.ManifestStaleWindow, src.ManifestStaleWindow)
+	mergeIfSet(&dst.ManifestRefreshTimeout, src.ManifestRefreshTimeout)
+	mergeIfSet(&dst.ManifestBackoffBase, src.ManifestBackoffBase)
+	mergeIfSet(&dst.ManifestBackoffMax, src.ManifestBackoffMax)
+	mergeIfSet(&dst.ManifestBackoffFactor, src.ManifestBackoffFactor)
+	mergeIfSet(&dst.ManifestBackoffJitterRatio, src.ManifestBackoffJitterRatio)
+}
+
+func mergeIfSet[T comparable](dst *T, src T) {
+	var zero T
+	if src != zero {
+		*dst = src
 	}
 }
 

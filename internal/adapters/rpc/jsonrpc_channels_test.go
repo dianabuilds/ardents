@@ -30,7 +30,8 @@ type channelMockService struct {
 	sendGroupMessageInThreadFn func(groupID, content, threadID string) (groupdomain.GroupMessageFanoutResult, error)
 	listGroupThreadFn          func(groupID, threadID string, limit, offset int) ([]models.Message, error)
 	getIdentityFn              func() (models.Identity, error)
-	restoreBackupFn            func(consentToken, passphrase, backupBlob string) (models.Identity, error)
+	loginFn                    func(identityID, seedPassword string) error
+	restoreBackupFn            func(consentToken, password, backupBlob string) (models.Identity, error)
 	getStoragePolicyFn         func() (privacydomain.StoragePolicy, error)
 	updateStoragePolicyFn      func(
 		storageProtection string,
@@ -76,6 +77,8 @@ type channelMockService struct {
 	getBlobACLPolicyFn           func() models.BlobACLPolicy
 	setBlobNodePresetFn          func(preset string) (models.BlobNodePresetConfig, error)
 	getBlobNodePresetFn          func() models.BlobNodePresetConfig
+	getNodePoliciesFn            func() models.NodePolicies
+	updateNodePoliciesFn         func(patch models.NodePoliciesPatch) (models.NodePolicies, error)
 	createNodeBindingLinkFn      func(ttlSeconds int) (models.NodeBindingLinkCode, error)
 	completeNodeBindingFn        func(linkCode, nodeID, nodePublicKeyBase64, nodeSignatureBase64 string, allowRebind bool) (models.NodeBindingRecord, error)
 	getNodeBindingFn             func() (models.NodeBindingRecord, bool, error)
@@ -92,6 +95,12 @@ func (m *channelMockService) GetIdentity() (models.Identity, error) {
 	}
 	return models.Identity{}, nil
 }
+func (m *channelMockService) Login(identityID, seedPassword string) error {
+	if m.loginFn != nil {
+		return m.loginFn(identityID, seedPassword)
+	}
+	return nil
+}
 func (m *channelMockService) SelfContactCard(_ string) (models.ContactCard, error) {
 	return models.ContactCard{}, nil
 }
@@ -102,9 +111,9 @@ func (m *channelMockService) ExportSeed(_ string) (string, error) { return "", n
 func (m *channelMockService) ExportBackup(_, _ string) (string, error) {
 	return "", nil
 }
-func (m *channelMockService) RestoreBackup(consentToken, passphrase, backupBlob string) (models.Identity, error) {
+func (m *channelMockService) RestoreBackup(consentToken, password, backupBlob string) (models.Identity, error) {
 	if m.restoreBackupFn != nil {
-		return m.restoreBackupFn(consentToken, passphrase, backupBlob)
+		return m.restoreBackupFn(consentToken, password, backupBlob)
 	}
 	return models.Identity{}, nil
 }
@@ -257,6 +266,18 @@ func (m *channelMockService) GetBlobNodePreset() models.BlobNodePresetConfig {
 		return m.getBlobNodePresetFn()
 	}
 	return models.BlobNodePresetConfig{Preset: "custom"}
+}
+func (m *channelMockService) GetNodePolicies() models.NodePolicies {
+	if m.getNodePoliciesFn != nil {
+		return m.getNodePoliciesFn()
+	}
+	return models.NodePolicies{}
+}
+func (m *channelMockService) UpdateNodePolicies(patch models.NodePoliciesPatch) (models.NodePolicies, error) {
+	if m.updateNodePoliciesFn != nil {
+		return m.updateNodePoliciesFn(patch)
+	}
+	return models.NodePolicies{}, nil
 }
 func (m *channelMockService) CreateNodeBindingLinkCode(ttlSeconds int) (models.NodeBindingLinkCode, error) {
 	if m.createNodeBindingLinkFn != nil {
@@ -543,11 +564,11 @@ func TestDispatchRPCChannelCreateEncodesTitle(t *testing.T) {
 func TestDispatchRPCBackupRestore(t *testing.T) {
 	t.Setenv("AIM_ENV", "test")
 
-	var gotConsent, gotPassphrase, gotBlob string
+	var gotConsent, gotPassword, gotBlob string
 	svc := &channelMockService{
-		restoreBackupFn: func(consentToken, passphrase, backupBlob string) (models.Identity, error) {
+		restoreBackupFn: func(consentToken, password, backupBlob string) (models.Identity, error) {
 			gotConsent = consentToken
-			gotPassphrase = passphrase
+			gotPassword = password
 			gotBlob = backupBlob
 			return models.Identity{ID: "aim1restored"}, nil
 		},
@@ -559,8 +580,8 @@ func TestDispatchRPCBackupRestore(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("unexpected rpc error: %+v", rpcErr)
 	}
-	if gotConsent != "I_UNDERSTAND_BACKUP_RISK" || gotPassphrase != "secret-pass" || gotBlob != "blob-data" {
-		t.Fatalf("unexpected restore input: consent=%q passphrase=%q blob=%q", gotConsent, gotPassphrase, gotBlob)
+	if gotConsent != "I_UNDERSTAND_BACKUP_RISK" || gotPassword != "secret-pass" || gotBlob != "blob-data" {
+		t.Fatalf("unexpected restore input: consent=%q password=%q blob=%q", gotConsent, gotPassword, gotBlob)
 	}
 	payload, ok := result.(map[string]any)
 	if !ok {
@@ -1295,6 +1316,63 @@ func TestDispatchRPCBlobNodePresetGetSet(t *testing.T) {
 	}
 }
 
+func TestDispatchRPCNodePoliciesGetSet(t *testing.T) {
+	t.Setenv("AIM_ENV", "test")
+
+	policies := models.NodePolicies{
+		Personal: models.NodePersonalPolicy{
+			StoreEnabled: true,
+			TTLDays:      0,
+			QuotaMB:      10240,
+			PinEnabled:   true,
+		},
+		Public: models.NodePublicPolicy{
+			RelayEnabled:     true,
+			DiscoveryEnabled: true,
+			ServingEnabled:   true,
+			StoreEnabled:     false,
+			TTLDays:          0,
+			QuotaMB:          0,
+		},
+	}
+	svc := &channelMockService{
+		getNodePoliciesFn: func() models.NodePolicies {
+			return policies
+		},
+		updateNodePoliciesFn: func(patch models.NodePoliciesPatch) (models.NodePolicies, error) {
+			if patch.Public == nil || patch.Public.StoreEnabled == nil {
+				t.Fatalf("expected public.store_enabled patch, got %+v", patch)
+			}
+			policies.Public.StoreEnabled = *patch.Public.StoreEnabled
+			return policies, nil
+		},
+	}
+	s := newServerWithService(DefaultRPCAddr, svc, "", false)
+
+	getResult, rpcErr := s.dispatchRPC("node.getPolicies", nil)
+	if rpcErr != nil {
+		t.Fatalf("unexpected get rpc error: %+v", rpcErr)
+	}
+	getPayload, ok := getResult.(models.NodePolicies)
+	if !ok || !getPayload.Personal.StoreEnabled || getPayload.Public.StoreEnabled {
+		t.Fatalf("unexpected get payload: %#v", getResult)
+	}
+
+	params, _ := json.Marshal([]map[string]any{{
+		"public_policy": map[string]any{
+			"store_enabled": true,
+		},
+	}})
+	setResult, rpcErr := s.dispatchRPC("node.updatePolicies", params)
+	if rpcErr != nil {
+		t.Fatalf("unexpected set rpc error: %+v", rpcErr)
+	}
+	setPayload, ok := setResult.(models.NodePolicies)
+	if !ok || !setPayload.Public.StoreEnabled || !setPayload.Personal.StoreEnabled {
+		t.Fatalf("unexpected set payload: %#v", setResult)
+	}
+}
+
 func TestDispatchRPCNodeBindingFlow(t *testing.T) {
 	t.Setenv("AIM_ENV", "test")
 
@@ -1535,5 +1613,30 @@ func TestRPCAccountSwitchReturnsIdentityPayload(t *testing.T) {
 	}
 	if identity.ID != "aim1new" {
 		t.Fatalf("unexpected identity id: %q", identity.ID)
+	}
+}
+
+func TestRPCIdentityLoginReturnsLoggedIn(t *testing.T) {
+	svc := &channelMockService{
+		loginFn: func(identityID, seedPassword string) error {
+			if identityID != "aim1self" || seedPassword != "secret-pass" {
+				t.Fatalf("unexpected login params: id=%q password=%q", identityID, seedPassword)
+			}
+			return nil
+		},
+	}
+	s := newServerWithService(DefaultRPCAddr, svc, "", false)
+
+	params, _ := json.Marshal([]string{"aim1self", "secret-pass"})
+	result, rpcErr := s.dispatchRPC("identity.login", params)
+	if rpcErr != nil {
+		t.Fatalf("unexpected rpc error: %+v", rpcErr)
+	}
+	payload, ok := result.(map[string]bool)
+	if !ok {
+		t.Fatalf("unexpected payload type: %#v", result)
+	}
+	if !payload["logged_in"] {
+		t.Fatalf("expected logged_in=true, got %#v", payload)
 	}
 }

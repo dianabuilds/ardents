@@ -65,6 +65,27 @@ func TestSetBlobNodePresetAppliesRuntimePolicy(t *testing.T) {
 	}
 }
 
+func TestDefaultBlobNodePresetIsNetworkAssist(t *testing.T) {
+	cfg := newMockConfig()
+	svc, err := NewServiceForDaemonWithDataDir(cfg, t.TempDir())
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	got := svc.GetBlobNodePreset()
+	if got.Preset != "assist" {
+		t.Fatalf("expected default preset assist, got %q", got.Preset)
+	}
+	if got.ProfileID != "network_assist_default" {
+		t.Fatalf("expected profile_id network_assist_default, got %q", got.ProfileID)
+	}
+	if !got.RelayEnabled || !got.PublicDiscoveryEnabled || !got.PublicServingEnabled || !got.PersonalStoreEnabled {
+		t.Fatalf("unexpected default network assist toggles: %+v", got)
+	}
+	if got.PublicStoreEnabled {
+		t.Fatalf("public store must be disabled by default: %+v", got)
+	}
+}
+
 func TestBlobServeBandwidthCapLimitsProviderFetch(t *testing.T) {
 	sender, receiver := newBlobPresetPair(t)
 	if _, err := sender.SetBlobNodePreset("lite"); err != nil {
@@ -78,7 +99,7 @@ func TestBlobServeBandwidthCapLimitsProviderFetch(t *testing.T) {
 		t.Fatalf("set feature flags: %v", err)
 	}
 
-	oversized := make([]byte, 300*1024) // > lite serve cap (256 KB/s burst)
+	oversized := make([]byte, 600*1024) // > lite hard cap (512 KB/s burst)
 	meta, err := sender.PutAttachment("large.bin", "application/octet-stream", base64.StdEncoding.EncodeToString(oversized))
 	if err != nil {
 		t.Fatalf("put attachment: %v", err)

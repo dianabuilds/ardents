@@ -47,3 +47,12 @@ func (b *bandwidthLimiter) AllowBytes(bytes int) bool {
 	}
 	return limiter.AllowN(time.Now(), bytes)
 }
+
+func (b *bandwidthLimiter) LimitKBps() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.limit
+}

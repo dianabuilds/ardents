@@ -51,6 +51,9 @@ func (s *Service) GetAttachment(attachmentID string) (models.AttachmentMeta, []b
 	if err == nil {
 		return meta, data, nil
 	}
+	if cachedMeta, cachedData, ok := s.getEphemeralPublicBlob(attachmentID); ok {
+		return cachedMeta, cachedData, nil
+	}
 	fetchStarted := time.Now()
 	peerID := s.localPeerID()
 	if peerID == "" {
@@ -129,9 +132,23 @@ func (s *Service) localBlobFetchProvider() func(string, string) (models.Attachme
 		if err := s.authorizeBlobOperation(requesterPeerID, "fetch"); err != nil {
 			return models.AttachmentMeta{}, nil, err
 		}
+		if !s.isPublicServingAllowed() {
+			return models.AttachmentMeta{}, nil, contracts.ErrAttachmentTemporarilyUnavailable
+		}
+		if !s.allowPublicServeRequest(requesterPeerID) {
+			return models.AttachmentMeta{}, nil, contracts.ErrAttachmentTemporarilyUnavailable
+		}
+		releaseSlot, acquired := s.acquirePublicServeSlot()
+		if !acquired {
+			return models.AttachmentMeta{}, nil, contracts.ErrAttachmentTemporarilyUnavailable
+		}
+		defer releaseSlot()
 		fetchMeta, fetchData, err := s.getLocalAttachmentOnly(requestBlobID)
 		if err != nil {
 			return models.AttachmentMeta{}, nil, err
+		}
+		if s.serveSoftLimiter != nil && !s.serveSoftLimiter.AllowBytes(len(fetchData)) {
+			s.markPublicServeSoftCapExceeded()
 		}
 		if !s.serveLimiter.AllowBytes(len(fetchData)) {
 			return models.AttachmentMeta{}, nil, contracts.ErrAttachmentTemporarilyUnavailable
@@ -237,6 +254,12 @@ func (s *Service) cacheFetchedAttachment(meta models.AttachmentMeta, data []byte
 	if len(data) == 0 {
 		return
 	}
+	if !s.isPublicStoreEnabled() {
+		if s.publicBlobCache != nil {
+			_ = s.publicBlobCache.Put(meta, data, time.Now().UTC())
+		}
+		return
+	}
 	upserter, ok := s.attachmentStore.(interface {
 		PutExisting(meta models.AttachmentMeta, data []byte) error
 	})
@@ -247,7 +270,21 @@ func (s *Service) cacheFetchedAttachment(meta models.AttachmentMeta, data []byte
 }
 
 func (s *Service) getLocalAttachmentOnly(attachmentID string) (models.AttachmentMeta, []byte, error) {
-	return s.identityCore.GetAttachment(attachmentID)
+	meta, data, err := s.identityCore.GetAttachment(attachmentID)
+	if err == nil {
+		return meta, data, nil
+	}
+	if cachedMeta, cachedData, ok := s.getEphemeralPublicBlob(attachmentID); ok {
+		return cachedMeta, cachedData, nil
+	}
+	return models.AttachmentMeta{}, nil, err
+}
+
+func (s *Service) getEphemeralPublicBlob(attachmentID string) (models.AttachmentMeta, []byte, bool) {
+	if s == nil || s.publicBlobCache == nil {
+		return models.AttachmentMeta{}, nil, false
+	}
+	return s.publicBlobCache.Get(attachmentID, time.Now().UTC())
 }
 
 func (s *Service) localPeerID() string {

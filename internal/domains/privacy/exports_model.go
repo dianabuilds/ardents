@@ -24,6 +24,7 @@ const (
 	DefaultContentRetentionMode       = privacymodel.DefaultContentRetentionMode
 	DefaultEphemeralMessageTTLSeconds = privacymodel.DefaultEphemeralMessageTTLSeconds
 	DefaultEphemeralFileTTLSeconds    = privacymodel.DefaultEphemeralFileTTLSeconds
+	CurrentProfileSchemaVersion       = privacymodel.CurrentProfileSchemaVersion
 )
 
 var (
@@ -36,6 +37,9 @@ var (
 type PrivacySettings = privacymodel.PrivacySettings
 type StoragePolicy = privacymodel.StoragePolicy
 type StoragePolicyOverride = privacymodel.StoragePolicyOverride
+type NodePolicies = privacymodel.NodePolicies
+type NodePersonalPolicy = privacymodel.NodePersonalPolicy
+type NodePublicPolicy = privacymodel.NodePublicPolicy
 type Blocklist = privacymodel.Blocklist
 
 func DefaultPrivacySettings() PrivacySettings {
@@ -76,6 +80,10 @@ func ParseStoragePolicy(
 
 func NormalizeStoragePolicy(in StoragePolicy) StoragePolicy {
 	return privacymodel.NormalizeStoragePolicy(in)
+}
+
+func DefaultNodePolicies() NodePolicies {
+	return privacymodel.DefaultNodePolicies()
 }
 
 func StoragePolicyFromSettings(settings PrivacySettings) StoragePolicy {

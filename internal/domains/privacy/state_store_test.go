@@ -47,6 +47,9 @@ func TestSettingsStorePersistAndReload(t *testing.T) {
 	if got.MessagePrivacyMode != MessagePrivacyEveryone {
 		t.Fatalf("unexpected reloaded mode: got=%q want=%q", got.MessagePrivacyMode, MessagePrivacyEveryone)
 	}
+	if got.ProfileSchemaVersion != CurrentProfileSchemaVersion {
+		t.Fatalf("unexpected profile schema version: got=%d want=%d", got.ProfileSchemaVersion, CurrentProfileSchemaVersion)
+	}
 }
 
 func TestSettingsStoreNormalizeOnBootstrap(t *testing.T) {
@@ -63,6 +66,107 @@ func TestSettingsStoreNormalizeOnBootstrap(t *testing.T) {
 	}
 	if got.MessagePrivacyMode != DefaultMessagePrivacyMode {
 		t.Fatalf("unexpected normalized mode: got=%q want=%q", got.MessagePrivacyMode, DefaultMessagePrivacyMode)
+	}
+	if got.ProfileSchemaVersion != CurrentProfileSchemaVersion {
+		t.Fatalf("unexpected profile schema version: got=%d want=%d", got.ProfileSchemaVersion, CurrentProfileSchemaVersion)
+	}
+}
+
+func TestSettingsStoreMigratesLegacyProfileSchemaAndNodePolicies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "privacy.enc")
+	store := NewSettingsStore()
+	store.Configure(path, "test-secret")
+
+	legacy := persistedPrivacySettingsState{
+		Version: 1,
+		Settings: PrivacySettings{
+			MessagePrivacyMode: MessagePrivacyEveryone,
+			StorageProtection:  StorageProtectionStandard,
+		},
+	}
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy payload failed: %v", err)
+	}
+	encrypted, err := securestore.Encrypt("test-secret", payload)
+	if err != nil {
+		t.Fatalf("encrypt legacy payload failed: %v", err)
+	}
+	if err := os.WriteFile(path, encrypted, 0o600); err != nil {
+		t.Fatalf("write legacy payload failed: %v", err)
+	}
+
+	got, err := store.Bootstrap()
+	if err != nil {
+		t.Fatalf("bootstrap legacy payload failed: %v", err)
+	}
+	if got.ProfileSchemaVersion != CurrentProfileSchemaVersion {
+		t.Fatalf("expected migrated schema version=%d, got %d", CurrentProfileSchemaVersion, got.ProfileSchemaVersion)
+	}
+	if got.NodePolicies == nil {
+		t.Fatal("expected node policies to be initialized during migration")
+	}
+	if got.NodePolicies.ProfileSchemaVersion != CurrentProfileSchemaVersion {
+		t.Fatalf("expected node policies schema version=%d, got %d", CurrentProfileSchemaVersion, got.NodePolicies.ProfileSchemaVersion)
+	}
+}
+
+func TestSettingsStoreMigratesLegacySettingsWithoutLosingNodePolicies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "privacy.enc")
+	store := NewSettingsStore()
+	store.Configure(path, "test-secret")
+
+	legacyPolicies := &NodePolicies{
+		Personal: NodePersonalPolicy{
+			StoreEnabled: true,
+			TTLDays:      365,
+			QuotaMB:      4096,
+			PinEnabled:   true,
+		},
+		Public: NodePublicPolicy{
+			RelayEnabled:     true,
+			DiscoveryEnabled: true,
+			ServingEnabled:   false,
+			StoreEnabled:     false,
+			TTLDays:          0,
+			QuotaMB:          0,
+		},
+	}
+	legacy := persistedPrivacySettingsState{
+		Version: 1,
+		Settings: PrivacySettings{
+			MessagePrivacyMode: MessagePrivacyRequests,
+			StorageProtection:  StorageProtectionProtected,
+			NodePolicies:       legacyPolicies,
+		},
+	}
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy payload failed: %v", err)
+	}
+	encrypted, err := securestore.Encrypt("test-secret", payload)
+	if err != nil {
+		t.Fatalf("encrypt legacy payload failed: %v", err)
+	}
+	if err := os.WriteFile(path, encrypted, 0o600); err != nil {
+		t.Fatalf("write legacy payload failed: %v", err)
+	}
+
+	got, err := store.Bootstrap()
+	if err != nil {
+		t.Fatalf("bootstrap legacy payload failed: %v", err)
+	}
+	if got.ProfileSchemaVersion != CurrentProfileSchemaVersion {
+		t.Fatalf("expected migrated schema version=%d, got %d", CurrentProfileSchemaVersion, got.ProfileSchemaVersion)
+	}
+	if got.NodePolicies == nil {
+		t.Fatal("expected node policies to remain available after migration")
+	}
+	if got.NodePolicies.Personal.QuotaMB != 4096 {
+		t.Fatalf("expected personal quota to be preserved, got %+v", got.NodePolicies.Personal)
+	}
+	if got.NodePolicies.Public.ServingEnabled {
+		t.Fatalf("expected public serving=false to be preserved, got %+v", got.NodePolicies.Public)
 	}
 }
 

@@ -228,3 +228,54 @@ func TestServiceStorageScopeOverrideRoundtripAndResolve(t *testing.T) {
 		t.Fatal("expected removed=true")
 	}
 }
+
+func TestServiceUpdateNodePoliciesPersistsIndependently(t *testing.T) {
+	bl, err := NewBlocklist(nil)
+	if err != nil {
+		t.Fatalf("new blocklist failed: %v", err)
+	}
+	initial := DefaultPrivacySettings()
+	svc := NewService(
+		&fakePrivacyStore{settings: initial},
+		&fakeBlocklistStore{list: bl},
+		nil,
+	)
+	svc.SetState(initial, bl)
+
+	updated, err := svc.UpdateNodePolicies(NodePolicies{
+		Personal: NodePersonalPolicy{
+			StoreEnabled: true,
+			TTLDays:      365,
+			QuotaMB:      20480,
+			PinEnabled:   true,
+		},
+		Public: NodePublicPolicy{
+			RelayEnabled:     true,
+			DiscoveryEnabled: true,
+			ServingEnabled:   false,
+			StoreEnabled:     false,
+			TTLDays:          0,
+			QuotaMB:          0,
+		},
+	})
+	if err != nil {
+		t.Fatalf("update node policies failed: %v", err)
+	}
+	if !updated.Personal.StoreEnabled || updated.Personal.TTLDays != 365 || updated.Personal.QuotaMB != 20480 {
+		t.Fatalf("unexpected personal policy: %+v", updated.Personal)
+	}
+	if updated.Public.ServingEnabled {
+		t.Fatalf("expected public serving disabled: %+v", updated.Public)
+	}
+
+	persisted, err := svc.GetNodePolicies()
+	if err != nil {
+		t.Fatalf("get node policies failed: %v", err)
+	}
+	if persisted.Public.ServingEnabled {
+		t.Fatalf("expected persisted public serving disabled: %+v", persisted.Public)
+	}
+	if persisted.Personal.QuotaMB != 20480 {
+		t.Fatalf("unexpected persisted personal quota: %+v", persisted.Personal)
+	}
+}

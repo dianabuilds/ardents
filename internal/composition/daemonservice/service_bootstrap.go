@@ -1,15 +1,10 @@
 package daemonservice
 
 import (
-	"time"
-
 	daemoncomposition "aim-chat/go-backend/internal/composition/daemon"
 	"aim-chat/go-backend/internal/domains/contracts"
-	groupdomain "aim-chat/go-backend/internal/domains/group"
-	inboxapp "aim-chat/go-backend/internal/domains/inbox"
 	runtimeapp "aim-chat/go-backend/internal/platform/runtime"
 	"aim-chat/go-backend/internal/waku"
-	"aim-chat/go-backend/pkg/models"
 )
 
 // noinspection GoUnusedExportedFunction
@@ -50,28 +45,8 @@ func newServiceForDaemonWithBundle(wakuCfg waku.Config, bundle daemoncomposition
 	if err := svc.applyStoragePolicyFromSettings(settings); err != nil {
 		return nil, err
 	}
-	svc.requestInboxState.Configure(bundle.RequestInboxPath, secret)
-	inbox, err := svc.requestInboxState.Bootstrap()
-	if err != nil {
-		svc.logger.Warn("message request inbox bootstrap failed, using empty list", "error", err.Error())
-		inbox = map[string][]models.Message{}
-	}
-	svc.requestRuntime.SetInbox(inboxapp.CopyInboxState(inbox))
-	svc.groupStateStore.Configure(bundle.GroupStatePath, secret)
-	groupStates, groupEventLog, err := svc.groupStateStore.Bootstrap()
-	if err != nil {
-		svc.logger.Warn("group state bootstrap failed, using empty state", "error", err.Error())
-		groupStates = map[string]groupdomain.GroupState{}
-		groupEventLog = map[string][]groupdomain.GroupEvent{}
-	}
-	svc.groupRuntime.SetSnapshot(groupStates, groupEventLog)
-	if svc.groupRuntime.ReplaySeen == nil {
-		svc.groupRuntime.ReplaySeen = make(map[string]time.Time)
-	}
-	svc.bindingStore.Configure(bundle.NodeBindingPath, secret)
-	if err := svc.bindingStore.Bootstrap(); err != nil {
-		svc.logger.Warn("node binding bootstrap failed, using empty state", "error", err.Error())
-	}
+	svc.applyNodePoliciesFromSettings(settings)
+	svc.bootstrapStateStores(bundle, secret)
 	svc.storageSecret = secret
 	svc.dataDir = dataDir
 	svc.currentProfileID = legacyAccountID

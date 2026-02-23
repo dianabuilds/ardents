@@ -270,6 +270,46 @@ func (s *Service) ResolveStoragePolicy(scope, scopeID string, isPinned bool) (pr
 	return privacymodel.ResolveStoragePolicyForScope(current, scope, scopeID, isPinned)
 }
 
+func (s *Service) GetNodePolicies() (privacymodel.NodePolicies, error) {
+	settings, err := s.GetPrivacySettings()
+	if err != nil {
+		return privacymodel.NodePolicies{}, err
+	}
+	normalized := privacymodel.NormalizePrivacySettings(settings)
+	if normalized.NodePolicies == nil {
+		policies := privacymodel.DefaultNodePolicies()
+		return policies, nil
+	}
+	return *normalized.NodePolicies, nil
+}
+
+func (s *Service) UpdateNodePolicies(policies privacymodel.NodePolicies) (privacymodel.NodePolicies, error) {
+	current, err := s.GetPrivacySettings()
+	if err != nil {
+		return privacymodel.NodePolicies{}, err
+	}
+	updated := current
+	normalized := privacymodel.NormalizePrivacySettings(privacymodel.PrivacySettings{
+		NodePolicies: &policies,
+	}).NodePolicies
+	updated.NodePolicies = normalized
+	updated = privacymodel.NormalizePrivacySettings(updated)
+	if err := s.privacyState.Persist(updated); err != nil {
+		if s.recordError != nil {
+			s.recordError("storage", err)
+		}
+		return privacymodel.NodePolicies{}, err
+	}
+	s.mu.Lock()
+	s.privacy = updated
+	s.mu.Unlock()
+	if updated.NodePolicies == nil {
+		fallback := privacymodel.DefaultNodePolicies()
+		return fallback, nil
+	}
+	return *updated.NodePolicies, nil
+}
+
 func (s *Service) GetBlocklist() ([]string, error) {
 	s.mu.RLock()
 	out := s.blocklist.List()

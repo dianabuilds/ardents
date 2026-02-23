@@ -34,6 +34,7 @@ const DefaultMessagePrivacyMode = MessagePrivacyEveryone
 const DefaultStorageProtectionMode = StorageProtectionStandard
 const DefaultContentRetentionMode = RetentionPersistent
 const DefaultEphemeralMessageTTLSeconds = 86400
+const CurrentProfileSchemaVersion = 2
 
 // DefaultEphemeralFileTTLSeconds Ephemeral mode keeps file blobs unless an explicit file TTL is provided.
 const DefaultEphemeralFileTTLSeconds = 0
@@ -48,6 +49,7 @@ var ErrInfiniteTTLRequiresPinned = errors.New("infinite ttl requires pinned blob
 
 // PrivacySettings stores user-level inbound message privacy preferences.
 type PrivacySettings struct {
+	ProfileSchemaVersion  int                              `json:"profile_schema_version,omitempty"`
 	MessagePrivacyMode    MessagePrivacyMode               `json:"message_privacy_mode"`
 	StorageProtection     StorageProtectionMode            `json:"storage_protection_mode"`
 	ContentRetentionMode  ContentRetentionMode             `json:"content_retention_mode"`
@@ -59,6 +61,7 @@ type PrivacySettings struct {
 	ImageMaxItemSizeMB    int                              `json:"image_max_item_size_mb,omitempty"`
 	FileMaxItemSizeMB     int                              `json:"file_max_item_size_mb,omitempty"`
 	StorageScopeOverrides map[string]StoragePolicyOverride `json:"storage_scope_overrides,omitempty"`
+	NodePolicies          *NodePolicies                    `json:"node_policies,omitempty"`
 }
 
 type StoragePolicy struct {
@@ -87,8 +90,52 @@ type StoragePolicyOverride struct {
 	PinRequiredForInfinite bool                  `json:"pin_required_for_infinite,omitempty"`
 }
 
+type NodePolicies struct {
+	ProfileSchemaVersion int                `json:"profile_schema_version,omitempty"`
+	Personal             NodePersonalPolicy `json:"personal_policy"`
+	Public               NodePublicPolicy   `json:"public_policy"`
+}
+
+type NodePersonalPolicy struct {
+	StoreEnabled bool `json:"store_enabled"`
+	TTLDays      int  `json:"ttl_days,omitempty"`
+	QuotaMB      int  `json:"quota_mb,omitempty"`
+	PinEnabled   bool `json:"pin_enabled,omitempty"`
+}
+
+type NodePublicPolicy struct {
+	RelayEnabled     bool `json:"relay_enabled"`
+	DiscoveryEnabled bool `json:"discovery_enabled"`
+	ServingEnabled   bool `json:"serving_enabled"`
+	StoreEnabled     bool `json:"store_enabled"`
+	TTLDays          int  `json:"ttl_days,omitempty"`
+	QuotaMB          int  `json:"quota_mb,omitempty"`
+}
+
+func DefaultNodePolicies() NodePolicies {
+	return NodePolicies{
+		ProfileSchemaVersion: CurrentProfileSchemaVersion,
+		Personal: NodePersonalPolicy{
+			StoreEnabled: true,
+			TTLDays:      0,
+			QuotaMB:      10 * 1024,
+			PinEnabled:   true,
+		},
+		Public: NodePublicPolicy{
+			RelayEnabled:     true,
+			DiscoveryEnabled: true,
+			ServingEnabled:   true,
+			StoreEnabled:     false,
+			TTLDays:          0,
+			QuotaMB:          0,
+		},
+	}
+}
+
 func DefaultPrivacySettings() PrivacySettings {
+	policies := DefaultNodePolicies()
 	return PrivacySettings{
+		ProfileSchemaVersion: CurrentProfileSchemaVersion,
 		MessagePrivacyMode:   DefaultMessagePrivacyMode,
 		StorageProtection:    DefaultStorageProtectionMode,
 		ContentRetentionMode: DefaultContentRetentionMode,
@@ -99,10 +146,12 @@ func DefaultPrivacySettings() PrivacySettings {
 		FileQuotaMB:          0,
 		ImageMaxItemSizeMB:   0,
 		FileMaxItemSizeMB:    0,
+		NodePolicies:         &policies,
 	}
 }
 
 func NormalizePrivacySettings(in PrivacySettings) PrivacySettings {
+	in.ProfileSchemaVersion = normalizeProfileSchemaVersion(in.ProfileSchemaVersion)
 	if !in.MessagePrivacyMode.Valid() {
 		in.MessagePrivacyMode = DefaultMessagePrivacyMode
 	}
@@ -120,6 +169,8 @@ func NormalizePrivacySettings(in PrivacySettings) PrivacySettings {
 	in.ImageMaxItemSizeMB = normalizeLimitValue(in.ImageMaxItemSizeMB)
 	in.FileMaxItemSizeMB = normalizeLimitValue(in.FileMaxItemSizeMB)
 	in.StorageScopeOverrides = normalizeStorageScopeOverrides(in.StorageScopeOverrides)
+	policies := normalizeNodePolicies(in.NodePolicies)
+	in.NodePolicies = &policies
 	if in.ContentRetentionMode != RetentionEphemeral {
 		in.MessageTTLSeconds = 0
 		in.ImageTTLSeconds = 0
@@ -134,6 +185,35 @@ func NormalizePrivacySettings(in PrivacySettings) PrivacySettings {
 		}
 	}
 	return in
+}
+
+func normalizeNodePolicies(in *NodePolicies) NodePolicies {
+	base := DefaultNodePolicies()
+	if in == nil {
+		return base
+	}
+	base.ProfileSchemaVersion = normalizeProfileSchemaVersion(in.ProfileSchemaVersion)
+	base.Personal.StoreEnabled = in.Personal.StoreEnabled
+	base.Personal.PinEnabled = in.Personal.PinEnabled
+	base.Personal.TTLDays = normalizeLimitValue(in.Personal.TTLDays)
+	base.Personal.QuotaMB = normalizeLimitValue(in.Personal.QuotaMB)
+	base.Public.RelayEnabled = in.Public.RelayEnabled
+	base.Public.DiscoveryEnabled = in.Public.DiscoveryEnabled
+	base.Public.ServingEnabled = in.Public.ServingEnabled
+	base.Public.StoreEnabled = in.Public.StoreEnabled
+	base.Public.TTLDays = normalizeLimitValue(in.Public.TTLDays)
+	base.Public.QuotaMB = normalizeLimitValue(in.Public.QuotaMB)
+	return base
+}
+
+func normalizeProfileSchemaVersion(v int) int {
+	if v <= 0 {
+		return CurrentProfileSchemaVersion
+	}
+	if v > CurrentProfileSchemaVersion {
+		return CurrentProfileSchemaVersion
+	}
+	return v
 }
 
 func (m MessagePrivacyMode) Valid() bool {

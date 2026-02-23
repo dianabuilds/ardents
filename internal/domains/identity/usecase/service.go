@@ -8,16 +8,13 @@ import (
 
 	"aim-chat/go-backend/internal/domains/contracts"
 	identitypolicy "aim-chat/go-backend/internal/domains/identity/policy"
+	identityports "aim-chat/go-backend/internal/domains/identity/ports"
 	"aim-chat/go-backend/pkg/models"
 )
 
-type identityStateStore interface {
-	Persist(identityManager contracts.IdentityDomain) error
-}
-
 type Service struct {
 	identityManager contracts.IdentityDomain
-	identityState   identityStateStore
+	identityState   identityports.IdentityStateStore
 	messageStore    contracts.MessageRepository
 	sessionManager  contracts.SessionDomain
 	attachmentStore contracts.AttachmentRepository
@@ -28,7 +25,7 @@ type Service struct {
 
 func NewService(
 	identityManager contracts.IdentityDomain,
-	identityState identityStateStore,
+	identityState identityports.IdentityStateStore,
 	messageStore contracts.MessageRepository,
 	sessionManager contracts.SessionDomain,
 	attachmentStore contracts.AttachmentRepository,
@@ -53,16 +50,20 @@ func (s *Service) GetIdentity() (models.Identity, error) {
 	return s.identityManager.GetIdentity(), nil
 }
 
-func (s *Service) ExportSeed(password string) (string, error) {
-	return s.identityManager.ExportSeed(strings.TrimSpace(password))
+func (s *Service) Login(identityID, seedPassword string) error {
+	return Login(strings.TrimSpace(identityID), strings.TrimSpace(seedPassword), s.identityManager)
+}
+
+func (s *Service) ExportSeed(seedPassword string) (string, error) {
+	return s.identityManager.ExportSeed(strings.TrimSpace(seedPassword))
 }
 
 func (s *Service) ValidateMnemonic(mnemonic string) bool {
 	return s.identityManager.ValidateMnemonic(strings.TrimSpace(mnemonic))
 }
 
-func (s *Service) ChangePassword(oldPassword, newPassword string) error {
-	return s.identityManager.ChangePassword(strings.TrimSpace(oldPassword), strings.TrimSpace(newPassword))
+func (s *Service) ChangePassword(oldSeedPassword, newSeedPassword string) error {
+	return s.identityManager.ChangePassword(strings.TrimSpace(oldSeedPassword), strings.TrimSpace(newSeedPassword))
 }
 
 func (s *Service) SelfContactCard(displayName string) (models.ContactCard, error) {
@@ -70,7 +71,10 @@ func (s *Service) SelfContactCard(displayName string) (models.ContactCard, error
 }
 
 func (s *Service) AddContactCard(card models.ContactCard) error {
-	return s.identityManager.AddContact(card)
+	if err := s.identityManager.AddContact(card); err != nil {
+		return err
+	}
+	return s.identityState.Persist(s.identityManager)
 }
 
 func (s *Service) VerifyContactCard(card models.ContactCard) (bool, error) {
@@ -78,11 +82,17 @@ func (s *Service) VerifyContactCard(card models.ContactCard) (bool, error) {
 }
 
 func (s *Service) AddContact(contactID, displayName string) error {
-	return s.identityManager.AddContactByIdentityID(contactID, displayName)
+	if err := s.identityManager.AddContactByIdentityID(contactID, displayName); err != nil {
+		return err
+	}
+	return s.identityState.Persist(s.identityManager)
 }
 
 func (s *Service) RemoveContact(contactID string) error {
-	return s.identityManager.RemoveContact(contactID)
+	if err := s.identityManager.RemoveContact(contactID); err != nil {
+		return err
+	}
+	return s.identityState.Persist(s.identityManager)
 }
 
 func (s *Service) GetContacts() ([]models.Contact, error) {
@@ -94,17 +104,24 @@ func (s *Service) ListDevices() ([]models.Device, error) {
 }
 
 func (s *Service) AddDevice(name string) (models.Device, error) {
-	return s.identityManager.AddDevice(strings.TrimSpace(name))
+	device, err := s.identityManager.AddDevice(strings.TrimSpace(name))
+	if err != nil {
+		return models.Device{}, err
+	}
+	if err := s.identityState.Persist(s.identityManager); err != nil {
+		return models.Device{}, err
+	}
+	return device, nil
 }
 
-func (s *Service) CreateIdentity(password string) (models.Identity, string, error) {
-	return CreateIdentity(password, s.identityManager, func() error {
+func (s *Service) CreateIdentity(seedPassword string) (models.Identity, string, error) {
+	return CreateIdentity(seedPassword, s.identityManager, func() error {
 		return s.identityState.Persist(s.identityManager)
 	})
 }
 
-func (s *Service) ExportBackup(consentToken, passphrase string) (string, error) {
-	result, err := ExportBackup(consentToken, passphrase, s.identityManager, s.messageStore, s.sessionManager)
+func (s *Service) ExportBackup(consentToken, password string) (string, error) {
+	result, err := ExportBackup(consentToken, password, s.identityManager, s.messageStore, s.sessionManager)
 	if err != nil {
 		return "", err
 	}
@@ -114,8 +131,8 @@ func (s *Service) ExportBackup(consentToken, passphrase string) (string, error) 
 	return result.Blob, nil
 }
 
-func (s *Service) RestoreBackup(consentToken, passphrase, backupBlob string) (models.Identity, error) {
-	result, err := RestoreBackup(consentToken, passphrase, backupBlob, s.identityManager, s.messageStore, s.sessionManager)
+func (s *Service) RestoreBackup(consentToken, password, backupBlob string) (models.Identity, error) {
+	result, err := RestoreBackup(consentToken, password, backupBlob, s.identityManager, s.messageStore, s.sessionManager)
 	if err != nil {
 		return models.Identity{}, err
 	}
@@ -128,8 +145,8 @@ func (s *Service) RestoreBackup(consentToken, passphrase, backupBlob string) (mo
 	return s.identityManager.GetIdentity(), nil
 }
 
-func (s *Service) ImportIdentity(mnemonic, password string) (models.Identity, error) {
-	return ImportIdentity(mnemonic, password, s.identityManager, func() error {
+func (s *Service) ImportIdentity(mnemonic, seedPassword string) (models.Identity, error) {
+	return ImportIdentity(mnemonic, seedPassword, s.identityManager, func() error {
 		return s.identityState.Persist(s.identityManager)
 	})
 }

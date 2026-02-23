@@ -55,6 +55,15 @@ type Settings struct {
 type NetworkStatus struct {
 	Status                   string    `json:"status"`
 	PeerCount                int       `json:"peer_count"`
+	PeerTarget               int       `json:"peer_target,omitempty"`
+	HealthSummary            string    `json:"health_summary,omitempty"`
+	ActionHint               string    `json:"action_hint,omitempty"`
+	ProfileID                string    `json:"profile_id,omitempty"`
+	RelayEnabled             bool      `json:"relay_enabled,omitempty"`
+	PublicDiscoveryEnabled   bool      `json:"public_discovery_enabled,omitempty"`
+	PublicServingEnabled     bool      `json:"public_serving_enabled,omitempty"`
+	PublicStoreEnabled       bool      `json:"public_store_enabled,omitempty"`
+	PersonalStoreEnabled     bool      `json:"personal_store_enabled,omitempty"`
 	LastSync                 time.Time `json:"last_sync"`
 	BootstrapSource          string    `json:"bootstrap_source,omitempty"`
 	BootstrapManifestVersion int       `json:"bootstrap_manifest_version,omitempty"`
@@ -178,22 +187,77 @@ type BlobACLPolicy struct {
 }
 
 type BlobNodePresetConfig struct {
-	Preset                  string `json:"preset"`
-	StorageProtection       string `json:"storage_protection_mode"`
-	Retention               string `json:"content_retention_mode"`
-	ImageQuotaMB            int    `json:"image_quota_mb"`
-	FileQuotaMB             int    `json:"file_quota_mb"`
-	ImageMaxItemSizeMB      int    `json:"image_max_item_size_mb"`
-	FileMaxItemSizeMB       int    `json:"file_max_item_size_mb"`
-	ReplicationMode         string `json:"replication_mode"`
-	AnnounceEnabled         bool   `json:"announce_enabled"`
-	FetchEnabled            bool   `json:"fetch_enabled"`
-	RolloutPercent          int    `json:"rollout_percent"`
-	ServeBandwidthKBps      int    `json:"serve_bandwidth_kbps"`
-	FetchBandwidthKBps      int    `json:"fetch_bandwidth_kbps"`
-	HighWatermarkPercent    int    `json:"high_watermark_percent"`
-	FullCapPercent          int    `json:"full_cap_percent"`
-	AggressiveTargetPercent int    `json:"aggressive_target_percent"`
+	Preset                     string `json:"preset"`
+	ProfileID                  string `json:"profile_id,omitempty"`
+	StorageProtection          string `json:"storage_protection_mode"`
+	Retention                  string `json:"content_retention_mode"`
+	ImageQuotaMB               int    `json:"image_quota_mb"`
+	FileQuotaMB                int    `json:"file_quota_mb"`
+	ImageMaxItemSizeMB         int    `json:"image_max_item_size_mb"`
+	FileMaxItemSizeMB          int    `json:"file_max_item_size_mb"`
+	ReplicationMode            string `json:"replication_mode"`
+	RelayEnabled               bool   `json:"relay_enabled,omitempty"`
+	PublicDiscoveryEnabled     bool   `json:"public_discovery_enabled,omitempty"`
+	PublicServingEnabled       bool   `json:"public_serving_enabled,omitempty"`
+	PublicStoreEnabled         bool   `json:"public_store_enabled,omitempty"`
+	PersonalStoreEnabled       bool   `json:"personal_store_enabled,omitempty"`
+	AnnounceEnabled            bool   `json:"announce_enabled"`
+	FetchEnabled               bool   `json:"fetch_enabled"`
+	RolloutPercent             int    `json:"rollout_percent"`
+	ServeBandwidthKBps         int    `json:"serve_bandwidth_kbps"`
+	ServeBandwidthSoftKBps     int    `json:"serve_bandwidth_soft_kbps,omitempty"`
+	ServeBandwidthHardKBps     int    `json:"serve_bandwidth_hard_kbps,omitempty"`
+	ServeMaxConcurrent         int    `json:"serve_max_concurrent,omitempty"`
+	ServeRequestsPerMinPerPeer int    `json:"serve_requests_per_min_per_peer,omitempty"`
+	PublicEphemeralCacheMaxMB  int    `json:"public_ephemeral_cache_max_mb,omitempty"`
+	PublicEphemeralCacheTTLMin int    `json:"public_ephemeral_cache_ttl_min,omitempty"`
+	FetchBandwidthKBps         int    `json:"fetch_bandwidth_kbps"`
+	HighWatermarkPercent       int    `json:"high_watermark_percent"`
+	FullCapPercent             int    `json:"full_cap_percent"`
+	AggressiveTargetPercent    int    `json:"aggressive_target_percent"`
+}
+
+type NodePersonalPolicy struct {
+	StoreEnabled bool `json:"store_enabled"`
+	TTLDays      int  `json:"ttl_days,omitempty"`
+	QuotaMB      int  `json:"quota_mb,omitempty"`
+	PinEnabled   bool `json:"pin_enabled,omitempty"`
+}
+
+type NodePublicPolicy struct {
+	RelayEnabled     bool `json:"relay_enabled"`
+	DiscoveryEnabled bool `json:"discovery_enabled"`
+	ServingEnabled   bool `json:"serving_enabled"`
+	StoreEnabled     bool `json:"store_enabled"`
+	TTLDays          int  `json:"ttl_days,omitempty"`
+	QuotaMB          int  `json:"quota_mb,omitempty"`
+}
+
+type NodePolicies struct {
+	ProfileSchemaVersion int                `json:"profile_schema_version,omitempty"`
+	Personal             NodePersonalPolicy `json:"personal_policy"`
+	Public               NodePublicPolicy   `json:"public_policy"`
+}
+
+type NodePersonalPolicyPatch struct {
+	StoreEnabled *bool `json:"store_enabled,omitempty"`
+	TTLDays      *int  `json:"ttl_days,omitempty"`
+	QuotaMB      *int  `json:"quota_mb,omitempty"`
+	PinEnabled   *bool `json:"pin_enabled,omitempty"`
+}
+
+type NodePublicPolicyPatch struct {
+	RelayEnabled     *bool `json:"relay_enabled,omitempty"`
+	DiscoveryEnabled *bool `json:"discovery_enabled,omitempty"`
+	ServingEnabled   *bool `json:"serving_enabled,omitempty"`
+	StoreEnabled     *bool `json:"store_enabled,omitempty"`
+	TTLDays          *int  `json:"ttl_days,omitempty"`
+	QuotaMB          *int  `json:"quota_mb,omitempty"`
+}
+
+type NodePoliciesPatch struct {
+	Personal *NodePersonalPolicyPatch `json:"personal_policy,omitempty"`
+	Public   *NodePublicPolicyPatch   `json:"public_policy,omitempty"`
 }
 
 type NodeBindingRecord struct {
@@ -211,6 +275,50 @@ type NodeBindingLinkCode struct {
 	Challenge  string    `json:"challenge"`
 	ExpiresAt  time.Time `json:"expires_at"`
 	IdentityID string    `json:"identity_id"`
+}
+
+type DiagnosticsExportPackage struct {
+	SchemaVersion int                          `json:"schema_version"`
+	ExportedAt    time.Time                    `json:"exported_at"`
+	AppVersion    string                       `json:"app_version"`
+	NodeVersion   string                       `json:"node_version"`
+	ProfileConfig DiagnosticsProfileConfig     `json:"profile_config"`
+	Metrics       DiagnosticsAggregatedMetrics `json:"metrics"`
+	Events        []DiagnosticsEvent           `json:"events"`
+}
+
+type DiagnosticsProfileConfig struct {
+	ProfileID                  string `json:"profile_id,omitempty"`
+	Preset                     string `json:"preset,omitempty"`
+	RelayEnabled               bool   `json:"relay_enabled"`
+	PublicDiscoveryEnabled     bool   `json:"public_discovery_enabled"`
+	PublicServingEnabled       bool   `json:"public_serving_enabled"`
+	PublicStoreEnabled         bool   `json:"public_store_enabled"`
+	PersonalStoreEnabled       bool   `json:"personal_store_enabled"`
+	ServeBandwidthSoftKBps     int    `json:"serve_bandwidth_soft_kbps,omitempty"`
+	ServeBandwidthHardKBps     int    `json:"serve_bandwidth_hard_kbps,omitempty"`
+	ServeMaxConcurrent         int    `json:"serve_max_concurrent,omitempty"`
+	ServeRequestsPerMinPerPeer int    `json:"serve_requests_per_min_per_peer,omitempty"`
+	PublicEphemeralCacheMaxMB  int    `json:"public_ephemeral_cache_max_mb,omitempty"`
+	PublicEphemeralCacheTTLMin int    `json:"public_ephemeral_cache_ttl_min,omitempty"`
+	FetchBandwidthKBps         int    `json:"fetch_bandwidth_kbps,omitempty"`
+}
+
+type DiagnosticsAggregatedMetrics struct {
+	PeerCount           int              `json:"peer_count"`
+	PendingQueueSize    int              `json:"pending_queue_size"`
+	RetryAttemptsTotal  int              `json:"retry_attempts_total"`
+	NotificationBacklog int              `json:"notification_backlog"`
+	ErrorCounters       map[string]int   `json:"error_counters,omitempty"`
+	BlobFetchStats      BlobFetchMetric  `json:"blob_fetch_stats,omitempty"`
+	DiskUsageByClass    map[string]int64 `json:"disk_usage_by_class,omitempty"`
+}
+
+type DiagnosticsEvent struct {
+	Level      string    `json:"level"`
+	OccurredAt time.Time `json:"occurred_at"`
+	Operation  string    `json:"operation,omitempty"`
+	Message    string    `json:"message"`
 }
 
 func ClassifyAttachmentMime(mimeType string) AttachmentClass {

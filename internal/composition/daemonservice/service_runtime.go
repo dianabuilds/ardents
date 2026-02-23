@@ -101,15 +101,23 @@ func (s *Service) StopNetworking(ctx context.Context) error {
 func (s *Service) runRetryLoop(ctx context.Context) {
 	ticker := time.NewTicker(messagingapp.RetryLoopTick)
 	defer ticker.Stop()
+	lastTick := time.Now()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.notifyNetworkStatus(false)
-			s.enforceRetentionPolicies(time.Now())
 			now := time.Now()
+			lag := now.Sub(lastTick) - messagingapp.RetryLoopTick
+			if lag < 0 {
+				lag = 0
+			}
+			lastTick = now
+			s.notifyNetworkStatus(false)
+			s.enforceRetentionPolicies(now)
+			s.purgePublicEphemeralCache(now)
+			s.evaluatePublicServingAutodegrade(now, lag)
 			pending := s.messageStore.DuePending(now)
 			s.processPendingBatch(ctx, pending, s.handleRetryPublishError)
 		}
@@ -230,14 +238,50 @@ func (s *Service) networkContext(category string) (context.Context, error) {
 
 func (s *Service) GetNetworkStatus() models.NetworkStatus {
 	status := s.wakuNode.Status()
+	s.presetMu.RLock()
+	preset := s.nodePreset
+	s.presetMu.RUnlock()
+	peerTarget := 1
+	if s.wakuCfg != nil && s.wakuCfg.MinPeers > 0 {
+		peerTarget = s.wakuCfg.MinPeers
+	}
+	healthSummary, actionHint := describeNetworkStatus(status.State, status.PeerCount, peerTarget, status.BootstrapSource)
 	return models.NetworkStatus{
 		Status:                   status.State,
 		PeerCount:                status.PeerCount,
+		PeerTarget:               peerTarget,
+		HealthSummary:            healthSummary,
+		ActionHint:               actionHint,
+		ProfileID:                preset.ProfileID,
+		RelayEnabled:             preset.RelayEnabled,
+		PublicDiscoveryEnabled:   preset.PublicDiscoveryEnabled,
+		PublicServingEnabled:     preset.PublicServingEnabled,
+		PublicStoreEnabled:       preset.PublicStoreEnabled,
+		PersonalStoreEnabled:     preset.PersonalStoreEnabled,
 		LastSync:                 status.LastSync,
 		BootstrapSource:          status.BootstrapSource,
 		BootstrapManifestVersion: status.BootstrapManifestVersion,
 		BootstrapManifestKeyID:   status.BootstrapManifestKeyID,
 	}
+}
+
+func describeNetworkStatus(state string, peerCount int, peerTarget int, bootstrapSource string) (summary string, action string) {
+	switch state {
+	case waku.StateDisconnected:
+		return "Node is offline.", "Start or reload backend, then retry connection."
+	case waku.StateConnecting:
+		return "Node is connecting to the network.", "Wait for peer discovery. If it does not recover, retry backend."
+	}
+	if peerCount < peerTarget {
+		if bootstrapSource == "cache" || bootstrapSource == "baked" {
+			return "Connected with fallback bootstrap source.", "Keep app online and retry backend to restore manifest source."
+		}
+		return "Connected with low peer count.", "Keep app online while peers are discovered. Retry backend if this persists."
+	}
+	if bootstrapSource == "cache" || bootstrapSource == "baked" {
+		return "Connected with fallback bootstrap source.", "Connection works, but check manifest availability when convenient."
+	}
+	return "Connection is stable.", "No action needed."
 }
 
 func (s *Service) ListenAddresses() []string {

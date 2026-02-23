@@ -2,6 +2,7 @@ package daemonservice
 
 import (
 	"strings"
+	"time"
 )
 
 const daemonComponentName = "daemonservice"
@@ -37,6 +38,7 @@ func (s *Service) logWarn(operation, correlationID, message string, attrs ...any
 		"correlation_id", strings.TrimSpace(correlationID),
 	}
 	s.logger.Warn(message, append(base, attrs...)...)
+	s.appendDiagnosticEvent("warn", operation, message, time.Now().UTC())
 }
 
 func (s *Service) recordErrorWithContext(category string, err error, operation, correlationID string, attrs ...any) {
@@ -52,4 +54,5 @@ func (s *Service) recordErrorWithContext(category string, err error, operation, 
 		"error", err.Error(),
 	}
 	s.logger.Error("service error", append(base, attrs...)...)
+	s.appendDiagnosticEvent("error", operation, err.Error(), time.Now().UTC())
 }

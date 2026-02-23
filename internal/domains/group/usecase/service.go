@@ -90,7 +90,32 @@ func (s *Service) GetGroup(groupID string) (Group, error) {
 
 func (s *Service) ListGroups() ([]Group, error) {
 	read := &GroupReadService{States: s.SnapshotStates()}
-	return read.ListGroups()
+	groups, err := read.ListGroups()
+	if err != nil {
+		return nil, err
+	}
+
+	actorID := strings.TrimSpace(s.actorID())
+	if actorID == "" {
+		return groups, nil
+	}
+
+	states := s.SnapshotStates()
+	filtered := make([]Group, 0, len(groups))
+	for _, group := range groups {
+		state, ok := states[group.ID]
+		if !ok {
+			continue
+		}
+		member, exists := state.Members[actorID]
+		if !exists {
+			continue
+		}
+		if member.Status == GroupMemberStatusActive || member.Status == GroupMemberStatusInvited {
+			filtered = append(filtered, group)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *Service) ListGroupMembers(groupID string) ([]GroupMember, error) {

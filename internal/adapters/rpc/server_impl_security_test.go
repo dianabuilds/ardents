@@ -175,3 +175,27 @@ func TestApplyCORS_RejectsOriginWhenAuthDisabled(t *testing.T) {
 		t.Fatalf("expected forbidden status, got %d", rr.Code)
 	}
 }
+
+func TestHandleFileDownloadRateLimitedBeforeAuthorization(t *testing.T) {
+	s := &Server{
+		rpcToken:    "secret",
+		requireRPC:  true,
+		fileLimiter: newFileRateLimiter(fileRateLimitConfig{Enabled: true, RPS: 0.001, Burst: 1}),
+	}
+
+	req1 := httptest.NewRequest(http.MethodGet, "/files/att1", nil)
+	req1.RemoteAddr = "198.51.100.20:43210"
+	rec1 := httptest.NewRecorder()
+	s.HandleFileDownload(rec1, req1)
+	if rec1.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized for first request, got %d", rec1.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/files/att1", nil)
+	req2.RemoteAddr = "198.51.100.20:43210"
+	rec2 := httptest.NewRecorder()
+	s.HandleFileDownload(rec2, req2)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status %d, got %d", http.StatusTooManyRequests, rec2.Code)
+	}
+}

@@ -14,11 +14,12 @@ type IdentityAPI interface {
 	Logout() error
 
 	GetIdentity() (models.Identity, error)
+	Login(identityID, seedPassword string) error
 	SelfContactCard(displayName string) (models.ContactCard, error)
 	CreateIdentity(password string) (models.Identity, string, error)
 	ExportSeed(password string) (string, error)
-	ExportBackup(consentToken, passphrase string) (string, error)
-	RestoreBackup(consentToken, passphrase, backupBlob string) (models.Identity, error)
+	ExportBackup(consentToken, password string) (string, error)
+	RestoreBackup(consentToken, password, backupBlob string) (models.Identity, error)
 	ImportIdentity(mnemonic, password string) (models.Identity, error)
 	ValidateMnemonic(mnemonic string) bool
 	ChangePassword(oldPassword, newPassword string) error
@@ -142,13 +143,13 @@ type NotificationEvent struct {
 }
 
 type IdentityDomain interface {
-	CreateIdentity(password string) (models.Identity, string, error)
-	VerifyPassword(password string) error
+	CreateIdentity(seedPassword string) (models.Identity, string, error)
+	VerifyPassword(seedPassword string) error
 	GetIdentity() models.Identity
-	ExportSeed(password string) (string, error)
-	ImportIdentity(mnemonic, password string) (models.Identity, error)
+	ExportSeed(seedPassword string) (string, error)
+	ImportIdentity(mnemonic, seedPassword string) (models.Identity, error)
 	ValidateMnemonic(mnemonic string) bool
-	ChangePassword(oldPassword, newPassword string) error
+	ChangePassword(oldSeedPassword, newSeedPassword string) error
 	AddContact(card models.ContactCard) error
 	VerifyContactCard(card models.ContactCard) (bool, error)
 	AddContactByIdentityID(contactID, displayName string) error

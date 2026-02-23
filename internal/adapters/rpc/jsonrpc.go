@@ -6,9 +6,17 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	grouprpc "aim-chat/go-backend/internal/domains/group/adapters/rpc"
+	identityrpc "aim-chat/go-backend/internal/domains/identity/adapters/rpc"
+	inboxrpc "aim-chat/go-backend/internal/domains/inbox/adapters/rpc"
+	messagingrpc "aim-chat/go-backend/internal/domains/messaging/adapters/rpc"
+	privacyrpc "aim-chat/go-backend/internal/domains/privacy/adapters/rpc"
+	"aim-chat/go-backend/internal/domains/rpckit"
 )
 
 type rpcRequest struct {
@@ -33,9 +41,7 @@ type rpcResponse struct {
 
 const maxRPCBodyBytes int64 = 1 << 20 // 1 MiB
 const (
-	maxMessageListLimit  = 1000
-	maxMessageListOffset = 1_000_000
-	rpcRequestIDHeader   = "X-AIM-Request-ID"
+	rpcRequestIDHeader = "X-AIM-Request-ID"
 )
 
 func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +89,14 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		writeRPCInvalidRequest(w, req.ID)
 		return
 	}
+	if strings.HasPrefix(req.Method, "node.") && !isLoopbackRequest(r) {
+		writeRPC(w, rpcResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error:   &rpcError{Code: -32084, Message: "node methods are available only from loopback client"},
+		})
+		return
+	}
 	if versionErr := validateRPCAPIVersion(req.APIVersion); versionErr != nil {
 		writeRPC(w, rpcResponse{
 			JSONRPC: "2.0",
@@ -112,7 +126,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s.service == nil && req.Method != "rpc.version" {
+	if s.service == nil && req.Method != "rpc.version" && req.Method != "rpc.capabilities" {
 		resp := rpcResponse{
 			JSONRPC: "2.0",
 			Error:   &rpcError{Code: -32099, Message: "service is not initialized"},
@@ -151,46 +165,44 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dispatchRPC(method string, rawParams json.RawMessage) (any, *rpcError) {
-	if method == "rpc.version" {
-		return rpcVersionInfo(), nil
+	if result, rpcErr, ok := s.dispatchCoreRPC(method); ok {
+		return result, rpcErr
 	}
-	if method == "health_check" {
-		return map[string]string{"status": "ok"}, nil
+	if result, rpcErr, ok := identityrpc.Dispatch(s.service, method, rawParams); ok {
+		return result, mapKitError(rpcErr)
+	}
+	if result, rpcErr, ok := privacyrpc.Dispatch(s.service, method, rawParams); ok {
+		return result, mapKitError(rpcErr)
+	}
+	if result, rpcErr, ok := inboxrpc.Dispatch(s.service, method, rawParams); ok {
+		return result, mapKitError(rpcErr)
+	}
+	if result, rpcErr, ok := messagingrpc.Dispatch(s.service, method, rawParams); ok {
+		return result, mapKitError(rpcErr)
 	}
 	if (strings.HasPrefix(method, "group.") || strings.HasPrefix(method, "channel.")) && !s.groupsEnabled {
 		return nil, &rpcError{Code: -32199, Message: "groups feature is disabled"}
 	}
-	if result, rpcErr, ok := s.dispatchIdentityRPC(method, rawParams); ok {
-		return result, rpcErr
-	}
-	if result, rpcErr, ok := s.dispatchPrivacyRPC(method, rawParams); ok {
-		return result, rpcErr
-	}
-	if result, rpcErr, ok := s.dispatchBlocklistRPC(method, rawParams); ok {
-		return result, rpcErr
-	}
-	if result, rpcErr, ok := s.dispatchRequestRPC(method, rawParams); ok {
-		return result, rpcErr
-	}
-	if result, rpcErr, ok := s.dispatchGroupRPC(method, rawParams); ok {
-		return result, rpcErr
-	}
-	if result, rpcErr, ok := s.dispatchChannelRPC(method, rawParams); ok {
-		return result, rpcErr
+	if result, rpcErr, ok := grouprpc.Dispatch(s.service, method, rawParams); ok {
+		return result, mapKitError(rpcErr)
 	}
 	if result, rpcErr, ok := s.dispatchNetworkRPC(method); ok {
 		return result, rpcErr
 	}
-	if result, rpcErr, ok := s.dispatchSessionMessageRPC(method, rawParams); ok {
-		return result, rpcErr
-	}
-	if result, rpcErr, ok := s.dispatchContactFileRPC(method, rawParams); ok {
-		return result, rpcErr
-	}
-	if result, rpcErr, ok := s.dispatchDeviceRPC(method, rawParams); ok {
-		return result, rpcErr
-	}
 	return nil, &rpcError{Code: -32601, Message: "method not found"}
+}
+
+func (s *Server) dispatchCoreRPC(method string) (any, *rpcError, bool) {
+	switch method {
+	case "rpc.version":
+		return rpcVersionInfo(), nil, true
+	case "rpc.capabilities":
+		return rpcCapabilitiesInfo(), nil, true
+	case "health_check":
+		return map[string]string{"status": "ok"}, nil, true
+	default:
+		return nil, nil, false
+	}
 }
 
 func writeRPC(w http.ResponseWriter, resp rpcResponse) {
@@ -242,4 +254,34 @@ func sanitizeRPCRequestID(raw string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	remote := strings.TrimSpace(r.RemoteAddr)
+	if remote == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		host = remote
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func mapKitError(err *rpckit.Error) *rpcError {
+	if err == nil {
+		return nil
+	}
+	return &rpcError{
+		Code:    err.Code,
+		Message: err.Message,
+	}
 }
